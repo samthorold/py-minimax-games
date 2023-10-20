@@ -1,0 +1,1 @@
+Minimax search to play various games.

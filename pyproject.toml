@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "my_package"
+authors = [
+    {name = "Sam Thorold", email = "sam.thorold@gmail.com"},
+]
+description = "Minimax search to play various games."
+readme = "README.md"
+requires-python = ">=3.10"
+version = "0.1.0"
