@@ -1,6 +1,7 @@
 from minimax_games.games.tic_tac_toe.node import Board, Player
 from minimax_games.search.alphabeta import alphabeta
 
+
 def main() -> None:
     soft = True
     board = Board.from_string("." * 9, Player.O)
@@ -31,7 +32,3 @@ def main() -> None:
         if board.is_terminal():
             print(board.score())
             break
-
-
-if __name__ == "__main__":
-    main()
