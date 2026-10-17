@@ -49,7 +49,7 @@ def minimax(node: Board) -> int:
     return max(values) if node.is_maximising() else min(values)
 
 
-@pytest.mark.parametrize("soft", [True, False])
+@pytest.mark.parametrize("prune_on_ties", [True, False])
 @pytest.mark.parametrize(
     ("position", "player"),
     [
@@ -63,17 +63,17 @@ def minimax(node: Board) -> int:
     ],
 )
 def test_tic_tac_toe_agrees_with_brute_force_minimax(
-    position: str, player: Player, soft: bool
+    position: str, player: Player, prune_on_ties: bool
 ) -> None:
     b = Board.from_string(position, player)
 
-    result = alphabeta(b, b.minimum(), b.maximum(), soft=soft)
+    result = alphabeta(b, b.minimum(), b.maximum(), prune_on_ties=prune_on_ties)
 
     assert result.score() == minimax(b)
     assert minimax(b.move(result.moves[0])) == minimax(b)
 
 
-@pytest.mark.parametrize("soft", [True, False])
+@pytest.mark.parametrize("prune_on_ties", [True, False])
 @pytest.mark.parametrize(
     ("position", "player", "score", "moves"),
     [
@@ -106,11 +106,11 @@ def test_tic_tac_toe_best_line_is_pinned(
     player: Player,
     score: int,
     moves: list[tuple[int, int]],
-    soft: bool,
+    prune_on_ties: bool,
 ) -> None:
     b = Board.from_string(position, player)
 
-    result = alphabeta(b, b.minimum(), b.maximum(), soft=soft)
+    result = alphabeta(b, b.minimum(), b.maximum(), prune_on_ties=prune_on_ties)
 
     assert result.score() == score
     assert result.moves == moves
