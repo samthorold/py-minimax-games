@@ -16,6 +16,7 @@ Managed with uv. See the README's Development section for commands.
 - The CI job `pre-commit` is a required status check in the `main` ruleset. Renaming the job breaks merging until the ruleset is updated to the new name.
 - `actionlint-py` ships only a source package, and building it downloads the binary from GitHub. On macOS with python.org Python, that fails with `CERTIFICATE_VERIFY_FAILED` until `Install Certificates.command` has been run. A one-off workaround is `SSL_CERT_FILE=/etc/ssl/cert.pem uv sync`.
 - Pin GitHub Actions to exact versions. `astral-sh/setup-uv` doesn't publish floating major tags.
+- **superenums** (Star Realms' `Action` and `Effect` enums) isn't on PyPI: it comes from GitHub, pinned to a tag in `[tool.uv.sources]` in `pyproject.toml`, and `uv.lock` pins the commit. To bump it, change the `tag` there to the new release (e.g. `v0.5.0`) and run `uv lock`, in its own PR. End every `match` over a superenum with `case _: assert_never(x)` so ty proves it exhaustive.
 - `pyrightconfig.json` is gitignored: a local, optional strict pyright config. ty is the checker CI enforces.
 - Wordle reads its vocabulary from `words/words.txt` (or `--vocabulary`), which isn't in the repo.
 
