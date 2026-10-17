@@ -22,8 +22,6 @@ def alphabeta[N: Node](node: N, a: N, b: N, prune_on_ties: bool = True) -> N:
     it to the `a` / `b` window.
     """
     logger.debug("got node=%s a=%s b=%s", node.moves, a.moves, b.moves)
-    if node.is_maximising():
-        logger.debug("got node=%s a=%s b=%s", node.score(), a.score(), b.score())
     if node.is_terminal():
         logger.debug("terminal")
         logger.debug("returned node=%s a=%s b=%s", node.moves, a.moves, b.moves)

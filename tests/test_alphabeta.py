@@ -1,8 +1,10 @@
+from collections import Counter
 from collections.abc import Iterator
+from typing import ClassVar
 
 import pytest
 
-from minimax_games.games.tic_tac_toe.node import Board, Player
+from minimax_games.games.tic_tac_toe.node import Board, Move, Player
 from minimax_games.search.alphabeta import alphabeta
 
 
@@ -124,3 +126,44 @@ def test_result_keeps_the_concrete_node_type() -> None:
 
     assert result.depth == len(result.moves)
     assert result.board[1][1] == Player.X
+
+
+class UnscorableBoard(Board):
+    """A bound that fails if anything asks for its score."""
+
+    def score(self) -> int:
+        raise AssertionError("bound was scored")
+
+
+def test_terminal_node_does_not_score_the_bounds() -> None:
+    """Returning a leaf needs no comparison, so the bounds go unscored."""
+    b = Board.from_string("xxxoo....", Player.X)
+    a = UnscorableBoard.from_string("ooo......")
+    z = UnscorableBoard.from_string("xxx......")
+
+    assert alphabeta(b, a, z) is b
+
+
+class CountingBoard(Board):
+    """A board that records how often each position's lines are scanned."""
+
+    scans: ClassVar[Counter[tuple[Move, ...]]] = Counter()
+
+    def _scan_lines(self) -> int:
+        CountingBoard.scans[tuple(self.moves)] += 1
+        return super()._scan_lines()
+
+    def children(self) -> Iterator[Board]:
+        for child in super().children():
+            yield CountingBoard(child.board, child.player, child.moves, child.depth)
+
+
+def test_each_board_is_scored_at_most_once() -> None:
+    CountingBoard.scans.clear()
+    b = CountingBoard.from_string("xo.x..o..", Player.X)
+
+    result = alphabeta(b, b.minimum(), b.maximum())
+
+    assert result.score() == 7
+    assert CountingBoard.scans
+    assert max(CountingBoard.scans.values()) == 1
