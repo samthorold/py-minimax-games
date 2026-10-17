@@ -1,5 +1,12 @@
-.venv
 __pycache__
-pyrightconfig.json
+.venv
 build
+dist
 **.egg-info
+pyrightconfig.json
+.ruff_cache
+.pytest_cache
+.idea
+.vscode
+.DS_Store
+.claude/settings.local.json

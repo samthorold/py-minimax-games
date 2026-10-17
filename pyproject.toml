@@ -1,13 +1,49 @@
-[build-system]
-requires = ["setuptools", "setuptools-scm"]
-build-backend = "setuptools.build_meta"
-
 [project]
-name = "my_package"
+name = "minimax-games"
+version = "0.2.0"
+description = "Minimax search to play various games."
 authors = [
     {name = "Sam Thorold", email = "sam.thorold@gmail.com"},
 ]
-description = "Minimax search to play various games."
 readme = "README.md"
-requires-python = ">=3.10"
-version = "0.2.0"
+requires-python = ">=3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "actionlint-py==1.7.12.25",
+    "pre-commit==4.7.0",
+    "pytest==9.1.1",
+    "ruff==0.17.1",
+    "shellcheck-py==0.11.0.1",
+    "ty==0.0.89",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14"]
+build-backend = "uv_build"
+
+# The one place uv's version is pinned: setup-uv reads it in CI, and uv refuses
+# to run locally at any other version. Upgrade it together with the uv_build
+# bound above.
+[tool.uv]
+required-version = "==0.13.1"
+
+[tool.ruff]
+target-version = "py313"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "src"]
+addopts = ["--doctest-modules", "--import-mode=importlib"]

@@ -1,31 +1,29 @@
 from __future__ import annotations
+
 import argparse
 import logging
 import random
 from typing import Protocol
 
 from minimax_games.games.wordle.node import (
+    COMPLETELY_WRONG,
+    CORRECT_GUESS,
+    WordleNode,
     evaluate,
     prune,
     score_evaluation,
-    WordleNode,
-    COMPLETELY_WRONG,
-    CORRECT_GUESS,
 )
 from minimax_games.search.alphabeta import alphabeta
-
 
 logger = logging.getLogger(__name__)
 
 
 class Guesser(Protocol):
-    def __call__(self, guesses: list[str], scores: list[str]) -> str:
-        ...
+    def __call__(self, guesses: list[str], scores: list[str]) -> str: ...
 
 
 class Scorer(Protocol):
-    def __call__(self, guess: str) -> str:
-        ...
+    def __call__(self, guess: str) -> str: ...
 
 
 class AutoScorer:
@@ -57,7 +55,7 @@ class UserGuesser:
             if len(guess) != 5:
                 print("Guess must be 5 letters long. Enter another.")
                 continue
-            if not guess in self.vocabulary:
+            if guess not in self.vocabulary:
                 print("Guess not a known word.")
                 continue
             return guess
@@ -111,7 +109,8 @@ class Wordle:
 
     def __str__(self) -> str:
         string = "\n".join(
-            f"{guess} {score}" for guess, score in zip(self.guesses, self.scores)
+            f"{guess} {score}"
+            for guess, score in zip(self.guesses, self.scores, strict=False)
         )
         if len(self.guesses) > len(self.scores):
             string += f"\n{self.guesses[-1]}"

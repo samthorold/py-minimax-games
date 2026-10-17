@@ -1,7 +1,6 @@
 import logging
 
-from minimax_games.games.wordle.game import cli, main, WordleArgs
-
+from minimax_games.games.wordle.game import WordleArgs, cli, main
 
 if __name__ == "__main__":
     print("=== PyWordle ===")

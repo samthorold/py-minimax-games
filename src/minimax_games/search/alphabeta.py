@@ -2,7 +2,6 @@ import logging
 
 from minimax_games.search.node import Node
 
-
 logger = logging.getLogger(__name__)
 
 
