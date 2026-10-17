@@ -2,6 +2,8 @@
 
 Minimax (alpha-beta) search applied to games. src layout: the package is `src/minimax_games/` (`search/` holds the generic `alphabeta` and the `Node` protocol, `games/` the tic-tac-toe and Wordle implementations), tests are in `tests/`. Distribution name `minimax-games`, Python >= 3.13.
 
+A Star Realms game is planned: its agreed design is in [docs/star-realms.md](docs/star-realms.md). Follow it, and update it in the same PR as any change that departs from it.
+
 ## Tooling
 
 Managed with uv. See the README's Development section for commands.
