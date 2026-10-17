@@ -14,6 +14,7 @@ from minimax_games.games.wordle.node import (
     prune,
     score_evaluation,
 )
+from minimax_games.search.alphabeta import alphabeta
 
 
 def feed_input(monkeypatch: pytest.MonkeyPatch, *answers: str) -> list[str]:
@@ -211,3 +212,71 @@ def test_guesser_rejects_feedback_no_candidate_is_consistent_with():
     vocabulary = ["qqqqq", "abcde", "axxxx"]
     with pytest.raises(ValueError, match="inconsistent"):
         AlphaBetaGuesser(vocabulary)(["qqqqq", "abcde"], [".....", "....."])
+
+
+# Words with repeated letters, so many answers share an evaluation.
+SEARCH_VOCABULARY = [
+    "crate",
+    "trace",
+    "eerie",
+    "geese",
+    "creep",
+    "terse",
+    "cheer",
+    "reset",
+    "tease",
+    "crest",
+]
+
+
+@pytest.mark.parametrize(
+    ("depth", "expected_line", "expected_score"),
+    [
+        (2, ["dolly", ".....", "terse", ".--.-"], 3),
+        (4, ["dolly", ".....", "crate", "-==-=", "trace", "====="], 47),
+    ],
+)
+def test_search_result_is_pinned_on_a_small_vocabulary(
+    depth, expected_line, expected_score
+):
+    node = WordleNode(moves=["dolly", "....."], vocabulary=SEARCH_VOCABULARY, depth=3)
+    line = alphabeta(node, node.minimum(), node.maximum(), depth=depth)
+    assert line.moves == expected_line
+    assert line.score() == expected_score
+
+
+@pytest.mark.parametrize(
+    ("guesses", "scores", "expected"),
+    [
+        ([], [], {2: "terse", 4: "crate"}),
+        (["eerie"], ["---.."], {2: "creep", 4: "creep"}),
+        (["eerie"], ["..-.="], {2: "crate", 4: "crate"}),
+        (["geese"], [".=.=="], {2: "terse", 4: "terse"}),
+    ],
+)
+def test_guesser_choice_is_pinned_on_a_small_vocabulary(guesses, scores, expected):
+    # Two misses first, so the guesser searches rather than playing its
+    # fixed openings.
+    guesses = ["dolly", "kudzu", *guesses]
+    scores = [".....", ".....", *scores]
+    for depth, guess in expected.items():
+        guesser = AlphaBetaGuesser(SEARCH_VOCABULARY, depth=depth)
+        assert guesser(guesses, scores) == guess
+
+
+def test_guess_node_has_one_child_per_distinct_evaluation():
+    # "creep", "cheer" and "crest" all score "---.." against "eerie".
+    node = WordleNode(
+        moves=["dolly", ".....", "eerie"], vocabulary=SEARCH_VOCABULARY, depth=4
+    )
+    evaluations = [child.moves[-1] for child in node.children()]
+    distinct = {evaluate(aim, "eerie") for aim in SEARCH_VOCABULARY}
+    assert len(distinct) < len(SEARCH_VOCABULARY)
+    assert sorted(evaluations) == sorted(distinct)
+
+
+def test_search_leaves_the_root_vocabulary_unchanged():
+    vocabulary = list(SEARCH_VOCABULARY)
+    node = WordleNode(moves=["dolly", "....."], vocabulary=vocabulary, depth=3)
+    alphabeta(node, node.minimum(), node.maximum(), depth=4)
+    assert vocabulary == SEARCH_VOCABULARY
