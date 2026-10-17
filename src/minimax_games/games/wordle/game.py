@@ -181,6 +181,41 @@ def main(
     return score_evaluation(wordle.scores[-1])
 
 
+WORD_LENGTH = 5
+
+
+def is_valid_word(word: str) -> bool:
+    """Whether ``word`` is a Wordle word: five lowercase ASCII letters.
+
+    >>> is_valid_word("crate"), is_valid_word("x-ray"), is_valid_word("crates")
+    (True, False, False)
+    """
+    return len(word) == WORD_LENGTH and word.isascii() and word.isalpha()
+
+
+def load_vocabulary(path: str) -> list[str]:
+    """Read one word per line, lowercased.
+
+    Blank lines are ignored. Other entries that aren't five ASCII letters
+    (hyphenated, accented or longer words, ...) are dropped with a warning
+    giving how many, since real word lists often contain them.
+    Raises ``ValueError`` if no word is left.
+    """
+    with open(path) as f:
+        words = [word for line in f if (word := line.strip().lower())]
+    vocabulary = [word for word in words if is_valid_word(word)]
+    if dropped := len(words) - len(vocabulary):
+        logger.warning(
+            "Dropped %d vocabulary entries from %s that aren't %d letters.",
+            dropped,
+            path,
+            WORD_LENGTH,
+        )
+    if not vocabulary:
+        raise ValueError(f"Vocabulary {path} has no five-letter words.")
+    return vocabulary
+
+
 class WordleArgs:
     def __init__(
         self,
@@ -199,12 +234,14 @@ class WordleArgs:
         self.log_level = log_level.upper()
 
     @classmethod
-    def from_argument_parser(cls, cli: argparse.ArgumentParser) -> WordleArgs:
-        args = cli.parse_args()
+    def from_argument_parser(
+        cls, cli: argparse.ArgumentParser, argv: list[str] | None = None
+    ) -> WordleArgs:
+        """Build the game's arguments from ``argv`` (``sys.argv`` by default)."""
+        args = cli.parse_args(argv)
         vocab_path = "words/words.txt" if args.vocabulary is None else args.vocabulary
-        with open(vocab_path) as f:
-            vocabulary = [line.strip().lower() for line in f]
-        truth = random.choice(vocabulary) if args.truth is None else args.truth
+        vocabulary = load_vocabulary(vocab_path)
+        truth = random.choice(vocabulary) if args.truth is None else args.truth.lower()
         guesser = (
             UserGuesser(vocabulary=vocabulary)
             if args.interactive_guess

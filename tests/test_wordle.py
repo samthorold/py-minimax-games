@@ -7,6 +7,9 @@ from minimax_games.games.wordle.game import (
     AutoScorer,
     UserGuesser,
     UserScorer,
+    WordleArgs,
+    cli,
+    load_vocabulary,
 )
 from minimax_games.games.wordle.node import (
     WordleNode,
@@ -295,3 +298,43 @@ def test_search_leaves_the_root_vocabulary_unchanged():
     node = WordleNode(moves=["dolly", "....."], vocabulary=vocabulary, depth=3)
     alphabeta(node, node.minimum(), node.maximum(), depth=4)
     assert vocabulary == SEARCH_VOCABULARY
+
+
+def write_vocabulary(tmp_path, text: str) -> str:
+    path = tmp_path / "words.txt"
+    path.write_text(text)
+    return str(path)
+
+
+def test_load_vocabulary_strips_whitespace_and_drops_blank_lines(tmp_path):
+    path = write_vocabulary(tmp_path, "crate\n\n  trace \n\t\nbogus\n")
+    assert load_vocabulary(path) == ["crate", "trace", "bogus"]
+
+
+def test_load_vocabulary_lowercases_words(tmp_path):
+    path = write_vocabulary(tmp_path, "Crate\nTRACE\n")
+    assert load_vocabulary(path) == ["crate", "trace"]
+
+
+def test_load_vocabulary_drops_words_that_are_not_five_letters(tmp_path, caplog):
+    path = write_vocabulary(
+        tmp_path, "crate\ncat\ncrates\nx-ray\nab1de\nnaïve\ntrace\n"
+    )
+    with caplog.at_level("WARNING"):
+        assert load_vocabulary(path) == ["crate", "trace"]
+    assert "Dropped 5" in caplog.text
+
+
+def test_truth_is_lowercased_before_the_vocabulary_check(tmp_path):
+    path = write_vocabulary(tmp_path, "crate\ntrace\n")
+    args = WordleArgs.from_argument_parser(
+        cli, argv=["--vocabulary", path, "--truth", "CRATE"]
+    )
+    assert args.truth == "crate"
+    assert args.scorer("crate") == "====="
+
+
+def test_load_vocabulary_rejects_a_file_with_no_five_letter_words(tmp_path):
+    path = write_vocabulary(tmp_path, "\ncat\nx-ray\n")
+    with pytest.raises(ValueError, match="no five-letter words"):
+        load_vocabulary(path)
