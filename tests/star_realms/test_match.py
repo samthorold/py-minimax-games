@@ -26,6 +26,11 @@ from minimax_games.games.star_realms.view import View, observe
 
 SEEDS = range(50)
 
+# Seeds where two random bots never finish: once the market is empty, the
+# Authority automatic play gains them outpaces the damage of bots that attack
+# only at random.
+STALLS = {13}
+
 
 class Recorder:
     """Wraps a bot: records its actions."""
@@ -41,14 +46,24 @@ class Recorder:
 
 
 def moves(seed: int, bots: tuple[Bot, Bot]) -> Iterator[tuple[GameState, Action]]:
-    """Each state of a game from `seed` with the action the bot to move chose,
-    as `play_match` plays it: for checking properties of the rules."""
-    state = rules.new_game(seed)
-    while rules.winner(state) is None:
+    """Each state of a game from `seed` with the action taken in it, the bot's
+    or an automatic one, as `play_match` plays it: for checking properties of
+    the rules."""
+    automatic: list[tuple[GameState, Action]] = []
+
+    def record(state: GameState, action: Action) -> None:
+        automatic.append((state, action))
+
+    state = rules.auto_play(rules.new_game(seed), record)
+    while True:
+        yield from automatic
+        automatic.clear()
+        if rules.winner(state) is not None:
+            return
         view = observe(state, state.current)
         action = bots[state.current].choose(view, rules.legal_actions(state))
         yield state, action
-        state = rules.apply(state, action)
+        state = rules.advance(state, action, record)
 
 
 def test_applying_an_action_leaves_the_state_alone():
@@ -67,9 +82,18 @@ class Passive:
 
 def test_games_between_random_bots_end_with_a_winner():
     for seed in SEEDS:
+        if seed in STALLS:
+            continue
         result = play_match((RandomBot(seed), RandomBot(seed + 1000)), seed)
         assert result.winner in (0, 1)
         assert result.turns > 0
+
+
+def test_the_known_stalls_still_stall():
+    for seed in STALLS:
+        with pytest.raises(MatchTooLong):
+            bots = (RandomBot(seed), RandomBot(seed + 1000))
+            play_match(bots, seed, max_turns=300)
 
 
 def test_the_same_seed_gives_the_same_game():
@@ -108,7 +132,7 @@ def test_the_log_shows_each_turns_plays_attacks_and_authority():
     vipers = hand.count(VIPER)
     expected = [
         "Turn 1: Player 1 to play. Authority: Player 1 50, Player 2 50",
-        *(f"Player 1 plays {card.name}" for card in hand),
+        *(f"Player 1 plays {card.name} (auto)" for card in hand),
         *(
             [f"Player 1 attacks Player 2 for {vipers} (Authority 50 -> {50 - vipers})"]
             if vipers
@@ -172,6 +196,8 @@ def all_cards(state: GameState) -> Counter[str]:
 def test_random_games_neither_create_nor_lose_cards_and_use_every_action():
     taken: Counter[str] = Counter()
     for seed in SEEDS:
+        if seed in STALLS:
+            continue
         cards = all_cards(rules.new_game(seed))
         for state, action in moves(seed, (RandomBot(seed), RandomBot(seed + 1000))):
             assert all_cards(state) == cards
@@ -261,6 +287,31 @@ class OnlyViews:
         assert view.observer == view.current == self.player
         self.calls += 1
         return self.bot.choose(view, actions)
+
+
+class NoAutomatic:
+    """Wraps a bot: checks it is never offered an automatic action."""
+
+    def __init__(self, bot: Bot) -> None:
+        self.bot = bot
+
+    def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
+        assert not any(rules.automatic(a) for a in actions), actions
+        return self.bot.choose(view, actions)
+
+
+def test_bots_are_never_offered_an_automatic_action():
+    for seed in range(10):
+        bots = (NoAutomatic(RandomBot(seed)), NoAutomatic(RandomBot(seed + 1)))
+        play_match(bots, seed)
+
+
+def test_the_log_marks_automatic_actions():
+    lines: list[str] = []
+    play_match((RandomBot(1), RandomBot(2)), seed=5, log=lines.append)
+    auto = [line for line in lines if line.endswith(" (auto)")]
+    assert any(" plays Scout (auto)" in line for line in auto)
+    assert not any(" acquires " in line or " attacks " in line for line in auto)
 
 
 def test_bots_are_only_ever_given_their_own_view():
