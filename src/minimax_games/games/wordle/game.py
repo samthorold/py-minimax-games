@@ -45,6 +45,9 @@ class UserScorer:
             if len(score) != 5:
                 print("Score must be 5 letters long. Enter another.")
                 continue
+            if not set(score) <= set(".-="):
+                print("Score may only contain '.', '-' and '='. Enter another.")
+                continue
             return score
 
 
