@@ -3,7 +3,7 @@ from __future__ import annotations
 import functools
 import logging
 from collections.abc import Iterator
-from typing import Protocol, Self
+from typing import Self
 
 logger = logging.getLogger(__name__)
 
@@ -95,49 +95,6 @@ def prune(
         if final_only:
             break
     return words
-
-
-class Guesser(Protocol):
-    def __call__(self, guesses: list[str], scores: list[str]) -> str: ...
-
-
-class Scorer(Protocol):
-    def __call__(self, guess: str) -> str: ...
-
-
-class AutoScorer:
-    def __init__(self, truth: str) -> None:
-        self.truth = truth
-
-    def __call__(self, guess: str) -> str:
-        return evaluate(self.truth, guess)
-
-
-class UserScorer:
-    def __call__(self, guess: str) -> str:
-        print(f"Guess: {guess}")
-        while True:
-            score = input("Score: ").strip().lower()
-            if len(score) != 5:
-                print("Score must be 5 letters long. Enter another.")
-                continue
-            return score
-
-
-class UserGuesser:
-    def __init__(self, vocabulary: list[str]) -> None:
-        self.vocabulary = vocabulary
-
-    def __call__(self, guesses: list[str], scores: list[str]) -> str:
-        while True:
-            guess = input("Guess: ").strip().lower()
-            if len(guess) != 5:
-                print("Guess must be 5 letters long. Enter another.")
-                continue
-            if guess not in self.vocabulary:
-                print("Guess not a known word.")
-                continue
-            return guess
 
 
 class WordleNode:
