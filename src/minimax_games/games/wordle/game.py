@@ -65,8 +65,9 @@ class UserGuesser:
 
 
 class AlphaBetaGuesser:
-    def __init__(self, vocabulary: list[str]) -> None:
+    def __init__(self, vocabulary: list[str], depth: int = SEARCH_DEPTH) -> None:
         self.vocabulary = vocabulary
+        self.depth = depth
 
     def __call__(self, guesses: list[str], scores: list[str]) -> str:
         if not guesses:
@@ -79,24 +80,32 @@ class AlphaBetaGuesser:
             scores=scores,
             final_only=False,
         )
+        if not vocabulary:
+            # The answer is always consistent with its own feedback.
+            raise ValueError(
+                "No word in the vocabulary fits the feedback: it is inconsistent "
+                f"(guesses={guesses}, scores={scores})."
+            )
         node = WordleNode(
             moves=[guesses[-1], scores[-1]],
             vocabulary=vocabulary,
             depth=1 + len(guesses) * 2,
         )
-        # Look one guess ahead: each candidate guess (ply 1) is valued by the
-        # worst feedback any remaining answer could give it (ply 2).
-        best_guess = alphabeta(
+        # With the default depth, look one guess ahead: each candidate guess
+        # (ply 1) is valued by the worst feedback any remaining answer could
+        # give it (ply 2).
+        line = alphabeta(
             node,
             a=node.minimum(),
             b=node.maximum(),
             prune_on_ties=True,
-            depth=SEARCH_DEPTH,
+            depth=self.depth,
         )
-        logger.info(
-            "best node move=%s moves=%s", best_guess.moves[-2], best_guess.moves
-        )
-        return best_guess.moves[-2]
+        # The returned leaf ends the predicted line; play its first move
+        # after the root, not its last guess.
+        next_guess = line.moves[len(node.moves)]
+        logger.info("next guess=%s line=%s", next_guess, line.moves)
+        return next_guess
 
 
 class Wordle:

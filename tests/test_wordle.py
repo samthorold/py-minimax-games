@@ -189,3 +189,25 @@ def test_guesser_picks_the_guess_with_the_best_guaranteed_feedback():
     guesses = ["qqqqq", "rrrrr"]
     scores = [".....", "....."]
     assert AlphaBetaGuesser(vocabulary)(guesses, scores) == "abcde"
+
+
+def test_deeper_guesser_plays_the_next_guess_of_its_line():
+    # Three candidates remain. Guessing "fghij" earns "....." against both
+    # others, so it can't tell them apart; "abcde" and "abcdk" can. Searching
+    # two guesses ahead, the best line opens with "abcde" or "abcdk" and its
+    # second guess is the answer, which may be "fghij". The guesser must
+    # play the line's first guess, a legal candidate given all feedback.
+    vocabulary = ["qqqqq", "rrrrr", "fghij", "abcde", "abcdk"]
+    guesses = ["qqqqq", "rrrrr"]
+    scores = [".....", "....."]
+    guess = AlphaBetaGuesser(vocabulary, depth=4)(guesses, scores)
+    assert guess in prune(vocabulary, guesses, scores, final_only=False)
+    assert guess in {"abcde", "abcdk"}
+
+
+def test_guesser_rejects_feedback_no_candidate_is_consistent_with():
+    # Every remaining word contains "a", so "....." for "abcde" rules
+    # them all out: the feedback can't have come from any of them.
+    vocabulary = ["qqqqq", "abcde", "axxxx"]
+    with pytest.raises(ValueError, match="inconsistent"):
+        AlphaBetaGuesser(vocabulary)(["qqqqq", "abcde"], [".....", "....."])
