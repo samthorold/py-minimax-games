@@ -49,6 +49,7 @@ def minimax(node: Board) -> int:
     return max(values) if node.is_maximising() else min(values)
 
 
+@pytest.mark.parametrize("soft", [True, False])
 @pytest.mark.parametrize(
     ("position", "player"),
     [
@@ -62,11 +63,54 @@ def minimax(node: Board) -> int:
     ],
 )
 def test_tic_tac_toe_agrees_with_brute_force_minimax(
-    position: str, player: Player
+    position: str, player: Player, soft: bool
 ) -> None:
     b = Board.from_string(position, player)
 
-    result = alphabeta(b, b.minimum(), b.maximum())
+    result = alphabeta(b, b.minimum(), b.maximum(), soft=soft)
 
     assert result.score() == minimax(b)
     assert minimax(b.move(result.moves[0])) == minimax(b)
+
+
+@pytest.mark.parametrize("soft", [True, False])
+@pytest.mark.parametrize(
+    ("position", "player", "score", "moves"),
+    [
+        (
+            "x...o...x",
+            Player.O,
+            0,
+            [(0, 1), (2, 1), (2, 0), (0, 2), (1, 2), (1, 0)],
+        ),
+        ("xo..x....", Player.O, 6, [(2, 2), (1, 0), (0, 2), (1, 2)]),
+        ("x.o.x...o", Player.X, 0, [(1, 2), (1, 0), (0, 1), (2, 1), (2, 0)]),
+        ("xo.x..o..", Player.X, 7, [(1, 1), (0, 2), (1, 2)]),
+        (
+            "o.x.x....",
+            Player.O,
+            0,
+            [(2, 0), (1, 0), (1, 2), (0, 1), (2, 1), (2, 2)],
+        ),
+        ("xoxo.....", Player.X, 7, [(1, 1), (1, 2), (2, 0)]),
+        (
+            ".x..o.x..",
+            Player.O,
+            0,
+            [(0, 0), (2, 2), (2, 1), (0, 2), (1, 2), (1, 0)],
+        ),
+    ],
+)
+def test_tic_tac_toe_best_line_is_pinned(
+    position: str,
+    player: Player,
+    score: int,
+    moves: list[tuple[int, int]],
+    soft: bool,
+) -> None:
+    b = Board.from_string(position, player)
+
+    result = alphabeta(b, b.minimum(), b.maximum(), soft=soft)
+
+    assert result.score() == score
+    assert result.moves == moves

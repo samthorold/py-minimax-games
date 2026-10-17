@@ -1,4 +1,5 @@
 import logging
+import operator
 
 from minimax_games.search.node import Node
 
@@ -21,8 +22,8 @@ def alphabeta(node: Node, a: Node, b: Node, soft: bool = True) -> Node:
         logger.debug("returned node=%s a=%s b=%s", node.moves, a.moves, b.moves)
         return node
 
-    gt_op = "__ge__" if soft else "__gt__"
-    lt_op = "__le__" if soft else "__lt__"
+    fails_high = operator.ge if soft else operator.gt
+    fails_low = operator.le if soft else operator.lt
 
     best_node = node.minimum() if node.is_maximising() else node.maximum()
 
@@ -32,12 +33,12 @@ def alphabeta(node: Node, a: Node, b: Node, soft: bool = True) -> Node:
         if node.is_maximising():
             best_node = max(best_node, alphabeta(node=child, a=a, b=b, soft=soft))
             a = max(a, best_node)
-            if getattr(best_node, gt_op)(b):
+            if fails_high(best_node, b):
                 break
         else:
             best_node = min(best_node, alphabeta(node=child, a=a, b=b, soft=soft))
             b = min(b, best_node)
-            if getattr(best_node, lt_op)(a):
+            if fails_low(best_node, a):
                 break
 
     if not has_children:
