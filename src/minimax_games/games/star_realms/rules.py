@@ -2,6 +2,7 @@
 
 import dataclasses
 import random
+from collections.abc import Callable
 from typing import assert_never
 
 from minimax_games.games.star_realms.action import (
@@ -237,6 +238,83 @@ def legal_actions(state: GameState) -> tuple[Action, ...]:
     return tuple(actions)
 
 
+def _pure_gain(effects: tuple[Effect, ...]) -> bool:
+    """Whether `effects` only add trade, combat or Authority."""
+    return all(isinstance(e, Trade | Combat | Authority) for e in effects)
+
+
+def automatic(action: Action) -> bool:
+    """Whether `action` is applied automatically, never offered as a decision.
+
+    The rule for conservative automatic play (docs/star-realms.md): an action
+    is automatic when taking it now can't make any later option worse.
+
+    - `PlayCard` of a **ship** whose primary effects are pure gain (trade,
+      combat, Authority). A ship in hand and a ship in play both go to the
+      discard pile at the end of the turn; in play it only adds options
+      (ally abilities, scrapping).
+    - `UseAlly` whose ally effects are pure gain, and `UseBase` whose primary
+      effects are pure gain: the card stays where it is, and the gain can't
+      be lost by taking it early.
+
+    Everything else is a decision. `Draw` never is automatic: drawing can
+    reshuffle the discard pile, so drawing before or after an `Acquire` (the
+    acquired card goes to the discard pile) changes the deck. Playing a base
+    is a decision too: a base left in hand goes to the discard pile, so it
+    changes what is reshuffled. `Scrap` loses the card, and `Acquire`,
+    attacks and `EndTurn` are the turn's real choices.
+
+    This is sound only for the effects the engine implements so far: every
+    new effect or action (opponent discards, scrapping from hand, ...) must
+    revisit it.
+    """
+    match action:
+        case PlayCard(card):
+            return card.type is CardType.SHIP and _pure_gain(card.primary)
+        case UseAlly(card):
+            return _pure_gain(card.ally)
+        case UseBase(card):
+            return _pure_gain(card.primary)
+        case Scrap() | Acquire() | AttackPlayer() | AttackBase() | EndTurn():
+            return False
+        case _:
+            assert_never(action)
+
+
+type OnAction = Callable[[GameState, Action], None]
+"""Called with each automatic action and the state it is taken in."""
+
+
+def auto_play(state: GameState, on_action: OnAction | None = None) -> GameState:
+    """Apply automatic actions, in `legal_actions` order, until none is legal.
+
+    The order doesn't change the outcome, but a fixed one keeps games and
+    their logs reproducible. `on_action`, if given, is told of each one
+    before it is applied (the match runner logs them through it).
+    """
+    while (action := _next_automatic(state)) is not None:
+        if on_action is not None:
+            on_action(state, action)
+        state = _apply(state, action)
+    return state
+
+
+def _next_automatic(state: GameState) -> Action | None:
+    return next((a for a in legal_actions(state) if automatic(a)), None)
+
+
+def advance(
+    state: GameState, action: Action, on_action: OnAction | None = None
+) -> GameState:
+    """Apply `action`, a decision, then any automatic play it opens up.
+
+    This is the move generator bots and search share: from a state `advance`
+    returns, `legal_actions` holds decisions only. `apply` is the bare rules,
+    without automatic play.
+    """
+    return auto_play(apply(state, action), on_action)
+
+
 def apply(state: GameState, action: Action) -> GameState:
     """Return the state after the current player takes `action`.
 
@@ -245,6 +323,11 @@ def apply(state: GameState, action: Action) -> GameState:
     if action not in legal_actions(state):
         msg = f"{action} is not legal now"
         raise ValueError(msg)
+    return _apply(state, action)
+
+
+def _apply(state: GameState, action: Action) -> GameState:
+    """`apply` for an action already known to be legal."""
     player = state.players[state.current]
     match action:
         case PlayCard(card):

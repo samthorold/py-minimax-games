@@ -36,7 +36,16 @@ The ladder of baselines:
   - `Effect`: `Trade`, `Combat`, `Authority`, `Draw`, `OpponentDiscards`, `DestroyBase`, `ScrapHandOrDiscard`, `ScrapTradeRow`, `NextShipOnTop`, `Choice`, plus one variant each for the base-set abilities that fit none of those: `AcquireShipFreeOnTop` (Blob Carrier), `DrawIfBases` (Embassy Yacht), `DrawPerFactionCard` (Blob World), `DiscardThenDraw` (Recycling Station), `ScrapThenDraw` (Brain World), `ScrapFromHand` (Machine Base), `CopyShip` (Stealth Needle), `ShipsGainCombat` (Fleet HQ) and `AllyForAllFactions` (Mech World). Each is implemented in the slice that first needs its card.
 
   Cards are plain frozen dataclasses loaded from the data file.
-- **Moves are micro-actions, with conservative automatic play.** Actions that can't make any later option worse are applied automatically and never branch, e.g. playing a ship whose effects are pure gain, or triggering an ally ability that only adds trade/combat/authority. Everything else is a decision node: buys, scraps, targets, "or" choices, attack allocation, and orderings that interact with draws. Baselines and search bots share the same move generator.
+- **Moves are micro-actions, with conservative automatic play.** Actions that can't make any later option worse are applied automatically and never branch. Everything else is a decision node: buys, scraps, targets, "or" choices, attack allocation, and orderings that interact with draws. Baselines and search bots share the same move generator.
+
+  The rule lives in one place, `rules.automatic(action)`. An action is automatic when it is:
+  - `PlayCard` of a **ship** whose primary effects are all pure gain (trade, combat, Authority). Hand and ships in play both go to the discard pile at the end of the turn, and in play the ship only adds options (ally abilities, scrapping);
+  - `UseAlly` whose ally effects are all pure gain;
+  - `UseBase` whose primary effects are all pure gain.
+
+  Not automatic: anything with `Draw` (a draw can reshuffle the discard pile, and acquired cards go there, so drawing before or after a buy changes the deck); **playing a base**, even a pure-gain one (a base left in hand goes to the discard pile and is reshuffled, played it stays out of the deck, so it changes deck composition); `Scrap`, `Acquire`, attacks and `EndTurn`. Each later slice that adds an effect or action (opponent discards, scrapping from hand, ...) must revisit the rule.
+
+  `rules.auto_play(state)` applies automatic actions, in `legal_actions` order, until none is left; `rules.advance(state, action)` applies a decision then auto-plays. The match runner auto-plays after dealing and after every action, so bots are only offered decisions. `rules.apply` stays the bare rules, without automatic play. Tests brute-force every way to play a turn from small hand-built states with and without automatic play: every outcome with it is reachable without, and every outcome without it is matched by one with it that leaves the player at least as much Authority and the opponent at most as much (a pure-gain card left unplayed only loses Authority or damage).
 - **Fully specified worlds.** The state always holds a concrete order for every deck, driven by a seeded RNG, so a seed fully determines a game.
 - **Observation views.** `observe(state, player)` returns what that player knows: their own hand, everything public, and the contents but not the order of hidden piles. **Bots only ever receive views**, enforced by tests. The one exception is the benchmark-only "cheat" bot.
 - **Sampling.** A sampler builds a full world consistent with a view, used by the sampler bot and ISMCTS.
@@ -61,7 +70,7 @@ The ladder of baselines:
 ## Harness
 
 - A plain match loop (deal; ask the current bot for an action given its view; apply; repeat until someone's Authority reaches 0) and a plain tournament loop over seeds and pairings. No py-ev: the base set has no timing to model.
-- **Game log**: a replayable text transcript per seed. It is **opt-in** (off by default, so tournaments don't pay for I/O) and records only the actions the match runner applies, never search nodes. Nothing is formatted when it's off. `play_match(..., log=sink)` takes a `Callable[[str], None]` sink (e.g. `print` or `list.append`); `transcript.describe(action, state)` formats one action with an exhaustive `match` over `Action`, so each new action kind needs one new case. `python -m minimax_games.games.star_realms --seed 7 --log` prints a game's transcript. Search code logs only behind `logger.isEnabledFor(logging.DEBUG)`.
+- **Game log**: a replayable text transcript per seed. It is **opt-in** (off by default, so tournaments don't pay for I/O) and records only the actions the match runner applies, automatic ones marked "(auto)", never search nodes. Nothing is formatted when it's off. `play_match(..., log=sink)` takes a `Callable[[str], None]` sink (e.g. `print` or `list.append`); `transcript.describe(action, state)` formats one action with an exhaustive `match` over `Action`, so each new action kind needs one new case. `python -m minimax_games.games.star_realms --seed 7 --log` prints a game's transcript. Search code logs only behind `logger.isEnabledFor(logging.DEBUG)`.
 - A human-playable CLI is deferred. When it comes, it's another bot whose decisions come from `input()`.
 
 ## Dependencies
