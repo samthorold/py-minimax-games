@@ -17,6 +17,9 @@ from minimax_games.search.alphabeta import alphabeta
 
 logger = logging.getLogger(__name__)
 
+# Plies AlphaBetaGuesser searches: the next guess and its feedback.
+SEARCH_DEPTH = 2
+
 
 class Guesser(Protocol):
     def __call__(self, guesses: list[str], scores: list[str]) -> str: ...
@@ -81,11 +84,14 @@ class AlphaBetaGuesser:
             vocabulary=vocabulary,
             depth=1 + len(guesses) * 2,
         )
+        # Look one guess ahead: each candidate guess (ply 1) is valued by the
+        # worst feedback any remaining answer could give it (ply 2).
         best_guess = alphabeta(
             node,
             a=node.minimum(),
             b=node.maximum(),
             prune_on_ties=True,
+            depth=SEARCH_DEPTH,
         )
         logger.info(
             "best node move=%s moves=%s", best_guess.moves[-2], best_guess.moves
