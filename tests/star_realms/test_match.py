@@ -12,6 +12,7 @@ from minimax_games.games.star_realms.action import (
     EndTurn,
     PlayCard,
     Scrap,
+    UseAlly,
 )
 from minimax_games.games.star_realms.bots import Bot, RandomBot
 from minimax_games.games.star_realms.catalogue import CATALOGUE, EXPLORER, VIPER
@@ -151,6 +152,7 @@ class Conserving:
         self.cards = cards
         self.acquired = 0
         self.scrapped = 0
+        self.allied = 0
 
     def choose(self, state: GameState, actions: tuple[Action, ...]) -> Action:
         assert all_cards(state) == self.cards
@@ -158,11 +160,12 @@ class Conserving:
         assert all_cards(rules.apply(state, action)) == self.cards
         self.acquired += isinstance(action, Acquire)
         self.scrapped += isinstance(action, Scrap)
+        self.allied += isinstance(action, UseAlly)
         return action
 
 
-def test_random_games_neither_create_nor_lose_cards_and_do_buy_and_scrap():
-    acquired = scrapped = 0
+def test_random_games_neither_create_nor_lose_cards_and_do_buy_scrap_and_ally():
+    acquired = scrapped = allied = 0
     for seed in SEEDS:
         cards = all_cards(rules.new_game(seed))
         bots = (
@@ -172,8 +175,10 @@ def test_random_games_neither_create_nor_lose_cards_and_do_buy_and_scrap():
         play_match((bots[0], bots[1]), seed)
         acquired += bots[0].acquired + bots[1].acquired
         scrapped += bots[0].scrapped + bots[1].scrapped
+        allied += bots[0].allied + bots[1].allied
     assert acquired > 0
     assert scrapped > 0
+    assert allied > 0
 
 
 class Buyer:
@@ -212,4 +217,15 @@ def test_the_log_shows_a_scrap_and_what_it_gave():
     blob = dataclasses.replace(ram, scrap=(Authority(4), Draw(2)))
     assert transcript.describe(Scrap(blob), dataclasses.replace(state, current=1)) == (
         "Player 2 scraps Ram for 4 Authority, 2 cards"
+    )
+
+
+def test_the_log_shows_an_ally_ability_and_what_it_gave():
+    state = rules.new_game(seed=1)
+    cutter, mothership = CATALOGUE["Cutter"], CATALOGUE["Mothership"]
+    assert transcript.describe(UseAlly(cutter), state) == (
+        "Player 1 uses Cutter's ally ability for 4 combat"
+    )
+    assert transcript.describe(UseAlly(mothership), state) == (
+        "Player 1 uses Mothership's ally ability for 1 card"
     )

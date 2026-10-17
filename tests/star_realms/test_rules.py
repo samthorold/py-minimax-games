@@ -9,6 +9,7 @@ from minimax_games.games.star_realms.action import (
     EndTurn,
     PlayCard,
     Scrap,
+    UseAlly,
 )
 from minimax_games.games.star_realms.card import Card, CardType
 from minimax_games.games.star_realms.catalogue import (
@@ -268,3 +269,97 @@ def test_scrap_abilities_with_effects_not_yet_implemented_are_unavailable():
     first = dataclasses.replace(state.players[0], hand=(), in_play=(frigate, survey))
     state = dataclasses.replace(state, players=(first, state.players[1]))
     assert scraps(state) == [Scrap(frigate)]
+
+
+SHUTTLE = CATALOGUE["Federation Shuttle"]
+
+
+def allies(state: GameState) -> list[UseAlly]:
+    return [a for a in rules.legal_actions(state) if isinstance(a, UseAlly)]
+
+
+def test_an_ally_ability_is_usable_once_another_card_of_its_faction_is_in_play():
+    state = with_hand(rules.new_game(seed=1), CUTTER, SCOUT, RAM, SHUTTLE)
+    for card in (CUTTER, SCOUT, RAM):
+        state = rules.apply(state, PlayCard(card))
+    assert allies(state) == []
+    with pytest.raises(ValueError, match="not legal"):
+        rules.apply(state, UseAlly(CUTTER))
+    state = rules.apply(state, PlayCard(SHUTTLE))
+    assert allies(state) == [UseAlly(CUTTER), UseAlly(SHUTTLE)]
+    combat = state.combat
+    after = rules.apply(state, UseAlly(CUTTER))
+    assert after.combat == combat + 4
+    assert after.players[0].in_play == state.players[0].in_play
+
+
+def test_an_ally_ability_can_be_used_only_once_per_turn():
+    state = with_hand(rules.new_game(seed=1), CUTTER, SHUTTLE)
+    state = rules.apply(rules.apply(state, PlayCard(CUTTER)), PlayCard(SHUTTLE))
+    state = rules.apply(state, UseAlly(CUTTER))
+    assert allies(state) == [UseAlly(SHUTTLE)]
+    with pytest.raises(ValueError, match="not legal"):
+        rules.apply(state, UseAlly(CUTTER))
+
+
+def test_two_copies_ally_each_other_and_each_uses_its_ally_ability_once():
+    state = with_hand(rules.new_game(seed=1), CUTTER, CUTTER)
+    state = rules.apply(state, PlayCard(CUTTER))
+    assert allies(state) == []
+    state = rules.apply(state, PlayCard(CUTTER))
+    state = rules.apply(state, UseAlly(CUTTER))
+    assert allies(state) == [UseAlly(CUTTER)]
+    state = rules.apply(state, UseAlly(CUTTER))
+    assert state.combat == 8
+    assert allies(state) == []
+
+
+def test_ally_abilities_are_available_again_next_turn():
+    state = with_hand(rules.new_game(seed=1), CUTTER, SHUTTLE)
+    state = rules.apply(rules.apply(state, PlayCard(CUTTER)), PlayCard(SHUTTLE))
+    state = rules.apply(rules.apply(state, UseAlly(CUTTER)), UseAlly(SHUTTLE))
+    state = rules.apply(rules.apply(state, EndTurn()), EndTurn())
+    assert state.current == 0
+    state = with_hand(state, CUTTER, SHUTTLE)
+    state = rules.apply(rules.apply(state, PlayCard(CUTTER)), PlayCard(SHUTTLE))
+    assert allies(state) == [UseAlly(CUTTER), UseAlly(SHUTTLE)]
+
+
+TRADE_POD = CATALOGUE["Trade Pod"]
+
+
+def test_a_scrapped_card_no_longer_allies_the_cards_still_in_play():
+    state = with_hand(rules.new_game(seed=1), RAM, TRADE_POD)
+    state = rules.apply(rules.apply(state, PlayCard(RAM)), PlayCard(TRADE_POD))
+    assert allies(state) == [UseAlly(RAM), UseAlly(TRADE_POD)]
+    state = rules.apply(state, Scrap(RAM))
+    assert allies(state) == []
+
+
+def test_an_ally_ability_used_before_scrapping_its_card_keeps_its_effect():
+    state = with_hand(rules.new_game(seed=1), RAM, TRADE_POD)
+    state = rules.apply(rules.apply(state, PlayCard(RAM)), PlayCard(TRADE_POD))
+    state = rules.apply(rules.apply(state, UseAlly(RAM)), Scrap(RAM))
+    assert state.combat == 5 + 2
+    assert state.trade == 3 + 3
+
+
+def test_scrapping_one_of_two_copies_scraps_the_one_whose_ally_was_used():
+    state = with_hand(rules.new_game(seed=1), RAM, RAM, TRADE_POD)
+    for card in (RAM, RAM, TRADE_POD):
+        state = rules.apply(state, PlayCard(card))
+    state = rules.apply(rules.apply(state, UseAlly(RAM)), Scrap(RAM))
+    assert allies(state) == [UseAlly(RAM), UseAlly(TRADE_POD)]
+    state = rules.apply(state, UseAlly(RAM))
+    assert allies(state) == [UseAlly(TRADE_POD)]
+
+
+def test_ally_abilities_with_effects_not_yet_implemented_are_unavailable():
+    destroyer = CATALOGUE["Blob Destroyer"]  # ally: destroy base, scrap Trade Row
+    frigate = CATALOGUE["Imperial Frigate"]  # ally: 2 combat
+    corvette = CATALOGUE["Corvette"]  # ally: 2 combat
+    state = rules.new_game(seed=1)
+    in_play = (destroyer, RAM, frigate, corvette, SCOUT, SCOUT)
+    first = dataclasses.replace(state.players[0], hand=(), in_play=in_play)
+    state = dataclasses.replace(state, players=(first, state.players[1]))
+    assert allies(state) == [UseAlly(RAM), UseAlly(frigate), UseAlly(corvette)]
