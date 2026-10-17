@@ -1,0 +1,493 @@
+# Star Realms base set: the Trade Deck (80 cards), the Explorer pile and the
+# starting-deck cards. Game data only, read by catalogue.py.
+#
+# Sources (transcribed 2026-10-17, cross-checked against each other):
+# - Card text, costs, defense, outpost/base and copies:
+#   https://github.com/josschne/starrealms/blob/b660c0bdfb711dcf24a743163cea268f5506ea00/tradeCards.js
+# - Names, costs, factions and types:
+#   https://github.com/dhaven/sr-stats/blob/842791dc5c3c32ac19e18f7345400e9e7a2697a8/website/lib/card_data/core_set.js
+# - Copies (the Core Set deck list):
+#   https://github.com/captdeaf/srtts/blob/1c16cd42578f70de0f13a396c1c4d34a2cfd2ef7/src/sr_decks.lua
+# - Explorer, Scout, Viper and the box contents (10 Explorers, 16 Scouts,
+#   4 Vipers): https://rulespal.com/star-realms/rulebook and
+#   https://files.wisewizardgames.com/wwg/rules/SRROE_Rulebook_Web_23-08-24.pdf
+# - Disputed costs spot-checked against search excerpts of
+#   https://megahaulin.com/2015/08/31/star-realms-card-tier-lists/ (Battle
+#   Station 3, Recycling Station 4) and
+#   https://starrealms.fandom.com/wiki/Imperial_Fighter (cost 1, 3 copies).
+# Where the sources disagree: dhaven/sr-stats gives Stealth Needle cost 1;
+# the others say 4, used here. It also lists every base as "base", so
+# outposts come from josschne/starrealms.
+#
+# Format: one [[card]] table per card. `faction` is omitted for unaligned
+# cards, `defense` for ships. `primary`, `ally` and `scrap` are lists of
+# effects, each either `{ name = n }` (trade, combat, authority, draw,
+# opponent_discards, scrap_hand_or_discard, scrap_trade_row,
+# discard_then_draw, scrap_then_draw, ships_gain_combat), a bare string
+# (destroy_base, next_ship_on_top, acquire_ship_free_on_top,
+# draw_per_faction_card, scrap_from_hand, copy_ship, ally_for_all_factions),
+# `{ draw_if_bases = { bases = b, cards = n } }`, or
+# `{ choice = [[option effects], [option effects], ...] }`.
+
+# Unaligned
+
+[[card]]
+name = "Scout"
+type = "ship"
+cost = 0
+copies = 16
+primary = [{ trade = 1 }]
+
+[[card]]
+name = "Viper"
+type = "ship"
+cost = 0
+copies = 4
+primary = [{ combat = 1 }]
+
+[[card]]
+name = "Explorer"
+type = "ship"
+cost = 2
+copies = 10
+primary = [{ trade = 2 }]
+scrap = [{ combat = 2 }]
+
+# Blob (20)
+
+[[card]]
+name = "Blob Fighter"
+faction = "Blob"
+type = "ship"
+cost = 1
+copies = 3
+primary = [{ combat = 3 }]
+ally = [{ draw = 1 }]
+
+[[card]]
+name = "Battle Pod"
+faction = "Blob"
+type = "ship"
+cost = 2
+copies = 2
+primary = [{ combat = 4 }, { scrap_trade_row = 1 }]
+ally = [{ combat = 2 }]
+
+[[card]]
+name = "Trade Pod"
+faction = "Blob"
+type = "ship"
+cost = 2
+copies = 3
+primary = [{ trade = 3 }]
+ally = [{ combat = 2 }]
+
+[[card]]
+name = "Ram"
+faction = "Blob"
+type = "ship"
+cost = 3
+copies = 2
+primary = [{ combat = 5 }]
+ally = [{ combat = 2 }]
+scrap = [{ trade = 3 }]
+
+[[card]]
+name = "Blob Destroyer"
+faction = "Blob"
+type = "ship"
+cost = 4
+copies = 2
+primary = [{ combat = 6 }]
+ally = ["destroy_base", { scrap_trade_row = 1 }]
+
+[[card]]
+name = "Battle Blob"
+faction = "Blob"
+type = "ship"
+cost = 6
+copies = 1
+primary = [{ combat = 8 }]
+ally = [{ draw = 1 }]
+scrap = [{ combat = 4 }]
+
+[[card]]
+name = "Blob Carrier"
+faction = "Blob"
+type = "ship"
+cost = 6
+copies = 1
+primary = [{ combat = 7 }]
+ally = ["acquire_ship_free_on_top"]
+
+[[card]]
+name = "Mothership"
+faction = "Blob"
+type = "ship"
+cost = 7
+copies = 1
+primary = [{ combat = 6 }, { draw = 1 }]
+ally = [{ draw = 1 }]
+
+[[card]]
+name = "Blob Wheel"
+faction = "Blob"
+type = "base"
+cost = 3
+defense = 5
+copies = 3
+primary = [{ combat = 1 }]
+scrap = [{ trade = 3 }]
+
+[[card]]
+name = "The Hive"
+faction = "Blob"
+type = "base"
+cost = 5
+defense = 5
+copies = 1
+primary = [{ combat = 3 }]
+ally = [{ draw = 1 }]
+
+[[card]]
+name = "Blob World"
+faction = "Blob"
+type = "base"
+cost = 8
+defense = 7
+copies = 1
+primary = [{ choice = [[{ combat = 5 }], ["draw_per_faction_card"]] }]
+
+# Trade Federation (20)
+
+[[card]]
+name = "Federation Shuttle"
+faction = "Trade Federation"
+type = "ship"
+cost = 1
+copies = 3
+primary = [{ trade = 2 }]
+ally = [{ authority = 4 }]
+
+[[card]]
+name = "Cutter"
+faction = "Trade Federation"
+type = "ship"
+cost = 2
+copies = 3
+primary = [{ authority = 4 }, { trade = 2 }]
+ally = [{ combat = 4 }]
+
+[[card]]
+name = "Embassy Yacht"
+faction = "Trade Federation"
+type = "ship"
+cost = 3
+copies = 2
+primary = [
+    { authority = 3 },
+    { trade = 2 },
+    { draw_if_bases = { bases = 2, cards = 2 } },
+]
+
+[[card]]
+name = "Freighter"
+faction = "Trade Federation"
+type = "ship"
+cost = 4
+copies = 2
+primary = [{ trade = 4 }]
+ally = ["next_ship_on_top"]
+
+[[card]]
+name = "Trade Escort"
+faction = "Trade Federation"
+type = "ship"
+cost = 5
+copies = 1
+primary = [{ authority = 4 }, { combat = 4 }]
+ally = [{ draw = 1 }]
+
+[[card]]
+name = "Flagship"
+faction = "Trade Federation"
+type = "ship"
+cost = 6
+copies = 1
+primary = [{ combat = 5 }, { draw = 1 }]
+ally = [{ authority = 5 }]
+
+[[card]]
+name = "Command Ship"
+faction = "Trade Federation"
+type = "ship"
+cost = 8
+copies = 1
+primary = [{ authority = 4 }, { combat = 5 }, { draw = 2 }]
+ally = ["destroy_base"]
+
+[[card]]
+name = "Trading Post"
+faction = "Trade Federation"
+type = "outpost"
+cost = 3
+defense = 4
+copies = 2
+primary = [{ choice = [[{ authority = 1 }], [{ trade = 1 }]] }]
+scrap = [{ combat = 3 }]
+
+[[card]]
+name = "Barter World"
+faction = "Trade Federation"
+type = "base"
+cost = 4
+defense = 4
+copies = 2
+primary = [{ choice = [[{ authority = 2 }], [{ trade = 2 }]] }]
+scrap = [{ combat = 5 }]
+
+[[card]]
+name = "Defense Center"
+faction = "Trade Federation"
+type = "outpost"
+cost = 5
+defense = 5
+copies = 1
+primary = [{ choice = [[{ authority = 3 }], [{ combat = 2 }]] }]
+ally = [{ combat = 2 }]
+
+[[card]]
+name = "Port of Call"
+faction = "Trade Federation"
+type = "outpost"
+cost = 6
+defense = 6
+copies = 1
+primary = [{ trade = 3 }]
+scrap = [{ draw = 1 }, "destroy_base"]
+
+[[card]]
+name = "Central Office"
+faction = "Trade Federation"
+type = "base"
+cost = 7
+defense = 6
+copies = 1
+primary = [{ trade = 2 }, "next_ship_on_top"]
+ally = [{ draw = 1 }]
+
+# Star Empire (20)
+
+[[card]]
+name = "Imperial Fighter"
+faction = "Star Empire"
+type = "ship"
+cost = 1
+copies = 3
+primary = [{ combat = 2 }, { opponent_discards = 1 }]
+ally = [{ combat = 2 }]
+
+[[card]]
+name = "Corvette"
+faction = "Star Empire"
+type = "ship"
+cost = 2
+copies = 2
+primary = [{ combat = 1 }, { draw = 1 }]
+ally = [{ combat = 2 }]
+
+[[card]]
+name = "Imperial Frigate"
+faction = "Star Empire"
+type = "ship"
+cost = 3
+copies = 3
+primary = [{ combat = 4 }, { opponent_discards = 1 }]
+ally = [{ combat = 2 }]
+scrap = [{ draw = 1 }]
+
+[[card]]
+name = "Survey Ship"
+faction = "Star Empire"
+type = "ship"
+cost = 3
+copies = 3
+primary = [{ trade = 1 }, { draw = 1 }]
+scrap = [{ opponent_discards = 1 }]
+
+[[card]]
+name = "Battlecruiser"
+faction = "Star Empire"
+type = "ship"
+cost = 6
+copies = 1
+primary = [{ combat = 5 }, { draw = 1 }]
+ally = [{ opponent_discards = 1 }]
+scrap = [{ draw = 1 }, "destroy_base"]
+
+[[card]]
+name = "Dreadnaught"
+faction = "Star Empire"
+type = "ship"
+cost = 7
+copies = 1
+primary = [{ combat = 7 }, { draw = 1 }]
+scrap = [{ combat = 5 }]
+
+[[card]]
+name = "Space Station"
+faction = "Star Empire"
+type = "outpost"
+cost = 4
+defense = 4
+copies = 2
+primary = [{ combat = 2 }]
+ally = [{ combat = 2 }]
+scrap = [{ trade = 4 }]
+
+[[card]]
+name = "Recycling Station"
+faction = "Star Empire"
+type = "outpost"
+cost = 4
+defense = 4
+copies = 2
+primary = [{ choice = [[{ trade = 1 }], [{ discard_then_draw = 2 }]] }]
+
+[[card]]
+name = "War World"
+faction = "Star Empire"
+type = "outpost"
+cost = 5
+defense = 4
+copies = 1
+primary = [{ combat = 3 }]
+ally = [{ combat = 4 }]
+
+[[card]]
+name = "Royal Redoubt"
+faction = "Star Empire"
+type = "outpost"
+cost = 6
+defense = 6
+copies = 1
+primary = [{ combat = 3 }]
+ally = [{ opponent_discards = 1 }]
+
+[[card]]
+name = "Fleet HQ"
+faction = "Star Empire"
+type = "base"
+cost = 8
+defense = 8
+copies = 1
+primary = [{ ships_gain_combat = 1 }]
+
+# Machine Cult (20)
+
+[[card]]
+name = "Trade Bot"
+faction = "Machine Cult"
+type = "ship"
+cost = 1
+copies = 3
+primary = [{ trade = 1 }, { scrap_hand_or_discard = 1 }]
+ally = [{ combat = 2 }]
+
+[[card]]
+name = "Missile Bot"
+faction = "Machine Cult"
+type = "ship"
+cost = 2
+copies = 3
+primary = [{ combat = 2 }, { scrap_hand_or_discard = 1 }]
+ally = [{ combat = 2 }]
+
+[[card]]
+name = "Supply Bot"
+faction = "Machine Cult"
+type = "ship"
+cost = 3
+copies = 3
+primary = [{ trade = 2 }, { scrap_hand_or_discard = 1 }]
+ally = [{ combat = 2 }]
+
+[[card]]
+name = "Patrol Mech"
+faction = "Machine Cult"
+type = "ship"
+cost = 4
+copies = 2
+primary = [{ choice = [[{ trade = 3 }], [{ combat = 5 }]] }]
+ally = [{ scrap_hand_or_discard = 1 }]
+
+[[card]]
+name = "Stealth Needle"
+faction = "Machine Cult"
+type = "ship"
+cost = 4
+copies = 1
+primary = ["copy_ship"]
+
+[[card]]
+name = "Battle Mech"
+faction = "Machine Cult"
+type = "ship"
+cost = 5
+copies = 1
+primary = [{ combat = 4 }, { scrap_hand_or_discard = 1 }]
+ally = [{ draw = 1 }]
+
+[[card]]
+name = "Missile Mech"
+faction = "Machine Cult"
+type = "ship"
+cost = 6
+copies = 1
+primary = [{ combat = 6 }, "destroy_base"]
+ally = [{ draw = 1 }]
+
+[[card]]
+name = "Battle Station"
+faction = "Machine Cult"
+type = "outpost"
+cost = 3
+defense = 5
+copies = 2
+scrap = [{ combat = 5 }]
+
+[[card]]
+name = "Mech World"
+faction = "Machine Cult"
+type = "outpost"
+cost = 5
+defense = 6
+copies = 1
+primary = ["ally_for_all_factions"]
+
+[[card]]
+name = "Junkyard"
+faction = "Machine Cult"
+type = "outpost"
+cost = 6
+defense = 5
+copies = 1
+primary = [{ scrap_hand_or_discard = 1 }]
+
+[[card]]
+name = "Machine Base"
+faction = "Machine Cult"
+type = "outpost"
+cost = 7
+defense = 6
+copies = 1
+primary = [{ draw = 1 }, "scrap_from_hand"]
+
+[[card]]
+name = "Brain World"
+faction = "Machine Cult"
+type = "outpost"
+cost = 8
+defense = 6
+copies = 1
+primary = [{ scrap_then_draw = 2 }]

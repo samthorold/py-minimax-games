@@ -8,7 +8,7 @@ from minimax_games.games.star_realms.action import (
     PlayCard,
 )
 from minimax_games.games.star_realms.bots import Bot, RandomBot
-from minimax_games.games.star_realms.card import VIPER
+from minimax_games.games.star_realms.catalogue import VIPER
 from minimax_games.games.star_realms.match import MatchTooLong, play_match
 from minimax_games.games.star_realms.state import GameState
 
