@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from minimax_games.games.star_realms import rules, transcript
 from minimax_games.games.star_realms.bots import Bot
+from minimax_games.games.star_realms.view import observe
 
 MAX_TURNS = 1000
 
@@ -30,6 +31,9 @@ def play_match(
 ) -> MatchResult:
     """Play one game from `seed`, `bots[0]` moving first.
 
+    Each bot is given only its own view of the game (`view.observe`), never
+    the state.
+
     With `log`, each line of the game's transcript is passed to it as the game
     goes. Without it (the default), nothing is formatted.
     """
@@ -43,7 +47,7 @@ def play_match(
             turn = state.turn
             log(transcript.turn_header(state))
         actions = rules.legal_actions(state)
-        action = bots[state.current].choose(state, actions)
+        action = bots[state.current].choose(observe(state, state.current), actions)
         applied = rules.apply(state, action)
         if log is not None:
             log(transcript.describe(action, state))

@@ -1,6 +1,7 @@
 import dataclasses
 import re
 from collections import Counter
+from collections.abc import Iterator
 
 import pytest
 
@@ -21,30 +22,46 @@ from minimax_games.games.star_realms.catalogue import CATALOGUE, EXPLORER, VIPER
 from minimax_games.games.star_realms.effect import Authority, Draw
 from minimax_games.games.star_realms.match import MatchTooLong, play_match
 from minimax_games.games.star_realms.state import GameState
+from minimax_games.games.star_realms.view import View, observe
 
 SEEDS = range(50)
 
 
 class Recorder:
-    """Wraps a bot: records its actions, and checks `apply` leaves the state alone."""
+    """Wraps a bot: records its actions."""
 
     def __init__(self, bot: Bot, log: list[Action]) -> None:
         self.bot = bot
         self.log = log
 
-    def choose(self, state: GameState, actions: tuple[Action, ...]) -> Action:
-        action = self.bot.choose(state, actions)
+    def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
+        action = self.bot.choose(view, actions)
+        self.log.append(action)
+        return action
+
+
+def moves(seed: int, bots: tuple[Bot, Bot]) -> Iterator[tuple[GameState, Action]]:
+    """Each state of a game from `seed` with the action the bot to move chose,
+    as `play_match` plays it: for checking properties of the rules."""
+    state = rules.new_game(seed)
+    while rules.winner(state) is None:
+        view = observe(state, state.current)
+        action = bots[state.current].choose(view, rules.legal_actions(state))
+        yield state, action
+        state = rules.apply(state, action)
+
+
+def test_applying_an_action_leaves_the_state_alone():
+    for state, action in moves(7, (RandomBot(7), RandomBot(8))):
         before = hash(state)
         snapshot = (state.players, state.rng_seed, state.trade, state.combat)
         rules.apply(state, action)
         assert hash(state) == before
         assert (state.players, state.rng_seed, state.trade, state.combat) == snapshot
-        self.log.append(action)
-        return action
 
 
 class Passive:
-    def choose(self, state: GameState, actions: tuple[Action, ...]) -> Action:
+    def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
         return EndTurn()
 
 
@@ -73,7 +90,7 @@ def test_a_match_that_never_ends_fails_loudly():
 class Aggressive:
     """Plays the first card in hand, attacks whenever it can, then ends the turn."""
 
-    def choose(self, state: GameState, actions: tuple[Action, ...]) -> Action:
+    def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
         for action in actions:
             if isinstance(action, PlayCard):
                 return action
@@ -152,33 +169,14 @@ def all_cards(state: GameState) -> Counter[str]:
     return Counter(card.name for pile in piles for card in pile)
 
 
-class Conserving:
-    """Wraps a bot: checks no card is created or lost by any action, and counts
-    the kinds of action it takes."""
-
-    def __init__(self, bot: Bot, cards: Counter[str]) -> None:
-        self.bot = bot
-        self.cards = cards
-        self.taken: Counter[str] = Counter()
-
-    def choose(self, state: GameState, actions: tuple[Action, ...]) -> Action:
-        assert all_cards(state) == self.cards
-        action = self.bot.choose(state, actions)
-        assert all_cards(rules.apply(state, action)) == self.cards
-        self.taken[type(action).__name__] += 1
-        return action
-
-
 def test_random_games_neither_create_nor_lose_cards_and_use_every_action():
     taken: Counter[str] = Counter()
     for seed in SEEDS:
         cards = all_cards(rules.new_game(seed))
-        bots = (
-            Conserving(RandomBot(seed), cards),
-            Conserving(RandomBot(seed + 1000), cards),
-        )
-        play_match((bots[0], bots[1]), seed)
-        taken += bots[0].taken + bots[1].taken
+        for state, action in moves(seed, (RandomBot(seed), RandomBot(seed + 1000))):
+            assert all_cards(state) == cards
+            assert all_cards(rules.apply(state, action)) == cards
+            taken[type(action).__name__] += 1
     kinds = (Acquire, Scrap, UseAlly, UseBase, AttackBase, AttackPlayer, PlayCard)
     for kind in kinds:
         assert taken[kind.__name__] > 0, kind
@@ -188,7 +186,7 @@ class Buyer:
     """Plays its whole hand, acquires whatever it can, attacks bases then the
     player, ends the turn."""
 
-    def choose(self, state: GameState, actions: tuple[Action, ...]) -> Action:
+    def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
         for kind in (PlayCard, Acquire, AttackBase, AttackPlayer):
             for action in actions:
                 if isinstance(action, kind):
@@ -247,3 +245,27 @@ def test_the_log_shows_a_base_used_and_a_base_destroyed():
     assert transcript.describe(
         AttackBase(station), dataclasses.replace(state, current=1)
     ) == ("Player 2 destroys Player 1's Space Station (4 combat)")
+
+
+class OnlyViews:
+    """Wraps a bot: checks every observation it is given is its own view."""
+
+    def __init__(self, bot: Bot, player: int) -> None:
+        self.bot = bot
+        self.player = player
+        self.calls = 0
+
+    def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
+        assert not isinstance(view, GameState)
+        assert isinstance(view, View)
+        assert view.observer == view.current == self.player
+        self.calls += 1
+        return self.bot.choose(view, actions)
+
+
+def test_bots_are_only_ever_given_their_own_view():
+    for seed in range(5):
+        bots = (OnlyViews(RandomBot(seed), 0), OnlyViews(RandomBot(seed + 1), 1))
+        play_match(bots, seed)
+        assert bots[0].calls > 0
+        assert bots[1].calls > 0
