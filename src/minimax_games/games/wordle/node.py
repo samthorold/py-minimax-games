@@ -1,8 +1,9 @@
 from __future__ import annotations
+
 import functools
 import logging
-from typing import Iterator, Protocol, Self
-
+from collections.abc import Iterator
+from typing import Protocol, Self
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ def present(aim: str, guess: str, guessc: str, i: int) -> str:
 @functools.cache
 def evaluate(aim: str, guess: str) -> str:
     status = ""
-    for i, (aimc, guessc) in enumerate(zip(aim, guess)):
+    for i, (aimc, guessc) in enumerate(zip(aim, guess, strict=False)):
         if aimc == guessc:
             status += "="
         elif guessc in aim:
@@ -60,7 +61,7 @@ def prune_missing(
 ) -> list[str]:
     # Character with missing may be present elsewhere in the word
     # return [w for w in words if w[i] != c]
-    if [s for s, c_ in zip(status, guess) if c_ == c and s != "."]:
+    if [s for s, c_ in zip(status, guess, strict=False) if c_ == c and s != "."]:
         return [w for w in words if c in w and w[i] != c]
     return [w for w in words if c not in w]
 
@@ -75,13 +76,13 @@ def prune(
         raise ValueError(
             "Pruning with different sizes guesses and scores not supported"
         )
-    for guess, score in zip(reversed(guesses), reversed(scores)):
+    for guess, score in zip(reversed(guesses), reversed(scores), strict=False):
         if score == CORRECT_GUESS:
             return [guess]
         else:
             words = [w for w in words if w != guess]
 
-        for i, (c, s) in enumerate(zip(guess, score)):
+        for i, (c, s) in enumerate(zip(guess, score, strict=False)):
             match s:
                 case "=":
                     words = prune_correct(words, i, c)
@@ -90,20 +91,18 @@ def prune(
                 case ".":
                     words = prune_missing(words, i, c, score, guess)
                 case _:
-                    raise ValueError(f"Unkown evaluation.")
+                    raise ValueError("Unkown evaluation.")
         if final_only:
             break
     return words
 
 
 class Guesser(Protocol):
-    def __call__(self, guesses: list[str], scores: list[str]) -> str:
-        ...
+    def __call__(self, guesses: list[str], scores: list[str]) -> str: ...
 
 
 class Scorer(Protocol):
-    def __call__(self, guess: str) -> str:
-        ...
+    def __call__(self, guess: str) -> str: ...
 
 
 class AutoScorer:
@@ -135,7 +134,7 @@ class UserGuesser:
             if len(guess) != 5:
                 print("Guess must be 5 letters long. Enter another.")
                 continue
-            if not guess in self.vocabulary:
+            if guess not in self.vocabulary:
                 print("Guess not a known word.")
                 continue
             return guess
@@ -197,12 +196,12 @@ class WordleNode:
         correct_guess = bool(self.moves) and self.moves[-1] == CORRECT_GUESS
         return no_more_guesses or correct_guess
 
-    def children(self) -> Iterator[Self]:
+    def children(self) -> Iterator[WordleNode]:
         if self.is_maximising():
             self.prune()
             for guess in self.vocabulary:
                 yield WordleNode(
-                    moves=self.moves + [guess],
+                    moves=[*self.moves, guess],
                     vocabulary=[w for w in self.vocabulary],
                     depth=self.depth + 1,
                 )
@@ -213,7 +212,7 @@ class WordleNode:
                 sc = evaluate(guess=self.moves[-1], aim=guess)
                 logger.debug("%s %s", self.moves, sc)
                 yield WordleNode(
-                    moves=self.moves + [sc],
+                    moves=[*self.moves, sc],
                     vocabulary=[w for w in self.vocabulary],
                     depth=self.depth + 1,
                 )

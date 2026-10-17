@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  # PRs must be up to date and pass before merging, so re-running on main adds
+  # nothing, except when uv.lock changes: PRs can only restore caches saved on
+  # main, so this keeps the uv cache warm for them.
+  push:
+    branches: [main]
+    paths: [uv.lock]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      # Same hooks as local commits: ruff, ty, pytest and the file hygiene checks.
+      - name: Run pre-commit
+        run: uv run --locked pre-commit run --all-files --show-diff-on-failure

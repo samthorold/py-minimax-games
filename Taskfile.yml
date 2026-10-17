@@ -1,0 +1,40 @@
+# https://taskfile.dev
+version: "3"
+
+tasks:
+  default:
+    cmds:
+      - task --list
+    silent: true
+
+  test:
+    desc: Run tests (including doctests)
+    cmds:
+      - uv run pytest {{.CLI_ARGS}}
+
+  lint:
+    desc: Lint, check formatting and type check
+    cmds:
+      - uv run ruff check .
+      - uv run ruff format --check .
+      - uv run ty check
+
+  fmt:
+    desc: Apply lint fixes and format
+    cmds:
+      - uv run ruff check --fix .
+      - uv run ruff format .
+
+  version:
+    desc: Print the current package version
+    cmds:
+      - uv version --short
+    silent: true
+
+  bump:
+    desc: "Bump the version: task bump -- patch|minor|major"
+    preconditions:
+      - sh: test -n "{{.CLI_ARGS}}"
+        msg: "Usage: task bump -- patch|minor|major"
+    cmds:
+      - uv version --bump {{.CLI_ARGS}}

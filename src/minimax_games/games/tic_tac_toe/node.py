@@ -1,6 +1,7 @@
 from __future__ import annotations
+
+from collections.abc import Iterator
 from enum import Enum
-from typing import Iterator
 
 
 class IllegalMove(Exception):
@@ -9,7 +10,7 @@ class IllegalMove(Exception):
 
 class Player(Enum):
     X = "x"
-    O = "o"
+    O = "o"  # noqa: E741
 
 
 Move = tuple[int, int]
@@ -85,7 +86,7 @@ class Board:
         return Board(
             state=next_board,
             player=self.next_player(),
-            moves=self.moves + [move],
+            moves=[*self.moves, move],
             depth=self.depth + 1,
         )
 
@@ -123,5 +124,3 @@ class Board:
                 if val:
                     continue
                 yield self.move((rix, cix))
-
-
