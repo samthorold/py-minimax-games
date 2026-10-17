@@ -3,6 +3,7 @@ from collections.abc import Iterator
 import pytest
 
 from minimax_games.games.wordle.game import AutoScorer, UserGuesser, UserScorer
+from minimax_games.games.wordle.node import evaluate, prune
 
 
 def feed_input(monkeypatch: pytest.MonkeyPatch, *answers: str) -> list[str]:
@@ -66,3 +67,46 @@ def test_player_classes_are_defined_only_in_game_module(name):
 
     assert getattr(game, name).__module__ == game.__name__
     assert not hasattr(node, name)
+
+
+@pytest.mark.parametrize(
+    ("aim", "guess", "expected"),
+    [
+        # The answer's only "e" is claimed by the exact match at the end.
+        ("abcde", "eeeee", "....="),
+        # Two "o"s guessed, one in the answer: the exact match claims it,
+        # so the earlier copy is missing.
+        ("thorn", "oxoxx", "..=.."),
+        # Two "o"s in the answer, one guessed: it is present.
+        ("robot", "oxxxx", "-...."),
+        # Two "o"s in both: one exact, the other present.
+        ("robot", "ooxxx", "-=..."),
+        # Three "o"s guessed, two in the answer: the third is missing.
+        ("robot", "oxxoo", "-..=."),
+        ("crate", "crate", "====="),
+        ("crate", "bulky", "....."),
+    ],
+)
+def test_evaluate_follows_wordle_duplicate_letter_rules(aim, guess, expected):
+    assert evaluate(aim, guess) == expected
+
+
+PRUNE_VOCABULARY = [
+    "robot",
+    "thorn",
+    "abcde",
+    "eeeee",
+    "oxoxx",
+    "crate",
+    "trace",
+    "geese",
+    "eerie",
+    "speed",
+]
+
+
+@pytest.mark.parametrize("truth", PRUNE_VOCABULARY)
+@pytest.mark.parametrize("guess", PRUNE_VOCABULARY)
+def test_prune_never_discards_the_true_word(truth, guess):
+    pruned = prune(PRUNE_VOCABULARY, [guess], [evaluate(truth, guess)])
+    assert truth in pruned

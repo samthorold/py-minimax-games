@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import logging
+from collections import Counter
 from collections.abc import Iterator
 from typing import Self
 
@@ -15,23 +16,24 @@ MAXIMUM_NODE = "^^^^^"
 
 
 @functools.cache
-def present(aim: str, guess: str, guessc: str, i: int) -> str:
-    if i > 0:
-        count_aimc = len([c for c in aim if c == guessc])
-        count_stats = len([c for c in guess[:i] if c == guessc])
-        if count_aimc <= count_stats:
-            return "."
-    return "-"
-
-
-@functools.cache
 def evaluate(aim: str, guess: str) -> str:
+    """Score ``guess`` against the answer ``aim`` using Wordle's rules.
+
+    Exact matches (``=``) are assigned first. Then, left to right, a letter
+    is present (``-``) while the answer still has unclaimed copies of it,
+    and missing (``.``) otherwise.
+
+    >>> evaluate("abcde", "eeeee")
+    '....='
+    """
+    unclaimed = Counter(a for a, g in zip(aim, guess, strict=True) if a != g)
     status = ""
-    for i, (aimc, guessc) in enumerate(zip(aim, guess, strict=False)):
+    for aimc, guessc in zip(aim, guess, strict=True):
         if aimc == guessc:
             status += "="
-        elif guessc in aim:
-            status += present(aim=aim, guess=guess, guessc=guessc, i=i)
+        elif unclaimed[guessc]:
+            unclaimed[guessc] -= 1
+            status += "-"
         else:
             status += "."
     return status
