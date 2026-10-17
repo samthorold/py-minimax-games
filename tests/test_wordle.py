@@ -3,7 +3,12 @@ from collections.abc import Iterator
 import pytest
 
 from minimax_games.games.wordle.game import AutoScorer, UserGuesser, UserScorer
-from minimax_games.games.wordle.node import evaluate, prune
+from minimax_games.games.wordle.node import (
+    WordleNode,
+    evaluate,
+    prune,
+    score_evaluation,
+)
 
 
 def feed_input(monkeypatch: pytest.MonkeyPatch, *answers: str) -> list[str]:
@@ -110,3 +115,50 @@ PRUNE_VOCABULARY = [
 def test_prune_never_discards_the_true_word(truth, guess):
     pruned = prune(PRUNE_VOCABULARY, [guess], [evaluate(truth, guess)])
     assert truth in pruned
+
+
+SCORE_VOCABULARY = ["crate", "trace", "bogus", "bulky"]
+
+
+def test_evaluation_node_is_scored_by_its_feedback():
+    node = WordleNode(moves=["crate", "-==-."], vocabulary=SCORE_VOCABULARY, depth=3)
+    assert node.score() == score_evaluation("-==-.")
+
+
+@pytest.mark.parametrize("depth", [2, 4, 6])
+def test_guess_node_scores_without_raising(depth):
+    node = WordleNode(
+        moves=["crate", ".....", "bogus"], vocabulary=SCORE_VOCABULARY, depth=depth
+    )
+    assert isinstance(node.score(), int)
+
+
+def evaluation_node(feedback: str, guesses: int) -> WordleNode:
+    """The node reached once ``guesses`` guesses have been scored."""
+    moves = ["crate", "....."] * (guesses - 1) + ["crate", feedback]
+    return WordleNode(moves=moves, vocabulary=SCORE_VOCABULARY, depth=1 + 2 * guesses)
+
+
+def test_winning_leaf_scores_higher_with_fewer_guesses():
+    scores = [evaluation_node("=====", guesses).score() for guesses in range(1, 7)]
+    assert scores == sorted(scores, reverse=True)
+    assert len(set(scores)) == len(scores)
+
+
+@pytest.mark.parametrize("feedback", [".....", "-.-..", "====-", "====."])
+def test_winning_leaf_beats_any_non_winning_leaf(feedback):
+    slowest_win = evaluation_node("=====", guesses=6).score()
+    for guesses in range(1, 7):
+        assert evaluation_node(feedback, guesses).score() < slowest_win
+
+
+def test_losing_leaf_is_scored_by_its_feedback():
+    losing = evaluation_node("-.=..", guesses=6)
+    assert losing.is_terminal()
+    assert losing.score() == score_evaluation("-.=..")
+
+
+def test_real_scores_lie_strictly_between_the_sentinels():
+    node = evaluation_node("=====", guesses=1)
+    assert node.minimum().score() < node.score() < node.maximum().score()
+    assert node.minimum() < evaluation_node(".....", guesses=6)
