@@ -114,3 +114,13 @@ def test_tic_tac_toe_best_line_is_pinned(
 
     assert result.score() == score
     assert result.moves == moves
+
+
+def test_result_keeps_the_concrete_node_type() -> None:
+    """Board-only attributes on the result type-check (ty runs over tests)."""
+    b = Board.from_string("xo.x..o..", Player.X)
+
+    result = alphabeta(b, b.minimum(), b.maximum())
+
+    assert result.depth == len(result.moves)
+    assert result.board[1][1] == Player.X
