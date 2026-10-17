@@ -164,27 +164,32 @@ class WordleNode:
         return no_more_guesses or correct_guess
 
     def children(self) -> Iterator[WordleNode]:
+        # Children share this node's vocabulary rather than copying it. That
+        # is safe because no node mutates its list: prune() assigns a new one.
         if self.is_maximising():
             self.prune()
             for guess in self.vocabulary:
                 yield WordleNode(
                     moves=[*self.moves, guess],
-                    vocabulary=[w for w in self.vocabulary],
+                    vocabulary=self.vocabulary,
                     depth=self.depth + 1,
                 )
         else:
-            # this only needs to be each _evaluation_
-            # multiple words lead to the same evaluation.
-            for guess in self.vocabulary:
-                sc = evaluate(guess=self.moves[-1], aim=guess)
+            # Answers that score the guess the same lead to the same subtree,
+            # so branch once per distinct evaluation, in first-seen order.
+            evaluations = dict.fromkeys(
+                evaluate(guess=self.moves[-1], aim=aim) for aim in self.vocabulary
+            )
+            for sc in evaluations:
                 logger.debug("%s %s", self.moves, sc)
                 yield WordleNode(
                     moves=[*self.moves, sc],
-                    vocabulary=[w for w in self.vocabulary],
+                    vocabulary=self.vocabulary,
                     depth=self.depth + 1,
                 )
 
     def prune(self) -> None:
+        # Assign a new list: children share their parent's vocabulary.
         if len(self.moves) < 2:
             return
         self.vocabulary = prune(
