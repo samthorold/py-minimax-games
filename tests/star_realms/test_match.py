@@ -17,7 +17,7 @@ from minimax_games.games.star_realms.action import (
     UseAlly,
     UseBase,
 )
-from minimax_games.games.star_realms.bots import Bot, RandomBot
+from minimax_games.games.star_realms.bots import Bot, GreedyBot, RandomBot
 from minimax_games.games.star_realms.catalogue import CATALOGUE, EXPLORER, VIPER
 from minimax_games.games.star_realms.effect import Authority, Draw
 from minimax_games.games.star_realms.match import MatchTooLong, play_match
@@ -316,7 +316,8 @@ def test_the_log_marks_automatic_actions():
 
 def test_bots_are_only_ever_given_their_own_view():
     for seed in range(5):
-        bots = (OnlyViews(RandomBot(seed), 0), OnlyViews(RandomBot(seed + 1), 1))
+        first = GreedyBot() if seed % 2 else RandomBot(seed)
+        bots = (OnlyViews(first, 0), OnlyViews(RandomBot(seed + 1), 1))
         play_match(bots, seed)
         assert bots[0].calls > 0
         assert bots[1].calls > 0
