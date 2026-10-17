@@ -11,6 +11,7 @@ from minimax_games.games.star_realms.action import (
     EndTurn,
     PlayCard,
     Scrap,
+    UseAlly,
 )
 from minimax_games.games.star_realms.card import Card
 from minimax_games.games.star_realms.catalogue import (
@@ -95,6 +96,12 @@ def new_game(seed: int, trade_deck: tuple[Card, ...] = SLICE_1_TRADE_DECK) -> Ga
     )
 
 
+def _without(cards: tuple[Card, ...], card: Card) -> tuple[Card, ...]:
+    """`cards` with one copy of `card` (which it holds) removed."""
+    i = cards.index(card)
+    return cards[:i] + cards[i + 1 :]
+
+
 def _with_player(state: GameState, index: int, player: PlayerState) -> GameState:
     players = list(state.players)
     players[index] = player
@@ -150,6 +157,20 @@ def _scrappable(card: Card) -> bool:
     return bool(card.scrap) and all(_implemented(e) for e in card.scrap)
 
 
+def _ally_usable(card: Card) -> bool:
+    """Whether `card` has an ally ability whose effects are all implemented."""
+    return bool(card.ally) and all(_implemented(e) for e in card.ally)
+
+
+def _allied(card: Card, in_play: tuple[Card, ...]) -> bool:
+    """Whether another card of `card`'s faction is among `in_play`, the cards
+    in play (`card` among them). A scrapped card is no longer in play, so no
+    longer allies anything."""
+    if card.faction is None:
+        return False
+    return sum(c.faction is card.faction for c in in_play) >= 2
+
+
 def winner(state: GameState) -> int | None:
     """The index of the player who has won, or `None` while the game goes on."""
     for i, player in enumerate(state.players):
@@ -161,8 +182,11 @@ def winner(state: GameState) -> int | None:
 def legal_actions(state: GameState) -> tuple[Action, ...]:
     """The actions open to the current player.
 
-    One `PlayCard` per distinct card in hand, one `Scrap` per distinct card in
-    play with a scrap ability the engine implements, one `Acquire` per distinct
+    One `PlayCard` per distinct card in hand; one `UseAlly` per distinct card
+    in play with an ally ability the engine implements, another card of its
+    faction in play, and a copy whose ally ability is unused this turn; one
+    `Scrap` per distinct card in play with a scrap ability the engine
+    implements; one `Acquire` per distinct
     affordable card in the Trade Row or on the Explorer pile, `AttackPlayer`
     while there is combat to spend, and `EndTurn`. Empty once the game is over.
     """
@@ -170,6 +194,13 @@ def legal_actions(state: GameState) -> tuple[Action, ...]:
         return ()
     player = state.players[state.current]
     actions: list[Action] = [PlayCard(card) for card in dict.fromkeys(player.hand)]
+    actions.extend(
+        UseAlly(card)
+        for card in dict.fromkeys(player.in_play)
+        if _ally_usable(card)
+        and _allied(card, player.in_play)
+        and player.in_play.count(card) > state.allies_used.count(card)
+    )
     actions.extend(
         Scrap(card) for card in dict.fromkeys(player.in_play) if _scrappable(card)
     )
@@ -194,20 +225,28 @@ def apply(state: GameState, action: Action) -> GameState:
     player = state.players[state.current]
     match action:
         case PlayCard(card):
-            i = player.hand.index(card)
-            hand = player.hand[:i] + player.hand[i + 1 :]
             player = dataclasses.replace(
-                player, hand=hand, in_play=(*player.in_play, card)
+                player,
+                hand=_without(player.hand, card),
+                in_play=(*player.in_play, card),
             )
             state = _with_player(state, state.current, player)
             for effect in card.primary:
                 state = _resolve(state, effect)
             return state
+        case UseAlly(card):
+            state = dataclasses.replace(state, allies_used=(*state.allies_used, card))
+            for effect in card.ally:
+                state = _resolve(state, effect)
+            return state
         case Scrap(card):
-            i = player.in_play.index(card)
-            in_play = player.in_play[:i] + player.in_play[i + 1 :]
-            player = dataclasses.replace(player, in_play=in_play)
+            player = dataclasses.replace(player, in_play=_without(player.in_play, card))
             state = _with_player(state, state.current, player)
+            if card in state.allies_used:
+                # Of identical copies, scrap one whose ally ability was used,
+                # so an unused one keeps its ability.
+                used = _without(state.allies_used, card)
+                state = dataclasses.replace(state, allies_used=used)
             if card == EXPLORER:
                 state = dataclasses.replace(state, explorers=state.explorers + 1)
             else:
@@ -252,6 +291,7 @@ def apply(state: GameState, action: Action) -> GameState:
                 turn=state.turn + 1,
                 trade=0,
                 combat=0,
+                allies_used=(),
                 rng_seed=seed,
             )
         case _:

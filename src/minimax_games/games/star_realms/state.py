@@ -10,6 +10,11 @@ The Trade Row is `trade_row`, refilled from the top of `trade_deck`; the
 Explorer pile holds `explorers` identical Explorers, so it is just a count.
 Scrapped cards go to `scrap_heap`, in the order they were scrapped (except
 Explorers, which go back to their pile).
+
+`allies_used` lists the cards in play whose ally ability has been used this
+turn, one entry per use. Identical copies are interchangeable, so a card's
+ally ability is still available while it has more copies in play than entries
+here. The list empties at the end of the turn.
 """
 
 from dataclasses import dataclass
@@ -43,3 +48,4 @@ class GameState:
     turn: int = 1
     trade: int = 0
     combat: int = 0
+    allies_used: tuple[Card, ...] = ()

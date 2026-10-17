@@ -13,6 +13,7 @@ from minimax_games.games.star_realms.action import (
     EndTurn,
     PlayCard,
     Scrap,
+    UseAlly,
 )
 from minimax_games.games.star_realms.effect import (
     AcquireShipFreeOnTop,
@@ -98,6 +99,9 @@ def describe(action: Action, state: GameState) -> str:
     match action:
         case PlayCard(card):
             return f"{player} plays {card.name}"
+        case UseAlly(card):
+            gains = ", ".join(_gain(effect) for effect in card.ally)
+            return f"{player} uses {card.name}'s ally ability for {gains}"
         case Scrap(card):
             gains = ", ".join(_gain(effect) for effect in card.scrap)
             return f"{player} scraps {card.name} for {gains}"

@@ -1,7 +1,7 @@
 """What a player can do: the `Action` enum.
 
 Only the variants the first slice's ships need exist so far; later slices add
-`UseAlly`, `AttackBase` and `Choose` (docs/star-realms.md).
+`AttackBase` and `Choose` (docs/star-realms.md).
 """
 
 from superenums import Variant
@@ -40,6 +40,18 @@ class Scrap(Variant):
     card: Card
 
 
+class UseAlly(Variant):
+    """Use the ally ability of `card`, which is in play, once another card of
+    its faction is in play too.
+
+    Each card's ally ability is used at most once per turn. Like `PlayCard`,
+    the action names the card: with two copies in play, each `UseAlly` uses
+    one of them.
+    """
+
+    card: Card
+
+
 class AttackPlayer(Variant):
     """Deal all the current combat to the opponent's Authority."""
 
@@ -48,4 +60,4 @@ class EndTurn(Variant):
     """Discard the hand and cards in play, lose unspent trade and combat, draw 5."""
 
 
-type Action = PlayCard | Scrap | Acquire | AttackPlayer | EndTurn
+type Action = PlayCard | UseAlly | Scrap | Acquire | AttackPlayer | EndTurn
