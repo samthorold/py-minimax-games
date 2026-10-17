@@ -5,13 +5,19 @@ import random
 from typing import assert_never
 
 from minimax_games.games.star_realms.action import (
+    Acquire,
     Action,
     AttackPlayer,
     EndTurn,
     PlayCard,
 )
 from minimax_games.games.star_realms.card import Card
-from minimax_games.games.star_realms.catalogue import STARTING_DECK
+from minimax_games.games.star_realms.catalogue import (
+    EXPLORER,
+    EXPLORER_PILE,
+    SLICE_1_TRADE_DECK,
+    STARTING_DECK,
+)
 from minimax_games.games.star_realms.effect import (
     AcquireShipFreeOnTop,
     AllyForAllFactions,
@@ -38,6 +44,7 @@ from minimax_games.games.star_realms.state import (
     FIRST_HAND_SIZE,
     HAND_SIZE,
     STARTING_AUTHORITY,
+    TRADE_ROW_SIZE,
     GameState,
     PlayerState,
 )
@@ -63,19 +70,28 @@ def _draw(player: PlayerState, n: int, seed: int) -> tuple[PlayerState, int]:
     return dataclasses.replace(player, deck=deck, hand=hand, discard=discard), seed
 
 
-def new_game(seed: int) -> GameState:
+def new_game(seed: int, trade_deck: tuple[Card, ...] = SLICE_1_TRADE_DECK) -> GameState:
     """Deal a game from `seed`.
 
-    Each player gets a shuffled starting deck and 50 Authority. The first
-    player draws 3 cards and the second 5.
+    `trade_deck` is shuffled and its top 5 cards revealed as the Trade Row,
+    beside a pile of 10 Explorers. Each player gets a shuffled starting deck
+    and 50 Authority. The first player draws 3 cards and the second 5.
     """
+    shuffled, seed = _shuffle(trade_deck, seed)
+    trade_row, rest = shuffled[:TRADE_ROW_SIZE], shuffled[TRADE_ROW_SIZE:]
     players = []
     for hand_size in (FIRST_HAND_SIZE, HAND_SIZE):
         deck, seed = _shuffle(STARTING_DECK, seed)
         player, seed = _draw(PlayerState(STARTING_AUTHORITY, deck), hand_size, seed)
         players.append(player)
     first, second = players
-    return GameState(players=(first, second), rng_seed=seed)
+    return GameState(
+        players=(first, second),
+        rng_seed=seed,
+        trade_deck=rest,
+        trade_row=trade_row,
+        explorers=EXPLORER_PILE,
+    )
 
 
 def _with_player(state: GameState, index: int, player: PlayerState) -> GameState:
@@ -91,15 +107,21 @@ def _resolve(state: GameState, effect: Effect) -> GameState:
             return dataclasses.replace(state, trade=state.trade + amount)
         case Combat(amount):
             return dataclasses.replace(state, combat=state.combat + amount)
+        case Authority(amount):
+            player = state.players[state.current]
+            player = dataclasses.replace(player, authority=player.authority + amount)
+            return _with_player(state, state.current, player)
+        case Draw(cards):
+            player, seed = _draw(state.players[state.current], cards, state.rng_seed)
+            state = _with_player(state, state.current, player)
+            return dataclasses.replace(state, rng_seed=seed)
         case (
             AcquireShipFreeOnTop()
             | AllyForAllFactions()
-            | Authority()
             | Choice()
             | CopyShip()
             | DestroyBase()
             | DiscardThenDraw()
-            | Draw()
             | DrawIfBases()
             | DrawPerFactionCard()
             | NextShipOnTop()
@@ -110,7 +132,7 @@ def _resolve(state: GameState, effect: Effect) -> GameState:
             | ScrapTradeRow()
             | ShipsGainCombat()
         ):
-            # Only the starting decks are dealt so far; later slices
+            # Only first-slice ships are dealt so far; later slices
             # implement the rest (docs/star-realms.md).
             msg = f"{effect} is not implemented yet"
             raise NotImplementedError(msg)
@@ -129,13 +151,18 @@ def winner(state: GameState) -> int | None:
 def legal_actions(state: GameState) -> tuple[Action, ...]:
     """The actions open to the current player.
 
-    One `PlayCard` per distinct card in hand, `AttackPlayer` while there is
-    combat to spend, and `EndTurn`. Empty once the game is over.
+    One `PlayCard` per distinct card in hand, one `Acquire` per distinct
+    affordable card in the Trade Row or on the Explorer pile, `AttackPlayer`
+    while there is combat to spend, and `EndTurn`. Empty once the game is over.
     """
     if winner(state) is not None:
         return ()
     player = state.players[state.current]
     actions: list[Action] = [PlayCard(card) for card in dict.fromkeys(player.hand)]
+    market = state.trade_row + ((EXPLORER,) if state.explorers else ())
+    actions.extend(
+        Acquire(card) for card in dict.fromkeys(market) if card.cost <= state.trade
+    )
     if state.combat > 0:
         actions.append(AttackPlayer())
     actions.append(EndTurn())
@@ -162,6 +189,20 @@ def apply(state: GameState, action: Action) -> GameState:
             for effect in card.primary:
                 state = _resolve(state, effect)
             return state
+        case Acquire(card):
+            if card == EXPLORER:
+                state = dataclasses.replace(state, explorers=state.explorers - 1)
+            else:
+                i = state.trade_row.index(card)
+                refill = state.trade_deck[:1]
+                state = dataclasses.replace(
+                    state,
+                    trade_row=state.trade_row[:i] + refill + state.trade_row[i + 1 :],
+                    trade_deck=state.trade_deck[1:],
+                )
+            player = dataclasses.replace(player, discard=(*player.discard, card))
+            state = _with_player(state, state.current, player)
+            return dataclasses.replace(state, trade=state.trade - card.cost)
         case AttackPlayer():
             opponent = state.players[1 - state.current]
             opponent = dataclasses.replace(

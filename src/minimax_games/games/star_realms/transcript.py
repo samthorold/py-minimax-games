@@ -7,6 +7,7 @@ without a log formats nothing. Players are numbered from 1 in the text.
 from typing import assert_never
 
 from minimax_games.games.star_realms.action import (
+    Acquire,
     Action,
     AttackPlayer,
     EndTurn,
@@ -40,6 +41,8 @@ def describe(action: Action, state: GameState) -> str:
     match action:
         case PlayCard(card):
             return f"{player} plays {card.name}"
+        case Acquire(card):
+            return f"{player} acquires {card.name} (cost {card.cost})"
         case AttackPlayer():
             opponent = 1 - state.current
             before = state.players[opponent].authority
