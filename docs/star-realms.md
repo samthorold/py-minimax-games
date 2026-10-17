@@ -71,6 +71,7 @@ The ladder of baselines:
 
 - A plain match loop (deal; ask the current bot for an action given its view; apply; repeat until someone's Authority reaches 0) and a plain tournament loop over seeds and pairings. No py-ev: the base set has no timing to model.
 - **Game log**: a replayable text transcript per seed. It is **opt-in** (off by default, so tournaments don't pay for I/O) and records only the actions the match runner applies, automatic ones marked "(auto)", never search nodes. Nothing is formatted when it's off. `play_match(..., log=sink)` takes a `Callable[[str], None]` sink (e.g. `print` or `list.append`); `transcript.describe(action, state)` formats one action with an exhaustive `match` over `Action`, so each new action kind needs one new case. `python -m minimax_games.games.star_realms --seed 7 --log` prints a game's transcript. Search code logs only behind `logger.isEnabledFor(logging.DEBUG)`.
+- **Tournament**: `python -m minimax_games.games.star_realms tournament --bots greedy random --games 500 [--base-seed 0] [--max-turns 300]` plays game `i` from seed `base_seed + i`, bot A moving first in even games and bot B in odd ones. Each bot is built per game from the game seed (seat 0 gets `seed`, seat 1 `seed + 1`, as in the single-game command, so any game replays on its own). It reports win rates overall and by seat, the mean number of turns and each bot's mean milliseconds per decision (time inside `choose`, measured with `time.perf_counter`). The log is off. A game past `--max-turns` is **unfinished**: listed by seed and left out of every win rate, whose denominator (the finished games) is printed. Results (`tournament.TournamentResult`) are identical for the same seeds and bots; timings (`tournament.Timing`) are kept apart because they vary.
 - A human-playable CLI is deferred. When it comes, it's another bot whose decisions come from `input()`.
 
 ## Dependencies
@@ -79,7 +80,7 @@ The ladder of baselines:
 
 ## Milestones
 
-Each milestone ends with tournament results recorded in the repo.
+Each milestone ends with tournament results recorded in the repo, in [star-realms-results.md](star-realms-results.md).
 
 1. **Engine core and harness**:
    - the first-slice card data and its validation test;
