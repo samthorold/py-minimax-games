@@ -1,3 +1,4 @@
+import dataclasses
 import re
 from collections import Counter
 
@@ -10,9 +11,11 @@ from minimax_games.games.star_realms.action import (
     AttackPlayer,
     EndTurn,
     PlayCard,
+    Scrap,
 )
 from minimax_games.games.star_realms.bots import Bot, RandomBot
 from minimax_games.games.star_realms.catalogue import CATALOGUE, EXPLORER, VIPER
+from minimax_games.games.star_realms.effect import Authority, Draw
 from minimax_games.games.star_realms.match import MatchTooLong, play_match
 from minimax_games.games.star_realms.state import GameState
 
@@ -129,7 +132,12 @@ def test_without_a_log_nothing_is_formatted(monkeypatch: pytest.MonkeyPatch):
 
 def all_cards(state: GameState) -> Counter[str]:
     """Every card in the game, by name, wherever it is."""
-    piles = [state.trade_deck, state.trade_row, (EXPLORER,) * state.explorers]
+    piles = [
+        state.trade_deck,
+        state.trade_row,
+        (EXPLORER,) * state.explorers,
+        state.scrap_heap,
+    ]
     for player in state.players:
         piles += [player.deck, player.hand, player.in_play, player.discard]
     return Counter(card.name for pile in piles for card in pile)
@@ -142,17 +150,19 @@ class Conserving:
         self.bot = bot
         self.cards = cards
         self.acquired = 0
+        self.scrapped = 0
 
     def choose(self, state: GameState, actions: tuple[Action, ...]) -> Action:
         assert all_cards(state) == self.cards
         action = self.bot.choose(state, actions)
         assert all_cards(rules.apply(state, action)) == self.cards
         self.acquired += isinstance(action, Acquire)
+        self.scrapped += isinstance(action, Scrap)
         return action
 
 
-def test_random_games_neither_create_nor_lose_cards_and_do_buy():
-    acquired = 0
+def test_random_games_neither_create_nor_lose_cards_and_do_buy_and_scrap():
+    acquired = scrapped = 0
     for seed in SEEDS:
         cards = all_cards(rules.new_game(seed))
         bots = (
@@ -161,7 +171,9 @@ def test_random_games_neither_create_nor_lose_cards_and_do_buy():
         )
         play_match((bots[0], bots[1]), seed)
         acquired += bots[0].acquired + bots[1].acquired
+        scrapped += bots[0].scrapped + bots[1].scrapped
     assert acquired > 0
+    assert scrapped > 0
 
 
 class Buyer:
@@ -185,3 +197,19 @@ def test_the_log_shows_acquisitions_with_their_cost():
         assert match is not None
         name, cost = match.groups()
         assert CATALOGUE[name].cost == int(cost)
+
+
+def test_the_log_shows_a_scrap_and_what_it_gave():
+    state = rules.new_game(seed=1)
+    ram, frigate = CATALOGUE["Ram"], CATALOGUE["Imperial Frigate"]
+    assert transcript.describe(Scrap(EXPLORER), state) == (
+        "Player 1 scraps Explorer for 2 combat"
+    )
+    assert transcript.describe(Scrap(ram), state) == "Player 1 scraps Ram for 3 trade"
+    assert transcript.describe(Scrap(frigate), state) == (
+        "Player 1 scraps Imperial Frigate for 1 card"
+    )
+    blob = dataclasses.replace(ram, scrap=(Authority(4), Draw(2)))
+    assert transcript.describe(Scrap(blob), dataclasses.replace(state, current=1)) == (
+        "Player 2 scraps Ram for 4 Authority, 2 cards"
+    )

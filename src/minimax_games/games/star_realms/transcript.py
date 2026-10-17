@@ -12,6 +12,29 @@ from minimax_games.games.star_realms.action import (
     AttackPlayer,
     EndTurn,
     PlayCard,
+    Scrap,
+)
+from minimax_games.games.star_realms.effect import (
+    AcquireShipFreeOnTop,
+    AllyForAllFactions,
+    Authority,
+    Choice,
+    Combat,
+    CopyShip,
+    DestroyBase,
+    DiscardThenDraw,
+    Draw,
+    DrawIfBases,
+    DrawPerFactionCard,
+    Effect,
+    NextShipOnTop,
+    OpponentDiscards,
+    ScrapFromHand,
+    ScrapHandOrDiscard,
+    ScrapThenDraw,
+    ScrapTradeRow,
+    ShipsGainCombat,
+    Trade,
 )
 from minimax_games.games.star_realms.state import GameState
 
@@ -35,12 +58,49 @@ def result(state: GameState, winner: int) -> str:
     return f"{_player(winner)} wins on turn {state.turn}. {_authorities(state)}"
 
 
+def _gain(effect: Effect) -> str:
+    """What `effect` gives, e.g. "3 trade" or "1 card"."""
+    match effect:
+        case Trade(amount):
+            return f"{amount} trade"
+        case Combat(amount):
+            return f"{amount} combat"
+        case Authority(amount):
+            return f"{amount} Authority"
+        case Draw(cards):
+            return f"{cards} card{'s' if cards != 1 else ''}"
+        case (
+            AcquireShipFreeOnTop()
+            | AllyForAllFactions()
+            | Choice()
+            | CopyShip()
+            | DestroyBase()
+            | DiscardThenDraw()
+            | DrawIfBases()
+            | DrawPerFactionCard()
+            | NextShipOnTop()
+            | OpponentDiscards()
+            | ScrapFromHand()
+            | ScrapHandOrDiscard()
+            | ScrapThenDraw()
+            | ScrapTradeRow()
+            | ShipsGainCombat()
+        ):
+            # Not playable yet; later slices give these their own wording.
+            return str(effect)
+        case _:
+            assert_never(effect)
+
+
 def describe(action: Action, state: GameState) -> str:
     """Describe `action` as the current player takes it in `state` (before it)."""
     player = _player(state.current)
     match action:
         case PlayCard(card):
             return f"{player} plays {card.name}"
+        case Scrap(card):
+            gains = ", ".join(_gain(effect) for effect in card.scrap)
+            return f"{player} scraps {card.name} for {gains}"
         case Acquire(card):
             return f"{player} acquires {card.name} (cost {card.cost})"
         case AttackPlayer():
