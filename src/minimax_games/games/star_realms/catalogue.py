@@ -179,3 +179,14 @@ TRADE_DECK: tuple[Card, ...] = tuple(
     for _ in range(card.copies)
 )
 """The 80 faction cards, each repeated `copies` times, in catalogue order."""
+
+SLICE_1_TRADE_DECK: tuple[Card, ...] = tuple(
+    card for card in TRADE_DECK if card.in_slice_1 and card.type is CardType.SHIP
+)
+"""The Trade Deck games use for now: every copy of the first-slice ships.
+
+Bases (and so the first-slice bases and outposts) come in a later slice.
+"""
+
+EXPLORER_PILE = 10
+"""How many Explorers the game starts with."""

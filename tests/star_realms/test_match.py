@@ -1,14 +1,18 @@
+import re
+from collections import Counter
+
 import pytest
 
 from minimax_games.games.star_realms import rules, transcript
 from minimax_games.games.star_realms.action import (
+    Acquire,
     Action,
     AttackPlayer,
     EndTurn,
     PlayCard,
 )
 from minimax_games.games.star_realms.bots import Bot, RandomBot
-from minimax_games.games.star_realms.catalogue import VIPER
+from minimax_games.games.star_realms.catalogue import CATALOGUE, EXPLORER, VIPER
 from minimax_games.games.star_realms.match import MatchTooLong, play_match
 from minimax_games.games.star_realms.state import GameState
 
@@ -121,3 +125,63 @@ def test_without_a_log_nothing_is_formatted(monkeypatch: pytest.MonkeyPatch):
 
     result = play_match((RandomBot(1), RandomBot(2)), seed=5)
     assert result.winner in (0, 1)
+
+
+def all_cards(state: GameState) -> Counter[str]:
+    """Every card in the game, by name, wherever it is."""
+    piles = [state.trade_deck, state.trade_row, (EXPLORER,) * state.explorers]
+    for player in state.players:
+        piles += [player.deck, player.hand, player.in_play, player.discard]
+    return Counter(card.name for pile in piles for card in pile)
+
+
+class Conserving:
+    """Wraps a bot: checks no card is created or lost by any action."""
+
+    def __init__(self, bot: Bot, cards: Counter[str]) -> None:
+        self.bot = bot
+        self.cards = cards
+        self.acquired = 0
+
+    def choose(self, state: GameState, actions: tuple[Action, ...]) -> Action:
+        assert all_cards(state) == self.cards
+        action = self.bot.choose(state, actions)
+        assert all_cards(rules.apply(state, action)) == self.cards
+        self.acquired += isinstance(action, Acquire)
+        return action
+
+
+def test_random_games_neither_create_nor_lose_cards_and_do_buy():
+    acquired = 0
+    for seed in SEEDS:
+        cards = all_cards(rules.new_game(seed))
+        bots = (
+            Conserving(RandomBot(seed), cards),
+            Conserving(RandomBot(seed + 1000), cards),
+        )
+        play_match((bots[0], bots[1]), seed)
+        acquired += bots[0].acquired + bots[1].acquired
+    assert acquired > 0
+
+
+class Buyer:
+    """Plays its whole hand, acquires whatever it can, attacks, ends the turn."""
+
+    def choose(self, state: GameState, actions: tuple[Action, ...]) -> Action:
+        for kind in (PlayCard, Acquire, AttackPlayer):
+            for action in actions:
+                if isinstance(action, kind):
+                    return action
+        return EndTurn()
+
+
+def test_the_log_shows_acquisitions_with_their_cost():
+    lines: list[str] = []
+    play_match((Buyer(), Buyer()), seed=1, log=lines.append)
+    acquires = [line for line in lines if " acquires " in line]
+    assert acquires
+    for line in acquires:
+        match = re.fullmatch(r"Player [12] acquires (.+) \(cost (\d+)\)", line)
+        assert match is not None
+        name, cost = match.groups()
+        assert CATALOGUE[name].cost == int(cost)

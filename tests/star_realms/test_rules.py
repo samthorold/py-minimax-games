@@ -3,8 +3,21 @@ import dataclasses
 import pytest
 
 from minimax_games.games.star_realms import rules
-from minimax_games.games.star_realms.action import AttackPlayer, EndTurn, PlayCard
-from minimax_games.games.star_realms.catalogue import SCOUT, VIPER
+from minimax_games.games.star_realms.action import (
+    Acquire,
+    AttackPlayer,
+    EndTurn,
+    PlayCard,
+)
+from minimax_games.games.star_realms.card import Card, CardType
+from minimax_games.games.star_realms.catalogue import (
+    CATALOGUE,
+    EXPLORER,
+    SCOUT,
+    SLICE_1_TRADE_DECK,
+    TRADE_DECK,
+    VIPER,
+)
 from minimax_games.games.star_realms.state import GameState
 
 
@@ -84,3 +97,108 @@ def test_a_player_whose_authority_reaches_zero_loses():
 def test_an_illegal_action_is_refused():
     with pytest.raises(ValueError, match="not legal"):
         rules.apply(rules.new_game(seed=1), AttackPlayer())
+
+
+def names(cards: tuple[Card, ...]) -> list[str]:
+    return sorted(card.name for card in cards)
+
+
+def test_a_new_game_reveals_five_trade_row_cards_from_the_shuffled_trade_deck():
+    state = rules.new_game(seed=1)
+    assert len(state.trade_row) == 5
+    assert names(state.trade_row + state.trade_deck) == names(SLICE_1_TRADE_DECK)
+    assert state.explorers == 10
+    other = rules.new_game(seed=2)
+    assert state.trade_row + state.trade_deck != other.trade_row + other.trade_deck
+
+
+def test_the_slice_1_trade_deck_is_every_copy_of_the_slice_1_ships():
+    assert all(card.in_slice_1 for card in SLICE_1_TRADE_DECK)
+    assert all(card.type is CardType.SHIP for card in SLICE_1_TRADE_DECK)
+    assert names(SLICE_1_TRADE_DECK) == names(
+        tuple(
+            card
+            for card in TRADE_DECK
+            if card.in_slice_1 and card.type is CardType.SHIP
+        )
+    )
+    assert len(SLICE_1_TRADE_DECK) == 21
+
+
+CUTTER = CATALOGUE["Cutter"]
+CORVETTE = CATALOGUE["Corvette"]
+BATTLE_BLOB = CATALOGUE["Battle Blob"]
+
+
+def test_acquiring_spends_the_cost_puts_the_card_in_the_discard_and_refills_the_row():
+    state = rules.new_game(seed=1, trade_deck=(CUTTER,) * 6)
+    state = dataclasses.replace(state, trade=5)
+    after = rules.apply(state, Acquire(CUTTER))
+    assert after.trade == 3
+    assert after.players[0].discard == (CUTTER,)
+    assert after.trade_row == (CUTTER,) * 5
+    assert after.trade_deck == ()
+
+
+def test_the_row_keeps_fewer_cards_once_the_trade_deck_runs_out():
+    state = rules.new_game(seed=1, trade_deck=(CUTTER,) * 5)
+    state = dataclasses.replace(state, trade=2)
+    after = rules.apply(state, Acquire(CUTTER))
+    assert after.trade_row == (CUTTER,) * 4
+
+
+def test_only_cards_the_player_can_afford_can_be_acquired():
+    state = rules.new_game(seed=1, trade_deck=(CUTTER,) * 3 + (BATTLE_BLOB,) * 2)
+    acquires = [a for a in rules.legal_actions(state) if isinstance(a, Acquire)]
+    assert acquires == []
+    state = dataclasses.replace(state, trade=5)
+    assert Acquire(CUTTER) in rules.legal_actions(state)
+    assert Acquire(BATTLE_BLOB) not in rules.legal_actions(state)
+    with pytest.raises(ValueError, match="not legal"):
+        rules.apply(state, Acquire(BATTLE_BLOB))
+    state = dataclasses.replace(state, trade=6)
+    assert Acquire(BATTLE_BLOB) in rules.legal_actions(state)
+
+
+def test_explorers_come_from_their_pile_at_cost_2_until_it_is_empty():
+    state = dataclasses.replace(rules.new_game(seed=1), trade=2)
+    after = rules.apply(state, Acquire(EXPLORER))
+    assert after.explorers == 9
+    assert after.trade == 0
+    assert after.players[0].discard == (EXPLORER,)
+    assert after.trade_row == state.trade_row
+    empty = dataclasses.replace(state, explorers=0)
+    assert Acquire(EXPLORER) not in rules.legal_actions(empty)
+
+
+def with_hand(state: GameState, *hand: Card) -> GameState:
+    first = dataclasses.replace(state.players[0], hand=hand)
+    return dataclasses.replace(state, players=(first, state.players[1]))
+
+
+def test_playing_a_ship_adds_its_primary_authority_and_trade():
+    state = with_hand(rules.new_game(seed=1), CUTTER)
+    after = rules.apply(state, PlayCard(CUTTER))
+    assert after.players[0].authority == 54
+    assert after.trade == 2
+    assert after.combat == 0
+
+
+def test_playing_a_ship_with_a_primary_draw_draws_from_the_players_deck():
+    state = with_hand(rules.new_game(seed=1), CORVETTE)
+    deck = state.players[0].deck
+    after = rules.apply(state, PlayCard(CORVETTE))
+    assert after.combat == 1
+    assert after.players[0].hand == deck[:1]
+    assert after.players[0].deck == deck[1:]
+
+
+def test_a_primary_draw_reshuffles_the_discard_pile_when_the_deck_is_empty():
+    state = with_hand(rules.new_game(seed=1), CORVETTE)
+    first = dataclasses.replace(state.players[0], deck=(), discard=(VIPER, VIPER))
+    state = dataclasses.replace(state, players=(first, state.players[1]))
+    after = rules.apply(state, PlayCard(CORVETTE))
+    assert after.players[0].hand == (VIPER,)
+    assert after.players[0].deck == (VIPER,)
+    assert after.players[0].discard == ()
+    assert after.rng_seed != state.rng_seed
