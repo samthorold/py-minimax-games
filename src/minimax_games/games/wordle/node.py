@@ -183,7 +183,7 @@ class WordleNode:
         # What is the score for a guess before knowing the
         # minimising player's turn
         # Returning the same score for all would _run_
-        # but maybe only with soft alphabeta
+        # but maybe only with alphabeta(prune_on_ties=True)
         if self.depth > 4:
             return 0
         return len(set(self.moves[-1]))

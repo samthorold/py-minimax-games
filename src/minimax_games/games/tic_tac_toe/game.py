@@ -3,7 +3,7 @@ from minimax_games.search.alphabeta import alphabeta
 
 
 def main() -> None:
-    soft = True
+    prune_on_ties = True
     board = Board.from_string("." * 9, Player.O)
     while True:
         # r, c = [int(m) for m in input("Move: ")]
@@ -12,7 +12,7 @@ def main() -> None:
             node=board,
             a=board.minimum(),
             b=board.maximum(),
-            soft=soft,
+            prune_on_ties=prune_on_ties,
         )
         board = board.move(variation.moves[board.depth])
         print(board.string())
@@ -25,7 +25,7 @@ def main() -> None:
         #     node=board,
         #     a=board.minimum(),
         #     b=board.maximum(),
-        #     soft=soft,
+        #     prune_on_ties=prune_on_ties,
         # )
         # board = board.move(variation.moves[board.depth])
         print(board.string())

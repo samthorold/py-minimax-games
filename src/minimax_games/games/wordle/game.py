@@ -85,7 +85,7 @@ class AlphaBetaGuesser:
             node,
             a=node.minimum(),
             b=node.maximum(),
-            soft=True,
+            prune_on_ties=True,
         )
         logger.info(
             "best node move=%s moves=%s", best_guess.moves[-2], best_guess.moves
