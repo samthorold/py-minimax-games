@@ -45,6 +45,7 @@ class Board:
         self.player = player
         self.moves: list[Move] = [] if moves is None else moves
         self.depth = depth
+        self._score: int | None = None
 
     def __gt__(self, other: Board) -> bool:
         return self.score() > other.score()
@@ -91,6 +92,16 @@ class Board:
         )
 
     def score(self) -> int:
+        """Positive if X has a line, negative if O has, else 0.
+
+        Computed once per board: boards are never changed after construction
+        (`move` builds a new one), so the result is cached.
+        """
+        if self._score is None:
+            self._score = self._scan_lines()
+        return self._score
+
+    def _scan_lines(self) -> int:
         for p in Player:
             sign = 1 if p == Player.X else -1
             if any(all(c == p for c in row) for row in self.board):
