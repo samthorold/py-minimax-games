@@ -96,7 +96,7 @@ def prune(
                 case ".":
                     words = prune_missing(words, i, c, score, guess)
                 case _:
-                    raise ValueError("Unkown evaluation.")
+                    raise ValueError("Unknown evaluation.")
         if final_only:
             break
     return words

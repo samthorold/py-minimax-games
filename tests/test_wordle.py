@@ -54,6 +54,16 @@ def test_user_scorer_reprompts_until_five_characters(monkeypatch, capsys):
     assert "Score must be 5 letters long" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("invalid", ["GGYBB", "xx-=.", "-= .="])
+def test_user_scorer_reprompts_for_characters_other_than_dot_dash_equals(
+    monkeypatch, capsys, invalid
+):
+    prompts = feed_input(monkeypatch, invalid, "-==-=")
+    assert UserScorer()("trace") == "-==-="
+    assert prompts == ["Score: ", "Score: "]
+    assert "Score may only contain '.', '-' and '='" in capsys.readouterr().out
+
+
 def test_user_guesser_returns_normalised_known_word(monkeypatch):
     feed_input(monkeypatch, " CRATE ")
     guesser = UserGuesser(vocabulary=["crate", "trace"])
@@ -114,6 +124,11 @@ PRUNE_VOCABULARY = [
     "eerie",
     "speed",
 ]
+
+
+def test_prune_rejects_unknown_evaluation_characters():
+    with pytest.raises(ValueError, match=r"^Unknown evaluation\.$"):
+        prune(["crate", "trace"], ["crate"], ["GGYBB"])
 
 
 @pytest.mark.parametrize("truth", PRUNE_VOCABULARY)
