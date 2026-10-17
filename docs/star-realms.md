@@ -11,7 +11,7 @@ A **strong Star Realms bot**, using whatever search technique works. Minimax is 
 The ladder of baselines:
 
 - **random**: a random legal action.
-- **greedy**: play everything, buy the most expensive affordable card, attack the opponent directly.
+- **greedy**: play everything, buy the most expensive affordable card (repeatedly), attack the opponent directly, destroying the weakest Outpost first while Outposts guard them; never scrap. `GreedyBot`'s docstring has the exact priority order.
 - **heuristic**: a hand-written buying and attacking policy (faction synergy, scrapping Scouts/Vipers, respecting Outposts).
 
 ## Rules and scope
