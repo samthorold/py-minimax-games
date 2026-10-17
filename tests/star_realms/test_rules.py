@@ -4,7 +4,7 @@ import pytest
 
 from minimax_games.games.star_realms import rules
 from minimax_games.games.star_realms.action import AttackPlayer, EndTurn, PlayCard
-from minimax_games.games.star_realms.card import SCOUT, VIPER
+from minimax_games.games.star_realms.catalogue import SCOUT, VIPER
 from minimax_games.games.star_realms.state import GameState
 
 

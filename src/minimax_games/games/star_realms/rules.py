@@ -10,8 +10,30 @@ from minimax_games.games.star_realms.action import (
     EndTurn,
     PlayCard,
 )
-from minimax_games.games.star_realms.card import STARTING_DECK, Card
-from minimax_games.games.star_realms.effect import Combat, Effect, Trade
+from minimax_games.games.star_realms.card import Card
+from minimax_games.games.star_realms.catalogue import STARTING_DECK
+from minimax_games.games.star_realms.effect import (
+    AcquireShipFreeOnTop,
+    AllyForAllFactions,
+    Authority,
+    Choice,
+    Combat,
+    CopyShip,
+    DestroyBase,
+    DiscardThenDraw,
+    Draw,
+    DrawIfBases,
+    DrawPerFactionCard,
+    Effect,
+    NextShipOnTop,
+    OpponentDiscards,
+    ScrapFromHand,
+    ScrapHandOrDiscard,
+    ScrapThenDraw,
+    ScrapTradeRow,
+    ShipsGainCombat,
+    Trade,
+)
 from minimax_games.games.star_realms.state import (
     FIRST_HAND_SIZE,
     HAND_SIZE,
@@ -69,6 +91,29 @@ def _resolve(state: GameState, effect: Effect) -> GameState:
             return dataclasses.replace(state, trade=state.trade + amount)
         case Combat(amount):
             return dataclasses.replace(state, combat=state.combat + amount)
+        case (
+            AcquireShipFreeOnTop()
+            | AllyForAllFactions()
+            | Authority()
+            | Choice()
+            | CopyShip()
+            | DestroyBase()
+            | DiscardThenDraw()
+            | Draw()
+            | DrawIfBases()
+            | DrawPerFactionCard()
+            | NextShipOnTop()
+            | OpponentDiscards()
+            | ScrapFromHand()
+            | ScrapHandOrDiscard()
+            | ScrapThenDraw()
+            | ScrapTradeRow()
+            | ShipsGainCombat()
+        ):
+            # Only the starting decks are dealt so far; later slices
+            # implement the rest (docs/star-realms.md).
+            msg = f"{effect} is not implemented yet"
+            raise NotImplementedError(msg)
         case _:
             assert_never(effect)
 
@@ -114,7 +159,7 @@ def apply(state: GameState, action: Action) -> GameState:
                 player, hand=hand, in_play=(*player.in_play, card)
             )
             state = _with_player(state, state.current, player)
-            for effect in card.effects:
+            for effect in card.primary:
                 state = _resolve(state, effect)
             return state
         case AttackPlayer():

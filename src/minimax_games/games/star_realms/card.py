@@ -1,17 +1,54 @@
-"""Cards: plain data, so the catalogue can later supply them from a file."""
+"""Card definitions: plain frozen data, supplied by the catalogue (`cards.toml`)."""
 
 from dataclasses import dataclass
+from enum import Enum
 
-from minimax_games.games.star_realms.effect import Combat, Effect, Trade
+from minimax_games.games.star_realms.effect import (
+    Authority,
+    Combat,
+    Draw,
+    Effect,
+    Trade,
+)
+
+
+class Faction(Enum):
+    BLOB = "Blob"
+    TRADE_FEDERATION = "Trade Federation"
+    STAR_EMPIRE = "Star Empire"
+    MACHINE_CULT = "Machine Cult"
+
+
+class CardType(Enum):
+    SHIP = "ship"
+    BASE = "base"
+    OUTPOST = "outpost"
 
 
 @dataclass(frozen=True, slots=True)
 class Card:
+    """One card's game data.
+
+    `primary` effects happen when the card is played, `ally` ones once another
+    card of the same faction is in play, `scrap` ones when the card is
+    scrapped for its ability. `faction` is `None` for unaligned cards (Scout,
+    Viper, Explorer); `defense` is `None` for ships. `copies` is how many of
+    the card the game has.
+    """
+
     name: str
-    effects: tuple[Effect, ...]
+    cost: int = 0
+    faction: Faction | None = None
+    type: CardType = CardType.SHIP
+    defense: int | None = None
+    primary: tuple[Effect, ...] = ()
+    ally: tuple[Effect, ...] = ()
+    scrap: tuple[Effect, ...] = ()
+    copies: int = 1
 
-
-SCOUT = Card("Scout", (Trade(1),))
-VIPER = Card("Viper", (Combat(1),))
-
-STARTING_DECK: tuple[Card, ...] = (SCOUT,) * 8 + (VIPER,) * 2
+    @property
+    def in_slice_1(self) -> bool:
+        """Whether every effect, primary, ally or scrap, is trade, combat,
+        authority or draw: the cards the first slice plays with."""
+        effects = self.primary + self.ally + self.scrap
+        return all(isinstance(e, Trade | Combat | Authority | Draw) for e in effects)
