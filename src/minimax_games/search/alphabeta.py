@@ -6,7 +6,7 @@ from minimax_games.search.node import Node
 logger = logging.getLogger(__name__)
 
 
-def alphabeta(node: Node, a: Node, b: Node, prune_on_ties: bool = True) -> Node:
+def alphabeta[N: Node](node: N, a: N, b: N, prune_on_ties: bool = True) -> N:
     """Return the best leaf reachable from `node`, searching with alpha-beta.
 
     `a` and `b` are the initial bounds, usually `node.minimum()` and
