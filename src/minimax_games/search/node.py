@@ -19,7 +19,13 @@ class Node(Protocol):
 
     def is_terminal(self) -> bool: ...
 
-    def children(self) -> Iterator[Self]: ...
+    def children(self) -> Iterator[Self]:
+        """Nodes reachable in one move.
+
+        A non-terminal node that yields no children is treated as a leaf by
+        `alphabeta`: it is scored as it stands.
+        """
+        ...
 
     def is_maximising(self) -> bool: ...
 
