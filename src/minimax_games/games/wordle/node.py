@@ -13,6 +13,9 @@ CORRECT_GUESS = "====="
 COMPLETELY_WRONG = "....."
 MINIMUM_NODE = "_____"
 MAXIMUM_NODE = "^^^^^"
+# Base score for a win, less one per guess used. It is above any feedback
+# score and below the sentinels' 100.
+WIN_SCORE = 50
 
 
 @functools.cache
@@ -136,7 +139,13 @@ class WordleNode:
 
     def score(self) -> int:
         min_max_node = self.moves[-1] in [MINIMUM_NODE, MAXIMUM_NODE]
-        if not self.is_maximising() or min_max_node:
+        if min_max_node:
+            return score_evaluation(self.moves[-1])
+        # A maximising node's last move is the feedback for the latest
+        # guess, a minimising node's last move is a guess.
+        if self.is_maximising():
+            if self.moves[-1] == CORRECT_GUESS:
+                return WIN_SCORE - self.guesses_used()
             return score_evaluation(self.moves[-1])
         # And this is the crux
         # What is the score for a guess before knowing the
@@ -146,6 +155,9 @@ class WordleNode:
         if self.depth > 4:
             return 0
         return len(set(self.moves[-1]))
+
+    def guesses_used(self) -> int:
+        return self.depth // 2
 
     def is_maximising(self) -> bool:
         return bool(self.depth % 2)
