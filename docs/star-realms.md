@@ -30,7 +30,9 @@ The ladder of baselines:
 
 - **Immutable state**: frozen dataclasses with tuples for piles. `apply(state, action) -> state` returns a new state sharing unchanged parts. States are hashable, so transpositions can be detected.
 - **superenums** for the closed sets, with every `match` checked for completeness:
-  - `Action`: `PlayCard`, `UseAlly`, `Scrap`, `Acquire`, `AttackPlayer`, `AttackBase`, `Choose`, `EndTurn`.
+  - `Action`: `PlayCard`, `UseAlly`, `UseBase`, `Scrap`, `Acquire`, `AttackPlayer`, `AttackBase`, `Choose`, `EndTurn`.
+
+    Bases stay in play across turns, in their own per-player pile, and count as in play for ally abilities and scrapping. A base's primary ability is used once in each of its owner's turns: playing the base uses it that turn, and `UseBase` uses it on later turns. It is an explicit action, not applied at the start of the turn, because when to use it can matter (draws, and the bases with choices or targets in later slices); automatic play of pure-gain abilities takes it over like any other action. `AttackBase` spends combat equal to a base's defense and puts the base in its owner's discard pile. `AttackPlayer` spends all the combat. While a player has an Outpost, only Outposts can be attacked.
   - `Effect`: `Trade`, `Combat`, `Authority`, `Draw`, `OpponentDiscards`, `DestroyBase`, `ScrapHandOrDiscard`, `ScrapTradeRow`, `NextShipOnTop`, `Choice`, plus one variant each for the base-set abilities that fit none of those: `AcquireShipFreeOnTop` (Blob Carrier), `DrawIfBases` (Embassy Yacht), `DrawPerFactionCard` (Blob World), `DiscardThenDraw` (Recycling Station), `ScrapThenDraw` (Brain World), `ScrapFromHand` (Machine Base), `CopyShip` (Stealth Needle), `ShipsGainCombat` (Fleet HQ) and `AllyForAllFactions` (Mech World). Each is implemented in the slice that first needs its card.
 
   Cards are plain frozen dataclasses loaded from the data file.

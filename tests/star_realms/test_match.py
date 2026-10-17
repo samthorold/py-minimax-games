@@ -8,11 +8,13 @@ from minimax_games.games.star_realms import rules, transcript
 from minimax_games.games.star_realms.action import (
     Acquire,
     Action,
+    AttackBase,
     AttackPlayer,
     EndTurn,
     PlayCard,
     Scrap,
     UseAlly,
+    UseBase,
 )
 from minimax_games.games.star_realms.bots import Bot, RandomBot
 from minimax_games.games.star_realms.catalogue import CATALOGUE, EXPLORER, VIPER
@@ -140,32 +142,35 @@ def all_cards(state: GameState) -> Counter[str]:
         state.scrap_heap,
     ]
     for player in state.players:
-        piles += [player.deck, player.hand, player.in_play, player.discard]
+        piles += [
+            player.deck,
+            player.hand,
+            player.in_play,
+            player.discard,
+            player.bases,
+        ]
     return Counter(card.name for pile in piles for card in pile)
 
 
 class Conserving:
-    """Wraps a bot: checks no card is created or lost by any action."""
+    """Wraps a bot: checks no card is created or lost by any action, and counts
+    the kinds of action it takes."""
 
     def __init__(self, bot: Bot, cards: Counter[str]) -> None:
         self.bot = bot
         self.cards = cards
-        self.acquired = 0
-        self.scrapped = 0
-        self.allied = 0
+        self.taken: Counter[str] = Counter()
 
     def choose(self, state: GameState, actions: tuple[Action, ...]) -> Action:
         assert all_cards(state) == self.cards
         action = self.bot.choose(state, actions)
         assert all_cards(rules.apply(state, action)) == self.cards
-        self.acquired += isinstance(action, Acquire)
-        self.scrapped += isinstance(action, Scrap)
-        self.allied += isinstance(action, UseAlly)
+        self.taken[type(action).__name__] += 1
         return action
 
 
-def test_random_games_neither_create_nor_lose_cards_and_do_buy_scrap_and_ally():
-    acquired = scrapped = allied = 0
+def test_random_games_neither_create_nor_lose_cards_and_use_every_action():
+    taken: Counter[str] = Counter()
     for seed in SEEDS:
         cards = all_cards(rules.new_game(seed))
         bots = (
@@ -173,19 +178,18 @@ def test_random_games_neither_create_nor_lose_cards_and_do_buy_scrap_and_ally():
             Conserving(RandomBot(seed + 1000), cards),
         )
         play_match((bots[0], bots[1]), seed)
-        acquired += bots[0].acquired + bots[1].acquired
-        scrapped += bots[0].scrapped + bots[1].scrapped
-        allied += bots[0].allied + bots[1].allied
-    assert acquired > 0
-    assert scrapped > 0
-    assert allied > 0
+        taken += bots[0].taken + bots[1].taken
+    kinds = (Acquire, Scrap, UseAlly, UseBase, AttackBase, AttackPlayer, PlayCard)
+    for kind in kinds:
+        assert taken[kind.__name__] > 0, kind
 
 
 class Buyer:
-    """Plays its whole hand, acquires whatever it can, attacks, ends the turn."""
+    """Plays its whole hand, acquires whatever it can, attacks bases then the
+    player, ends the turn."""
 
     def choose(self, state: GameState, actions: tuple[Action, ...]) -> Action:
-        for kind in (PlayCard, Acquire, AttackPlayer):
+        for kind in (PlayCard, Acquire, AttackBase, AttackPlayer):
             for action in actions:
                 if isinstance(action, kind):
                     return action
@@ -229,3 +233,17 @@ def test_the_log_shows_an_ally_ability_and_what_it_gave():
     assert transcript.describe(UseAlly(mothership), state) == (
         "Player 1 uses Mothership's ally ability for 1 card"
     )
+
+
+def test_the_log_shows_a_base_used_and_a_base_destroyed():
+    state = rules.new_game(seed=1)
+    wheel, station = CATALOGUE["Blob Wheel"], CATALOGUE["Space Station"]
+    assert transcript.describe(UseBase(wheel), state) == (
+        "Player 1 uses Blob Wheel for 1 combat"
+    )
+    assert transcript.describe(AttackBase(wheel), state) == (
+        "Player 1 destroys Player 2's Blob Wheel (5 combat)"
+    )
+    assert transcript.describe(
+        AttackBase(station), dataclasses.replace(state, current=1)
+    ) == ("Player 2 destroys Player 1's Space Station (4 combat)")
