@@ -9,11 +9,13 @@ from typing import assert_never
 from minimax_games.games.star_realms.action import (
     Acquire,
     Action,
+    AttackBase,
     AttackPlayer,
     EndTurn,
     PlayCard,
     Scrap,
     UseAlly,
+    UseBase,
 )
 from minimax_games.games.star_realms.effect import (
     AcquireShipFreeOnTop,
@@ -102,6 +104,9 @@ def describe(action: Action, state: GameState) -> str:
         case UseAlly(card):
             gains = ", ".join(_gain(effect) for effect in card.ally)
             return f"{player} uses {card.name}'s ally ability for {gains}"
+        case UseBase(card):
+            gains = ", ".join(_gain(effect) for effect in card.primary)
+            return f"{player} uses {card.name} for {gains}"
         case Scrap(card):
             gains = ", ".join(_gain(effect) for effect in card.scrap)
             return f"{player} scraps {card.name} for {gains}"
@@ -115,6 +120,9 @@ def describe(action: Action, state: GameState) -> str:
                 f"{player} attacks {_player(opponent)} for {state.combat}"
                 f" (Authority {before} -> {after})"
             )
+        case AttackBase(card):
+            opponent = _player(1 - state.current)
+            return f"{player} destroys {opponent}'s {card.name} ({card.defense} combat)"
         case EndTurn():
             return f"{player} ends the turn"
         case _:

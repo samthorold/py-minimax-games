@@ -1,7 +1,7 @@
 """What a player can do: the `Action` enum.
 
-Only the variants the first slice's ships need exist so far; later slices add
-`AttackBase` and `Choose` (docs/star-realms.md).
+Only the variants the first slice's cards need exist so far; a later slice
+adds `Choose` (docs/star-realms.md).
 """
 
 from superenums import Variant
@@ -52,12 +52,40 @@ class UseAlly(Variant):
     card: Card
 
 
+class UseBase(Variant):
+    """Use the primary ability of `base`, one of the player's bases in play.
+
+    A base's primary ability is used once in each of its owner's turns.
+    Playing a base uses it for the turn it is played; on later turns this
+    action uses it. Like `PlayCard`, the action names the card: with two
+    copies in play, each `UseBase` uses one of them.
+    """
+
+    card: Card
+
+
 class AttackPlayer(Variant):
-    """Deal all the current combat to the opponent's Authority."""
+    """Deal all the current combat to the opponent's Authority.
+
+    Not allowed while the opponent has an Outpost in play.
+    """
+
+
+class AttackBase(Variant):
+    """Spend combat equal to `card`'s defense to destroy it, one of the
+    opponent's bases; it goes to the opponent's discard pile.
+
+    While the opponent has an Outpost in play, only Outposts can be attacked.
+    """
+
+    card: Card
 
 
 class EndTurn(Variant):
-    """Discard the hand and cards in play, lose unspent trade and combat, draw 5."""
+    """Discard the hand and ships in play (bases stay), lose unspent trade and
+    combat, draw 5."""
 
 
-type Action = PlayCard | UseAlly | Scrap | Acquire | AttackPlayer | EndTurn
+type Action = (
+    PlayCard | UseAlly | UseBase | Scrap | Acquire | AttackPlayer | AttackBase | EndTurn
+)

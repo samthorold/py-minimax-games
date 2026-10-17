@@ -15,6 +15,11 @@ Explorers, which go back to their pile).
 turn, one entry per use. Identical copies are interchangeable, so a card's
 ally ability is still available while it has more copies in play than entries
 here. The list empties at the end of the turn.
+
+A player's bases stay in play (`PlayerState.bases`) across turns, unlike
+ships, which are discarded at the end of the turn. `bases_used` lists the
+current player's bases whose primary ability has been used this turn (bases
+played this turn among them), in the same one-entry-per-use way.
 """
 
 from dataclasses import dataclass
@@ -34,6 +39,7 @@ class PlayerState:
     hand: tuple[Card, ...] = ()
     in_play: tuple[Card, ...] = ()
     discard: tuple[Card, ...] = ()
+    bases: tuple[Card, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,3 +55,4 @@ class GameState:
     trade: int = 0
     combat: int = 0
     allies_used: tuple[Card, ...] = ()
+    bases_used: tuple[Card, ...] = ()

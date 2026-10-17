@@ -5,11 +5,13 @@ import pytest
 from minimax_games.games.star_realms import rules
 from minimax_games.games.star_realms.action import (
     Acquire,
+    AttackBase,
     AttackPlayer,
     EndTurn,
     PlayCard,
     Scrap,
     UseAlly,
+    UseBase,
 )
 from minimax_games.games.star_realms.card import Card, CardType
 from minimax_games.games.star_realms.catalogue import (
@@ -114,17 +116,19 @@ def test_a_new_game_reveals_five_trade_row_cards_from_the_shuffled_trade_deck():
     assert state.trade_row + state.trade_deck != other.trade_row + other.trade_deck
 
 
-def test_the_slice_1_trade_deck_is_every_copy_of_the_slice_1_ships():
-    assert all(card.in_slice_1 for card in SLICE_1_TRADE_DECK)
-    assert all(card.type is CardType.SHIP for card in SLICE_1_TRADE_DECK)
+def test_the_slice_1_trade_deck_is_every_copy_of_the_slice_1_cards():
     assert names(SLICE_1_TRADE_DECK) == names(
-        tuple(
-            card
-            for card in TRADE_DECK
-            if card.in_slice_1 and card.type is CardType.SHIP
-        )
+        tuple(card for card in TRADE_DECK if card.in_slice_1)
     )
-    assert len(SLICE_1_TRADE_DECK) == 21
+    assert len(SLICE_1_TRADE_DECK) == 21 + 9
+    bases = {c.name for c in SLICE_1_TRADE_DECK if c.type is not CardType.SHIP}
+    assert bases == {
+        "Blob Wheel",
+        "The Hive",
+        "Space Station",
+        "War World",
+        "Battle Station",
+    }
 
 
 CUTTER = CATALOGUE["Cutter"]
@@ -363,3 +367,144 @@ def test_ally_abilities_with_effects_not_yet_implemented_are_unavailable():
     first = dataclasses.replace(state.players[0], hand=(), in_play=in_play)
     state = dataclasses.replace(state, players=(first, state.players[1]))
     assert allies(state) == [UseAlly(RAM), UseAlly(frigate), UseAlly(corvette)]
+
+
+BLOB_WHEEL = CATALOGUE["Blob Wheel"]
+THE_HIVE = CATALOGUE["The Hive"]
+SPACE_STATION = CATALOGUE["Space Station"]
+WAR_WORLD = CATALOGUE["War World"]
+BATTLE_STATION = CATALOGUE["Battle Station"]
+
+
+def test_a_played_base_applies_its_primary_and_stays_in_play_after_the_turn():
+    state = with_hand(rules.new_game(seed=1), BLOB_WHEEL, SCOUT)
+    state = rules.apply(rules.apply(state, PlayCard(BLOB_WHEEL)), PlayCard(SCOUT))
+    assert state.combat == 1
+    assert state.players[0].bases == (BLOB_WHEEL,)
+    assert state.players[0].in_play == (SCOUT,)
+    ended = rules.apply(state, EndTurn()).players[0]
+    assert ended.bases == (BLOB_WHEEL,)
+    assert BLOB_WHEEL not in ended.discard + ended.hand + ended.deck
+
+
+def with_bases(state: GameState, *bases: Card) -> GameState:
+    first = dataclasses.replace(state.players[0], hand=(), bases=bases)
+    return dataclasses.replace(state, players=(first, state.players[1]))
+
+
+def base_uses(state: GameState) -> list[UseBase]:
+    return [a for a in rules.legal_actions(state) if isinstance(a, UseBase)]
+
+
+def test_a_base_primary_is_used_once_per_turn_on_later_turns():
+    state = with_hand(rules.new_game(seed=1), BLOB_WHEEL)
+    state = rules.apply(state, PlayCard(BLOB_WHEEL))
+    assert base_uses(state) == []
+    state = rules.apply(rules.apply(state, EndTurn()), EndTurn())
+    assert base_uses(state) == [UseBase(BLOB_WHEEL)]
+    after = rules.apply(state, UseBase(BLOB_WHEEL))
+    assert after.combat == state.combat + 1
+    assert after.players[0].bases == (BLOB_WHEEL,)
+    assert base_uses(after) == []
+    with pytest.raises(ValueError, match="not legal"):
+        rules.apply(after, UseBase(BLOB_WHEEL))
+    state = rules.apply(rules.apply(after, EndTurn()), EndTurn())
+    assert base_uses(state) == [UseBase(BLOB_WHEEL)]
+
+
+def test_each_copy_of_a_base_uses_its_primary_once():
+    state = with_bases(rules.new_game(seed=1), WAR_WORLD, WAR_WORLD)
+    state = rules.apply(state, UseBase(WAR_WORLD))
+    assert base_uses(state) == [UseBase(WAR_WORLD)]
+    state = rules.apply(state, UseBase(WAR_WORLD))
+    assert state.combat == 6
+    assert base_uses(state) == []
+
+
+def test_a_base_without_a_primary_ability_has_nothing_to_use():
+    state = with_bases(rules.new_game(seed=1), BATTLE_STATION)
+    assert base_uses(state) == []
+
+
+def test_bases_ally_ships_and_use_their_own_ally_abilities():
+    state = with_bases(rules.new_game(seed=1), THE_HIVE)
+    assert allies(state) == []
+    state = rules.apply(with_hand(state, BLOB_WHEEL, RAM), PlayCard(RAM))
+    assert allies(state) == [UseAlly(RAM), UseAlly(THE_HIVE)]
+    hand = state.players[0].hand
+    after = rules.apply(state, UseAlly(THE_HIVE))
+    assert len(after.players[0].hand) == len(hand) + 1
+    assert allies(after) == [UseAlly(RAM)]
+
+
+def test_a_base_played_on_a_later_turn_allies_a_base_already_in_play():
+    state = with_bases(rules.new_game(seed=1), SPACE_STATION)
+    state = rules.apply(with_hand(state, WAR_WORLD), PlayCard(WAR_WORLD))
+    assert allies(state) == [UseAlly(SPACE_STATION), UseAlly(WAR_WORLD)]
+
+
+def test_scrapping_a_base_applies_its_scrap_ability_and_removes_it():
+    state = with_bases(rules.new_game(seed=1), BATTLE_STATION, SPACE_STATION)
+    assert scraps(state) == [Scrap(BATTLE_STATION), Scrap(SPACE_STATION)]
+    state = rules.apply(state, Scrap(BATTLE_STATION))
+    assert state.combat == 5
+    assert state.players[0].bases == (SPACE_STATION,)
+    assert state.scrap_heap == (BATTLE_STATION,)
+
+
+def test_scrapping_one_of_two_base_copies_scraps_the_one_already_used():
+    state = with_bases(rules.new_game(seed=1), SPACE_STATION, SPACE_STATION)
+    state = rules.apply(
+        rules.apply(state, UseBase(SPACE_STATION)), Scrap(SPACE_STATION)
+    )
+    assert state.players[0].bases == (SPACE_STATION,)
+    assert base_uses(state) == [UseBase(SPACE_STATION)]
+
+
+def with_opponent_bases(state: GameState, *bases: Card, combat: int) -> GameState:
+    second = dataclasses.replace(state.players[1], bases=bases)
+    return dataclasses.replace(state, players=(state.players[0], second), combat=combat)
+
+
+def attacks(state: GameState) -> list[AttackBase | AttackPlayer]:
+    kinds = AttackBase | AttackPlayer
+    return [a for a in rules.legal_actions(state) if isinstance(a, kinds)]
+
+
+def test_destroying_a_base_spends_its_defense_and_puts_it_in_its_owners_discard():
+    state = with_opponent_bases(rules.new_game(seed=1), THE_HIVE, combat=7)
+    discard = state.players[1].discard
+    after = rules.apply(state, AttackBase(THE_HIVE))
+    assert after.combat == 2
+    assert after.players[1].bases == ()
+    assert after.players[1].discard == (*discard, THE_HIVE)
+    assert after.players[1].authority == 50
+
+
+def test_a_base_needs_combat_at_least_equal_to_its_defense():
+    state = with_opponent_bases(rules.new_game(seed=1), THE_HIVE, combat=4)
+    assert attacks(state) == [AttackPlayer()]
+    with pytest.raises(ValueError, match="not legal"):
+        rules.apply(state, AttackBase(THE_HIVE))
+    state = dataclasses.replace(state, combat=5)
+    assert attacks(state) == [AttackBase(THE_HIVE), AttackPlayer()]
+
+
+def test_while_an_outpost_is_in_play_only_outposts_can_be_attacked():
+    state = rules.new_game(seed=1)
+    state = with_opponent_bases(state, THE_HIVE, WAR_WORLD, combat=20)
+    assert attacks(state) == [AttackBase(WAR_WORLD)]
+    with pytest.raises(ValueError, match="not legal"):
+        rules.apply(state, AttackPlayer())
+    state = rules.apply(state, AttackBase(WAR_WORLD))
+    assert attacks(state) == [AttackBase(THE_HIVE), AttackPlayer()]
+
+
+def test_two_outposts_must_each_be_destroyed_before_the_player_can_be_attacked():
+    state = rules.new_game(seed=1)
+    state = with_opponent_bases(state, WAR_WORLD, WAR_WORLD, combat=8)
+    state = rules.apply(state, AttackBase(WAR_WORLD))
+    assert attacks(state) == [AttackBase(WAR_WORLD)]
+    state = rules.apply(state, AttackBase(WAR_WORLD))
+    assert state.players[1].discard[-2:] == (WAR_WORLD, WAR_WORLD)
+    assert attacks(state) == []

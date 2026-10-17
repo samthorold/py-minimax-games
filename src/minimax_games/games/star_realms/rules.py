@@ -7,13 +7,15 @@ from typing import assert_never
 from minimax_games.games.star_realms.action import (
     Acquire,
     Action,
+    AttackBase,
     AttackPlayer,
     EndTurn,
     PlayCard,
     Scrap,
     UseAlly,
+    UseBase,
 )
-from minimax_games.games.star_realms.card import Card
+from minimax_games.games.star_realms.card import Card, CardType
 from minimax_games.games.star_realms.catalogue import (
     EXPLORER,
     EXPLORER_PILE,
@@ -162,6 +164,11 @@ def _ally_usable(card: Card) -> bool:
     return bool(card.ally) and all(_implemented(e) for e in card.ally)
 
 
+def _primary_usable(card: Card) -> bool:
+    """Whether `card` has a primary ability whose effects are all implemented."""
+    return bool(card.primary) and all(_implemented(e) for e in card.primary)
+
+
 def _allied(card: Card, in_play: tuple[Card, ...]) -> bool:
     """Whether another card of `card`'s faction is among `in_play`, the cards
     in play (`card` among them). A scrapped card is no longer in play, so no
@@ -182,33 +189,49 @@ def winner(state: GameState) -> int | None:
 def legal_actions(state: GameState) -> tuple[Action, ...]:
     """The actions open to the current player.
 
-    One `PlayCard` per distinct card in hand; one `UseAlly` per distinct card
-    in play with an ally ability the engine implements, another card of its
-    faction in play, and a copy whose ally ability is unused this turn; one
-    `Scrap` per distinct card in play with a scrap ability the engine
-    implements; one `Acquire` per distinct
-    affordable card in the Trade Row or on the Explorer pile, `AttackPlayer`
-    while there is combat to spend, and `EndTurn`. Empty once the game is over.
+    Cards in play include the player's bases. One `PlayCard` per distinct
+    card in hand; one `UseAlly` per distinct card in play with an ally ability
+    the engine implements, another card of its faction in play, and a copy
+    whose ally ability is unused this turn; one `UseBase` per distinct base
+    with a primary ability the engine implements and a copy whose primary is
+    unused this turn; one `Scrap` per distinct card in play with a scrap
+    ability the engine implements; one `Acquire` per distinct affordable card
+    in the Trade Row or on the Explorer pile; one `AttackBase` per distinct
+    opponent's base whose defense the combat covers, only Outposts while the
+    opponent has one; `AttackPlayer` while there is combat to spend and the
+    opponent has no Outpost; and `EndTurn`. Empty once the game is over.
     """
     if winner(state) is not None:
         return ()
     player = state.players[state.current]
     actions: list[Action] = [PlayCard(card) for card in dict.fromkeys(player.hand)]
+    in_play = player.in_play + player.bases
     actions.extend(
         UseAlly(card)
-        for card in dict.fromkeys(player.in_play)
+        for card in dict.fromkeys(in_play)
         if _ally_usable(card)
-        and _allied(card, player.in_play)
-        and player.in_play.count(card) > state.allies_used.count(card)
+        and _allied(card, in_play)
+        and in_play.count(card) > state.allies_used.count(card)
     )
     actions.extend(
-        Scrap(card) for card in dict.fromkeys(player.in_play) if _scrappable(card)
+        UseBase(card)
+        for card in dict.fromkeys(player.bases)
+        if _primary_usable(card)
+        and player.bases.count(card) > state.bases_used.count(card)
     )
+    actions.extend(Scrap(card) for card in dict.fromkeys(in_play) if _scrappable(card))
     market = state.trade_row + ((EXPLORER,) if state.explorers else ())
     actions.extend(
         Acquire(card) for card in dict.fromkeys(market) if card.cost <= state.trade
     )
-    if state.combat > 0:
+    targets = state.players[1 - state.current].bases
+    outposts = tuple(c for c in targets if c.type is CardType.OUTPOST)
+    actions.extend(
+        AttackBase(card)
+        for card in dict.fromkeys(outposts or targets)
+        if (card.defense or 0) <= state.combat
+    )
+    if state.combat > 0 and not outposts:
         actions.append(AttackPlayer())
     actions.append(EndTurn())
     return tuple(actions)
@@ -225,12 +248,15 @@ def apply(state: GameState, action: Action) -> GameState:
     player = state.players[state.current]
     match action:
         case PlayCard(card):
-            player = dataclasses.replace(
-                player,
-                hand=_without(player.hand, card),
-                in_play=(*player.in_play, card),
-            )
-            state = _with_player(state, state.current, player)
+            player = dataclasses.replace(player, hand=_without(player.hand, card))
+            if card.type is CardType.SHIP:
+                player = dataclasses.replace(player, in_play=(*player.in_play, card))
+                state = _with_player(state, state.current, player)
+            else:
+                # Playing a base uses its primary ability for this turn.
+                player = dataclasses.replace(player, bases=(*player.bases, card))
+                state = _with_player(state, state.current, player)
+                state = dataclasses.replace(state, bases_used=(*state.bases_used, card))
             for effect in card.primary:
                 state = _resolve(state, effect)
             return state
@@ -239,12 +265,25 @@ def apply(state: GameState, action: Action) -> GameState:
             for effect in card.ally:
                 state = _resolve(state, effect)
             return state
+        case UseBase(card):
+            state = dataclasses.replace(state, bases_used=(*state.bases_used, card))
+            for effect in card.primary:
+                state = _resolve(state, effect)
+            return state
         case Scrap(card):
-            player = dataclasses.replace(player, in_play=_without(player.in_play, card))
+            if card.type is CardType.SHIP:
+                player = dataclasses.replace(
+                    player, in_play=_without(player.in_play, card)
+                )
+            else:
+                player = dataclasses.replace(player, bases=_without(player.bases, card))
             state = _with_player(state, state.current, player)
+            # Of identical copies, scrap one whose primary (for a base) and
+            # ally abilities were used, so an unused one keeps its abilities.
+            if card in state.bases_used:
+                used = _without(state.bases_used, card)
+                state = dataclasses.replace(state, bases_used=used)
             if card in state.allies_used:
-                # Of identical copies, scrap one whose ally ability was used,
-                # so an unused one keeps its ability.
                 used = _without(state.allies_used, card)
                 state = dataclasses.replace(state, allies_used=used)
             if card == EXPLORER:
@@ -276,6 +315,15 @@ def apply(state: GameState, action: Action) -> GameState:
             return dataclasses.replace(
                 _with_player(state, 1 - state.current, opponent), combat=0
             )
+        case AttackBase(card):
+            opponent = state.players[1 - state.current]
+            opponent = dataclasses.replace(
+                opponent,
+                bases=_without(opponent.bases, card),
+                discard=(*opponent.discard, card),
+            )
+            state = _with_player(state, 1 - state.current, opponent)
+            return dataclasses.replace(state, combat=state.combat - (card.defense or 0))
         case EndTurn():
             player = dataclasses.replace(
                 player,
@@ -292,6 +340,7 @@ def apply(state: GameState, action: Action) -> GameState:
                 trade=0,
                 combat=0,
                 allies_used=(),
+                bases_used=(),
                 rng_seed=seed,
             )
         case _:
