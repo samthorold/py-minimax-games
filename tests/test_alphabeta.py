@@ -51,6 +51,7 @@ def minimax(node: Board) -> int:
     return max(values) if node.is_maximising() else min(values)
 
 
+@pytest.mark.parametrize("depth", [None, 9])
 @pytest.mark.parametrize("prune_on_ties", [True, False])
 @pytest.mark.parametrize(
     ("position", "player"),
@@ -65,11 +66,14 @@ def minimax(node: Board) -> int:
     ],
 )
 def test_tic_tac_toe_agrees_with_brute_force_minimax(
-    position: str, player: Player, prune_on_ties: bool
+    position: str, player: Player, prune_on_ties: bool, depth: int | None
 ) -> None:
+    """With no limit, or one past the end of the game, the search is exact."""
     b = Board.from_string(position, player)
 
-    result = alphabeta(b, b.minimum(), b.maximum(), prune_on_ties=prune_on_ties)
+    result = alphabeta(
+        b, b.minimum(), b.maximum(), prune_on_ties=prune_on_ties, depth=depth
+    )
 
     assert result.score() == minimax(b)
     assert minimax(b.move(result.moves[0])) == minimax(b)
@@ -167,3 +171,29 @@ def test_each_board_is_scored_at_most_once() -> None:
     assert result.score() == 7
     assert CountingBoard.scans
     assert max(CountingBoard.scans.values()) == 1
+
+
+@pytest.mark.parametrize("depth", [0, 1, 2, 3])
+def test_depth_limit_stops_the_search_that_many_plies_down(depth: int) -> None:
+    b = Board.from_string("x...o....", Player.X, depth=2)
+
+    result = alphabeta(b, b.minimum(), b.maximum(), depth=depth)
+
+    assert result.depth <= b.depth + depth
+
+
+def test_depth_limit_scores_the_frontier_with_score() -> None:
+    """At the limit, `score()` is the evaluation: one ply picks the best child."""
+    b = Board.from_string("x...o....", Player.X)
+
+    result = alphabeta(b, b.minimum(), b.maximum(), depth=1)
+
+    assert len(result.moves) == 1
+    assert not result.is_terminal()
+    assert result.score() == max(child.score() for child in b.children())
+
+
+def test_depth_zero_returns_the_node_itself() -> None:
+    b = Board.from_string("x...o....", Player.X)
+
+    assert alphabeta(b, b.minimum(), b.maximum(), depth=0) is b
