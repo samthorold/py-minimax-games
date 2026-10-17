@@ -15,7 +15,15 @@ class Node(Protocol):
 
     def __le__(self, other: Self) -> bool: ...
 
-    def score(self) -> int: ...
+    def score(self) -> int:
+        """The node's value, typically what the comparison operators rank on.
+
+        Without a depth limit `alphabeta` only scores leaves (terminal or
+        childless nodes). With `depth` set, nodes at the limit are scored
+        too, so `score()` must then be a meaningful heuristic evaluation of
+        non-terminal positions.
+        """
+        ...
 
     def is_terminal(self) -> bool: ...
 
