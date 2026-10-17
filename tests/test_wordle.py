@@ -1,5 +1,3 @@
-from collections.abc import Iterator
-
 import pytest
 
 from minimax_games.games.wordle.game import (
@@ -20,23 +18,6 @@ from minimax_games.games.wordle.node import (
 from minimax_games.search.alphabeta import alphabeta
 
 
-def feed_input(monkeypatch: pytest.MonkeyPatch, *answers: str) -> list[str]:
-    """Replace ``input`` with one returning ``answers`` in order.
-
-    Returns the list of prompts shown, so tests can check how often
-    the user was asked.
-    """
-    remaining: Iterator[str] = iter(answers)
-    prompts: list[str] = []
-
-    def fake_input(prompt: str = "") -> str:
-        prompts.append(prompt)
-        return next(remaining)
-
-    monkeypatch.setattr("builtins.input", fake_input)
-    return prompts
-
-
 def test_auto_scorer_scores_guess_against_truth():
     scorer = AutoScorer(truth="crate")
     assert scorer("trace") == "-==-="
@@ -44,14 +25,14 @@ def test_auto_scorer_scores_guess_against_truth():
     assert scorer("bulky") == "....."
 
 
-def test_user_scorer_returns_normalised_score(monkeypatch, capsys):
-    feed_input(monkeypatch, "  -==-=  ")
+def test_user_scorer_returns_normalised_score(feed_input, capsys):
+    feed_input("  -==-=  ")
     assert UserScorer()("trace") == "-==-="
     assert "Guess: trace" in capsys.readouterr().out
 
 
-def test_user_scorer_reprompts_until_five_characters(monkeypatch, capsys):
-    prompts = feed_input(monkeypatch, "==", "-==-=")
+def test_user_scorer_reprompts_until_five_characters(feed_input, capsys):
+    prompts = feed_input("==", "-==-=")
     assert UserScorer()("trace") == "-==-="
     assert prompts == ["Score: ", "Score: "]
     assert "Score must be 5 letters long" in capsys.readouterr().out
@@ -59,22 +40,22 @@ def test_user_scorer_reprompts_until_five_characters(monkeypatch, capsys):
 
 @pytest.mark.parametrize("invalid", ["GGYBB", "xx-=.", "-= .="])
 def test_user_scorer_reprompts_for_characters_other_than_dot_dash_equals(
-    monkeypatch, capsys, invalid
+    feed_input, capsys, invalid
 ):
-    prompts = feed_input(monkeypatch, invalid, "-==-=")
+    prompts = feed_input(invalid, "-==-=")
     assert UserScorer()("trace") == "-==-="
     assert prompts == ["Score: ", "Score: "]
     assert "Score may only contain '.', '-' and '='" in capsys.readouterr().out
 
 
-def test_user_guesser_returns_normalised_known_word(monkeypatch):
-    feed_input(monkeypatch, " CRATE ")
+def test_user_guesser_returns_normalised_known_word(feed_input):
+    feed_input(" CRATE ")
     guesser = UserGuesser(vocabulary=["crate", "trace"])
     assert guesser(guesses=[], scores=[]) == "crate"
 
 
-def test_user_guesser_reprompts_for_wrong_length_and_unknown_words(monkeypatch, capsys):
-    prompts = feed_input(monkeypatch, "cat", "bulky", "trace")
+def test_user_guesser_reprompts_for_wrong_length_and_unknown_words(feed_input, capsys):
+    prompts = feed_input("cat", "bulky", "trace")
     guesser = UserGuesser(vocabulary=["crate", "trace"])
     assert guesser(guesses=[], scores=[]) == "trace"
     assert prompts == ["Guess: "] * 3
