@@ -1,7 +1,7 @@
 """What a player can do: the `Action` enum.
 
 Only the variants the first slice's ships need exist so far; later slices add
-`UseAlly`, `Scrap`, `AttackBase` and `Choose` (docs/star-realms.md).
+`UseAlly`, `AttackBase` and `Choose` (docs/star-realms.md).
 """
 
 from superenums import Variant
@@ -29,6 +29,17 @@ class Acquire(Variant):
     card: Card
 
 
+class Scrap(Variant):
+    """Scrap a card in play for its scrap ability, removing it from the game.
+
+    It goes to the scrap heap, or, for an Explorer, back to the Explorer pile.
+    Like `PlayCard`, the action names the card: with two copies in play, each
+    `Scrap` takes one of them.
+    """
+
+    card: Card
+
+
 class AttackPlayer(Variant):
     """Deal all the current combat to the opponent's Authority."""
 
@@ -37,4 +48,4 @@ class EndTurn(Variant):
     """Discard the hand and cards in play, lose unspent trade and combat, draw 5."""
 
 
-type Action = PlayCard | Acquire | AttackPlayer | EndTurn
+type Action = PlayCard | Scrap | Acquire | AttackPlayer | EndTurn

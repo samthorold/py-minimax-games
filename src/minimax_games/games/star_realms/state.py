@@ -8,6 +8,8 @@ seed fixes every shuffle in the game.
 
 The Trade Row is `trade_row`, refilled from the top of `trade_deck`; the
 Explorer pile holds `explorers` identical Explorers, so it is just a count.
+Scrapped cards go to `scrap_heap`, in the order they were scrapped (except
+Explorers, which go back to their pile).
 """
 
 from dataclasses import dataclass
@@ -36,6 +38,7 @@ class GameState:
     trade_deck: tuple[Card, ...] = ()
     trade_row: tuple[Card, ...] = ()
     explorers: int = 0
+    scrap_heap: tuple[Card, ...] = ()
     current: int = 0
     turn: int = 1
     trade: int = 0

@@ -10,6 +10,7 @@ from minimax_games.games.star_realms.action import (
     AttackPlayer,
     EndTurn,
     PlayCard,
+    Scrap,
 )
 from minimax_games.games.star_realms.card import Card
 from minimax_games.games.star_realms.catalogue import (
@@ -140,6 +141,15 @@ def _resolve(state: GameState, effect: Effect) -> GameState:
             assert_never(effect)
 
 
+def _implemented(effect: Effect) -> bool:
+    return isinstance(effect, Trade | Combat | Authority | Draw)
+
+
+def _scrappable(card: Card) -> bool:
+    """Whether `card` has a scrap ability whose effects are all implemented."""
+    return bool(card.scrap) and all(_implemented(e) for e in card.scrap)
+
+
 def winner(state: GameState) -> int | None:
     """The index of the player who has won, or `None` while the game goes on."""
     for i, player in enumerate(state.players):
@@ -151,7 +161,8 @@ def winner(state: GameState) -> int | None:
 def legal_actions(state: GameState) -> tuple[Action, ...]:
     """The actions open to the current player.
 
-    One `PlayCard` per distinct card in hand, one `Acquire` per distinct
+    One `PlayCard` per distinct card in hand, one `Scrap` per distinct card in
+    play with a scrap ability the engine implements, one `Acquire` per distinct
     affordable card in the Trade Row or on the Explorer pile, `AttackPlayer`
     while there is combat to spend, and `EndTurn`. Empty once the game is over.
     """
@@ -159,6 +170,9 @@ def legal_actions(state: GameState) -> tuple[Action, ...]:
         return ()
     player = state.players[state.current]
     actions: list[Action] = [PlayCard(card) for card in dict.fromkeys(player.hand)]
+    actions.extend(
+        Scrap(card) for card in dict.fromkeys(player.in_play) if _scrappable(card)
+    )
     market = state.trade_row + ((EXPLORER,) if state.explorers else ())
     actions.extend(
         Acquire(card) for card in dict.fromkeys(market) if card.cost <= state.trade
@@ -187,6 +201,18 @@ def apply(state: GameState, action: Action) -> GameState:
             )
             state = _with_player(state, state.current, player)
             for effect in card.primary:
+                state = _resolve(state, effect)
+            return state
+        case Scrap(card):
+            i = player.in_play.index(card)
+            in_play = player.in_play[:i] + player.in_play[i + 1 :]
+            player = dataclasses.replace(player, in_play=in_play)
+            state = _with_player(state, state.current, player)
+            if card == EXPLORER:
+                state = dataclasses.replace(state, explorers=state.explorers + 1)
+            else:
+                state = dataclasses.replace(state, scrap_heap=(*state.scrap_heap, card))
+            for effect in card.scrap:
                 state = _resolve(state, effect)
             return state
         case Acquire(card):

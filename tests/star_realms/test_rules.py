@@ -8,6 +8,7 @@ from minimax_games.games.star_realms.action import (
     AttackPlayer,
     EndTurn,
     PlayCard,
+    Scrap,
 )
 from minimax_games.games.star_realms.card import Card, CardType
 from minimax_games.games.star_realms.catalogue import (
@@ -202,3 +203,68 @@ def test_a_primary_draw_reshuffles_the_discard_pile_when_the_deck_is_empty():
     assert after.players[0].deck == (VIPER,)
     assert after.players[0].discard == ()
     assert after.rng_seed != state.rng_seed
+
+
+RAM = CATALOGUE["Ram"]
+
+
+def test_scrapping_a_ship_in_play_applies_its_scrap_effect_and_removes_it():
+    state = rules.apply(with_hand(rules.new_game(seed=1), RAM, SCOUT), PlayCard(RAM))
+    assert state.combat == 5
+    after = rules.apply(state, Scrap(RAM))
+    assert after.trade == 3
+    assert after.combat == 5
+    assert after.players[0].in_play == ()
+    assert after.players[0].hand == (SCOUT,)
+    assert after.scrap_heap == (RAM,)
+    ended = rules.apply(after, EndTurn()).players[0]
+    assert RAM not in ended.discard + ended.deck + ended.hand
+
+
+def test_a_scrapped_explorer_goes_back_to_the_explorer_pile():
+    state = dataclasses.replace(rules.new_game(seed=1), explorers=9)
+    state = rules.apply(with_hand(state, EXPLORER), PlayCard(EXPLORER))
+    assert state.trade == 2
+    after = rules.apply(state, Scrap(EXPLORER))
+    assert after.combat == 2
+    assert after.explorers == 10
+    assert after.scrap_heap == ()
+    assert after.players[0].in_play == ()
+
+
+def scraps(state: GameState) -> list[Scrap]:
+    return [a for a in rules.legal_actions(state) if isinstance(a, Scrap)]
+
+
+def test_only_cards_in_play_with_a_scrap_ability_can_be_scrapped():
+    state = with_hand(rules.new_game(seed=1), RAM, SCOUT, CUTTER, EXPLORER)
+    assert scraps(state) == []
+    for card in (SCOUT, CUTTER):
+        state = rules.apply(state, PlayCard(card))
+    assert scraps(state) == []
+    with pytest.raises(ValueError, match="not legal"):
+        rules.apply(state, Scrap(SCOUT))
+    state = rules.apply(state, PlayCard(RAM))
+    assert scraps(state) == [Scrap(RAM)]
+    state = rules.apply(state, PlayCard(EXPLORER))
+    assert scraps(state) == [Scrap(RAM), Scrap(EXPLORER)]
+
+
+def test_each_copy_in_play_can_be_scrapped_once():
+    state = with_hand(rules.new_game(seed=1), RAM, RAM)
+    state = rules.apply(rules.apply(state, PlayCard(RAM)), PlayCard(RAM))
+    state = rules.apply(state, Scrap(RAM))
+    assert state.players[0].in_play == (RAM,)
+    state = rules.apply(state, Scrap(RAM))
+    assert state.trade == 6
+    assert state.scrap_heap == (RAM, RAM)
+    assert scraps(state) == []
+
+
+def test_scrap_abilities_with_effects_not_yet_implemented_are_unavailable():
+    frigate = CATALOGUE["Imperial Frigate"]  # scrap: draw a card
+    survey = CATALOGUE["Survey Ship"]  # scrap: target opponent discards a card
+    state = rules.new_game(seed=1)
+    first = dataclasses.replace(state.players[0], hand=(), in_play=(frigate, survey))
+    state = dataclasses.replace(state, players=(first, state.players[1]))
+    assert scraps(state) == [Scrap(frigate)]
