@@ -2,7 +2,12 @@ from collections.abc import Iterator
 
 import pytest
 
-from minimax_games.games.wordle.game import AutoScorer, UserGuesser, UserScorer
+from minimax_games.games.wordle.game import (
+    AlphaBetaGuesser,
+    AutoScorer,
+    UserGuesser,
+    UserScorer,
+)
 from minimax_games.games.wordle.node import (
     WordleNode,
     evaluate,
@@ -162,3 +167,25 @@ def test_real_scores_lie_strictly_between_the_sentinels():
     node = evaluation_node("=====", guesses=1)
     assert node.minimum().score() < node.score() < node.maximum().score()
     assert node.minimum() < evaluation_node(".....", guesses=6)
+
+
+def test_guess_node_score_does_not_depend_on_absolute_depth():
+    scores = {
+        WordleNode(
+            moves=["crate", ".....", "bogus"], vocabulary=SCORE_VOCABULARY, depth=depth
+        ).score()
+        for depth in [2, 4, 6, 8]
+    }
+    assert len(scores) == 1
+
+
+def test_guesser_picks_the_guess_with_the_best_guaranteed_feedback():
+    # After two guesses three candidates remain. "abcde" shares three
+    # letters in place with each of the others, so whatever the answer it
+    # earns feedback worth 6. The other two share only their middle "c",
+    # so guessing either can earn feedback worth just 2. The best guess is
+    # last in the list: the guesser must search, not take the first word.
+    vocabulary = ["abcxx", "vwcde", "abcde"]
+    guesses = ["qqqqq", "rrrrr"]
+    scores = [".....", "....."]
+    assert AlphaBetaGuesser(vocabulary)(guesses, scores) == "abcde"

@@ -147,13 +147,9 @@ class WordleNode:
             if self.moves[-1] == CORRECT_GUESS:
                 return WIN_SCORE - self.guesses_used()
             return score_evaluation(self.moves[-1])
-        # And this is the crux
-        # What is the score for a guess before knowing the
-        # minimising player's turn
-        # Returning the same score for all would _run_
-        # but maybe only with alphabeta(prune_on_ties=True)
-        if self.depth > 4:
-            return 0
+        # A guess is only scored when a depth limit stops on it (or it has
+        # no children). Before its feedback is known, favour guesses with
+        # more distinct letters: they test more of the alphabet.
         return len(set(self.moves[-1]))
 
     def guesses_used(self) -> int:
