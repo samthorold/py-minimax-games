@@ -112,7 +112,7 @@ def _key(function: Callable[..., object]) -> _Function:
 
 def breakdown(stats: pstats.Stats) -> list[Area]:
     """The search's time by area, in nested order: the search, then its
-    children's generation (move generation and `rules.advance`), `evaluate`,
+    children's generation (move generation and `rules.advance_legal`), `evaluate`,
     the transposition table, and the rest, which is the search's own work
     (`alphabeta`, node comparisons, the budget)."""
     table: dict[_Function, tuple] = stats.stats  # ty: ignore[unresolved-attribute]
@@ -158,12 +158,7 @@ def breakdown(stats: pstats.Stats) -> list[Area]:
             "move generation (legal_actions of each node)",
             called_by(legal, _key(node.StarRealmsNode.children)),
         ),
-        area(2, "rules.advance", total(_key(rules.advance))),
-        area(
-            3,
-            "legality check in rules.apply (legal_actions)",
-            called_by(legal, _key(rules.apply)),
-        ),
+        area(2, "rules.advance_legal", total(_key(rules.advance_legal))),
         area(
             3, "automatic-play scan (legal_actions)", total(_key(rules._next_automatic))
         ),

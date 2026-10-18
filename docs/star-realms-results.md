@@ -348,3 +348,27 @@ The machine sometimes slept during the long runs; the reported times are `time.p
 - **Short runs get slower.** The budgeted benchmark, the tests and any single-game replay run slower under PyPy.
 
 Re-measure after the CPython optimisations of #67's list are done (the same commands as above): if PyPy then still gives 1.5x or more on a 60-game tournament, adopting it for long tournaments is worth the support cost.
+
+## Milestone 2f: skip the search's legality re-check, hash cards by name
+
+- Date: 2026-10-19
+- Commit: `192a49e` plus #79.
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0. Each run in the foreground, alone, one at a time; "before" is `192a49e`, "after" this change.
+
+The first two wins of Milestone 2d's list. **Legality re-check:** `rules.advance_legal` is `rules.advance` for an action taken from `legal_actions(state)`, without `apply`'s check, which recomputed `legal_actions` just to find the action there; the search's children (and `bench`'s turn-tree count) use it, while `rules.apply` and `rules.advance`, which bots' actions go through, still reject illegal ones. **Card hashing:** `Card.__hash__` is the hash of its name (unique in the catalogue, which `catalogue.parse` already enforces), instead of the generated hash over all nine fields, two of them enums hashed in Python.
+
+**Same results.** Every `bench` search visits the same nodes, every budgeted decision finishes the same depth with the same nodes, the profiled workload generates the same 37,838 nodes, and the 20-game tournament gives the same wins, seats and mean turns (cheat 14/20, 8/10 first and 6/10 second, 27.7 turns).
+
+| Workload | Before | After | Change |
+|---|---|---|---|
+| `bench`, horizon 1 | 10.8 s, 11,667 nodes/s | 7.8 s, 16,113 nodes/s | 1.38x |
+| `bench`, horizon 2 | 35.6 s, 14,181 nodes/s | 27.6 s, 18,333 nodes/s | 1.29x |
+| `bench --budget 5000` | 13,851 nodes/s, 319.7 ms/decision | 18,444 nodes/s, 240.1 ms/decision | 1.33x |
+| `tournament --bots cheat greedy --games 20` | 221 ms/decision, 313.8 s | 170 ms/decision, 241.7 s | 1.30x |
+| `task profile`, unprofiled | 13,936 nodes/s | 18,406 nodes/s | 1.32x |
+
+About a quarter less wall time, as Milestone 2d's patched measurements predicted. In `task profile` (shares of the profiled search):
+
+- The legality check in `rules.apply` (13.5%) is gone: the search no longer calls `apply`, and `legal_actions` calls fall from 152,790 to 114,964.
+- **Hashing and equality fall from 25.5% to 9.2%** (13.9 million calls to 4.8 million): `Enum.__hash__` (6.8%) is gone, `builtins.hash`'s self time falls from 11.4% to 3.0%, and `Card.__hash__` from 5.9% to 4.6% (now only the call of the one-line method).
+- What's left of `rules.advance_legal` (75.0%, was 78.2% as `rules.advance`) is the other two wins: the automatic-play scan (38.3%) and applying actions (35.8%, of which `dataclasses.replace` 30.2%). `evaluate` is now 10.3%.

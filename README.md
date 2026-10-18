@@ -48,8 +48,8 @@ cheat-vs-heuristic game (`--positions`, `--budget`, `--turns`, `--game-seed`,
 
 - `profile.txt`, the report. First the workload's speed without and with the
   profiler. Then **time by area**: the search's cumulative time split into
-  generating children (move generation, then `rules.advance`: the legality
-  check, the automatic-play scan and applying actions), `evaluate`, the
+  generating children (move generation, then `rules.advance_legal`: the
+  automatic-play scan and applying actions), `evaluate`, the
   transposition table, and the search's own work; indented areas are part of
   the area above them, and us/node is per node generated. Then **hashing and
   equality**, the self time of every `__hash__` and `__eq__`, which all the

@@ -38,8 +38,7 @@ def test_the_breakdown_splits_the_search_time_into_nested_areas():
     assert names[0] == "search (cheat.decide)"
     for name in (
         "move generation (legal_actions of each node)",
-        "rules.advance",
-        "legality check in rules.apply (legal_actions)",
+        "rules.advance_legal",
         "automatic-play scan (legal_actions)",
         "applying actions (rules._apply)",
         "evaluate",
@@ -63,7 +62,6 @@ def test_hashing_lists_the_self_time_of_every_hash_and_equality_by_class():
     rows = {row.name: row for row in hashing(profiled.stats)}
     assert rows["Card.__hash__"].calls > 0  # move generation dedupes cards
     assert rows["GameState.__hash__"].calls > 0  # the transposition table
-    assert rows["Enum.__hash__"].calls > 0  # a Card hashes its faction and type
     total = rows["all hashing and equality"]
     others = [row for name, row in rows.items() if row is not total]
     assert abs(total.seconds - sum(row.seconds for row in others)) < 1e-6

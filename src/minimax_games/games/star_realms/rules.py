@@ -315,6 +315,14 @@ def advance(
     return auto_play(apply(state, action), on_action)
 
 
+def advance_legal(state: GameState, action: Action) -> GameState:
+    """`advance` for an action taken from `legal_actions(state)`, as the search
+    takes them: it skips `apply`'s legality check, which would recompute
+    `legal_actions` just to find the action there. An action from anywhere
+    else, such as a bot, goes through `advance`."""
+    return auto_play(_apply(state, action))
+
+
 def apply(state: GameState, action: Action) -> GameState:
     """Return the state after the current player takes `action`.
 
