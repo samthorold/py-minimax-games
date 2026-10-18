@@ -2,7 +2,7 @@
 
 import dataclasses
 import random
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import assert_never
 
 from minimax_games.games.star_realms.action import (
@@ -205,21 +205,8 @@ def legal_actions(state: GameState) -> tuple[Action, ...]:
     if winner(state) is not None:
         return ()
     player = state.players[state.current]
-    actions: list[Action] = [PlayCard(card) for card in dict.fromkeys(player.hand)]
+    actions: list[Action] = list(_maybe_automatic(state))
     in_play = player.in_play + player.bases
-    actions.extend(
-        UseAlly(card)
-        for card in dict.fromkeys(in_play)
-        if _ally_usable(card)
-        and _allied(card, in_play)
-        and in_play.count(card) > state.allies_used.count(card)
-    )
-    actions.extend(
-        UseBase(card)
-        for card in dict.fromkeys(player.bases)
-        if _primary_usable(card)
-        and player.bases.count(card) > state.bases_used.count(card)
-    )
     actions.extend(Scrap(card) for card in dict.fromkeys(in_play) if _scrappable(card))
     market = state.trade_row + ((EXPLORER,) if state.explorers else ())
     actions.extend(
@@ -236,6 +223,29 @@ def legal_actions(state: GameState) -> tuple[Action, ...]:
         actions.append(AttackPlayer())
     actions.append(EndTurn())
     return tuple(actions)
+
+
+def _maybe_automatic(state: GameState) -> Iterator[Action]:
+    """The legal `PlayCard`, `UseAlly` and `UseBase` actions, the only kinds
+    that can be automatic, in `legal_actions` order (they come first there),
+    generated lazily so the automatic-play scan can stop early. Assumes the
+    game isn't over."""
+    player = state.players[state.current]
+    for card in dict.fromkeys(player.hand):
+        yield PlayCard(card)
+    in_play = player.in_play + player.bases
+    for card in dict.fromkeys(in_play):
+        if (
+            _ally_usable(card)
+            and _allied(card, in_play)
+            and in_play.count(card) > state.allies_used.count(card)
+        ):
+            yield UseAlly(card)
+    for card in dict.fromkeys(player.bases):
+        if _primary_usable(card) and player.bases.count(card) > state.bases_used.count(
+            card
+        ):
+            yield UseBase(card)
 
 
 def _pure_gain(effects: tuple[Effect, ...]) -> bool:
@@ -300,7 +310,12 @@ def auto_play(state: GameState, on_action: OnAction | None = None) -> GameState:
 
 
 def _next_automatic(state: GameState) -> Action | None:
-    return next((a for a in legal_actions(state) if automatic(a)), None)
+    """The first automatic action in `legal_actions(state)`, if any. It scans
+    only the kinds of action that can be automatic, which `legal_actions`
+    lists first, instead of building the whole list."""
+    if winner(state) is not None:
+        return None
+    return next((a for a in _maybe_automatic(state) if automatic(a)), None)
 
 
 def advance(

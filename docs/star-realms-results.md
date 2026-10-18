@@ -372,3 +372,26 @@ About a quarter less wall time, as Milestone 2d's patched measurements predicted
 - The legality check in `rules.apply` (13.5%) is gone: the search no longer calls `apply`, and `legal_actions` calls fall from 152,790 to 114,964.
 - **Hashing and equality fall from 25.5% to 9.2%** (13.9 million calls to 4.8 million): `Enum.__hash__` (6.8%) is gone, `builtins.hash`'s self time falls from 11.4% to 3.0%, and `Card.__hash__` from 5.9% to 4.6% (now only the call of the one-line method).
 - What's left of `rules.advance_legal` (75.0%, was 78.2% as `rules.advance`) is the other two wins: the automatic-play scan (38.3%) and applying actions (35.8%, of which `dataclasses.replace` 30.2%). `evaluate` is now 10.3%.
+
+## Milestone 2g: a dedicated automatic-play scan
+
+- Date: 2026-10-19
+- Commit: `9b18e68` plus #80.
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0. Each run in the foreground, alone, one at a time; "before" is `9b18e68`, "after" this change.
+
+The third win of Milestone 2d's list. `rules.auto_play` found each automatic action by building the whole `legal_actions` list (scraps, buys, attacks and all) and taking the first automatic one, about 2.7 times per node. It now scans only the kinds of action that can be automatic (`PlayCard`, `UseAlly`, `UseBase`, which `legal_actions` lists first, from the same generator), lazily, and stops at the first one `rules.automatic` accepts. A property test on seeded states checks it takes the same actions in the same order as the old definition.
+
+**Same results.** Every `bench` search visits the same nodes, every budgeted decision finishes the same depth with the same nodes, the profiled workload generates the same 37,838 nodes, and the 20-game tournament gives the same wins, seats and mean turns (cheat 14/20, 8/10 first and 6/10 second, 27.7 turns).
+
+| Workload | Before | After | Change |
+|---|---|---|---|
+| `bench`, horizon 1 | 7.6 s, 16,510 nodes/s | 5.7 s, 22,326 nodes/s | 1.35x |
+| `bench`, horizon 2 | 27.2 s, 18,557 nodes/s | 21.0 s, 24,026 nodes/s | 1.29x |
+| `bench --budget 5000` | 18,617 nodes/s, 237.9 ms/decision | 25,102 nodes/s, 176.4 ms/decision | 1.35x |
+| `tournament --bots cheat greedy --games 20` | 172 ms/decision, 243.8 s | 128 ms/decision, 181.2 s | 1.35x |
+| `task profile`, unprofiled | 18,517 nodes/s | 24,883 nodes/s | 1.34x |
+
+In `task profile` (shares of the profiled search, which falls from 6.17 s to 4.49 s):
+
+- **The automatic-play scan falls from 2.37 s (38.4%) to 0.79 s (17.5%)**, 62.6 to 20.8 us per node, for the same 100,304 scans. `legal_actions` calls fall from 114,964 to 14,660 (only the search's move generation is left).
+- Applying actions (`rules._apply`) is now the hotspot: 2.13 s, 47.4%, of which `dataclasses.replace` 40.1%, the target of #81. `evaluate` is 14.0%.

@@ -1,10 +1,19 @@
 import dataclasses
+import functools
+import random
+from collections import Counter
 from collections.abc import Callable
 
 import pytest
 
 from minimax_games.games.star_realms import rules
-from minimax_games.games.star_realms.action import Action, EndTurn, PlayCard, UseAlly
+from minimax_games.games.star_realms.action import (
+    Acquire,
+    Action,
+    EndTurn,
+    PlayCard,
+    UseAlly,
+)
 from minimax_games.games.star_realms.card import Card
 from minimax_games.games.star_realms.catalogue import CATALOGUE, SCOUT, VIPER
 from minimax_games.games.star_realms.state import GameState, PlayerState
@@ -221,3 +230,62 @@ def test_the_outcome_check_catches_automating_a_draw(monkeypatch: pytest.MonkeyP
     )
     auto = outcomes(rules.auto_play(state), automated)
     assert not dominated(manual, auto)
+
+
+# The automatic-play scan: auto_play must take the same automatic actions, in
+# the same order, as its definition, which `old_auto_play` spells out (scan
+# all of `legal_actions` for the first automatic action, apply it, repeat).
+
+
+def old_auto_play(state: GameState) -> list[Action]:
+    taken = []
+    while action := next(
+        (a for a in rules.legal_actions(state) if rules.automatic(a)), None
+    ):
+        taken.append(action)
+        state = rules.apply(state, action)
+    return taken
+
+
+def auto_played(state: GameState) -> tuple[list[Action], GameState]:
+    """The automatic actions `rules.auto_play` takes from `state`, and the
+    state it returns."""
+    taken: list[Action] = []
+    return taken, rules.auto_play(state, lambda _, action: taken.append(action))
+
+
+def unplayed_states(seed: int, moves: int = 150) -> list[GameState]:
+    """The states of a random game from `seed` played with the bare rules,
+    without automatic play, so automatic actions pile up. It buys whenever it
+    can, so that later turns have bases and allies to use."""
+    rng = random.Random(seed)
+    state = rules.new_game(seed)
+    states = [state]
+    for _ in range(moves):
+        actions = rules.legal_actions(state)
+        if not actions:
+            break
+        buys = [a for a in actions if isinstance(a, Acquire)]
+        state = rules.apply(state, rng.choice(buys or actions))
+        states.append(state)
+    return states
+
+
+def test_auto_play_takes_the_automatic_actions_in_legal_actions_order():
+    kinds: Counter[str] = Counter()
+    for seed in range(25):
+        for state in unplayed_states(seed):
+            taken, after = auto_played(state)
+            expected = old_auto_play(state)
+            assert taken == expected
+            assert after == functools.reduce(rules.apply, expected, state)
+            kinds.update(type(a).__name__ for a in taken)
+    # The states exercise every kind of automatic action.
+    assert min(kinds[k] for k in ("PlayCard", "UseAlly", "UseBase")) >= 20
+
+
+def test_auto_play_does_nothing_once_the_game_is_over():
+    state = with_hand(rules.new_game(seed=1), SCOUT, VIPER)
+    loser = dataclasses.replace(state.players[1], authority=0)
+    state = dataclasses.replace(state, players=(state.players[0], loser))
+    assert rules.auto_play(state) == state
