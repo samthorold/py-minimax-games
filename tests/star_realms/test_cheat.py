@@ -1,11 +1,17 @@
+from collections import Counter
+from collections.abc import Hashable, Iterator
+from typing import ClassVar, Self
+
 import pytest
 
 from minimax_games.games.star_realms import rules
 from minimax_games.games.star_realms.action import AttackPlayer
+from minimax_games.games.star_realms.bench import position, turn_tree
 from minimax_games.games.star_realms.bots import GreedyBot
 from minimax_games.games.star_realms.catalogue import CATALOGUE, STARTING_DECK
-from minimax_games.games.star_realms.cheat import CheatBot
+from minimax_games.games.star_realms.cheat import CheatBot, search
 from minimax_games.games.star_realms.match import MatchTooLong, play_match
+from minimax_games.games.star_realms.node import StarRealmsNode, transposition_key
 from minimax_games.games.star_realms.state import GameState, PlayerState
 
 
@@ -66,3 +72,29 @@ def test_a_seeded_cheat_game_replays_identically():
 def test_the_horizon_is_at_least_one_turn():
     with pytest.raises(ValueError, match="at least 1"):
         CheatBot(turns=0)
+
+
+class ExpansionCounter(StarRealmsNode):
+    """A node that records how often each position's children are generated."""
+
+    expanded: ClassVar[Counter[Hashable]] = Counter()
+
+    def children(self) -> Iterator[Self]:
+        ExpansionCounter.expanded[transposition_key(self)] += 1
+        yield from super().children()
+
+
+def test_the_cheat_searches_each_position_of_its_turn_once():
+    """A 1-turn search is all the mover's choices, so every transposition is
+    served from the table: each state is expanded once per number of moves
+    that reach it (attacking twice reaches the state attacking once does, in
+    one more move)."""
+    ExpansionCounter.expanded.clear()
+    state = position(seed=0, turn=5)
+    root = ExpansionCounter(state, state.current)
+
+    search(root, turns=1)
+
+    assert ExpansionCounter.expanded
+    assert max(ExpansionCounter.expanded.values()) == 1
+    assert sum(ExpansionCounter.expanded.values()) < turn_tree(state).nodes

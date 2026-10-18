@@ -8,7 +8,11 @@ bot is given (docs/star-realms.md, Search).
 import logging
 
 from minimax_games.games.star_realms.action import Action
-from minimax_games.games.star_realms.node import StarRealmsNode, ends_turn
+from minimax_games.games.star_realms.node import (
+    StarRealmsNode,
+    ends_turn,
+    transposition_key,
+)
 from minimax_games.games.star_realms.state import GameState
 from minimax_games.search.alphabeta import alphabeta
 
@@ -16,9 +20,18 @@ logger = logging.getLogger(__name__)
 
 
 def search[N: StarRealmsNode](root: N, turns: int) -> N:
-    """The cheat's search: the best leaf `turns` turns below `root`."""
+    """The cheat's search: the best leaf `turns` turns below `root`.
+
+    A state reached by another order of the same plays is searched once, from
+    a transposition table keyed by `transposition_key`.
+    """
     return alphabeta(
-        root, root.minimum(), root.maximum(), depth=turns, ply_cost=ends_turn
+        root,
+        root.minimum(),
+        root.maximum(),
+        depth=turns,
+        ply_cost=ends_turn,
+        key=transposition_key,
     )
 
 

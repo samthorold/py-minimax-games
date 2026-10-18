@@ -7,7 +7,7 @@ the line of decisions from the root. Search depth counts turns
 (docs/star-realms.md, Search): pass `ends_turn` as `alphabeta`'s `ply_cost`.
 """
 
-from collections.abc import Iterator
+from collections.abc import Hashable, Iterator
 from typing import Self
 
 from minimax_games.games.star_realms import rules
@@ -84,3 +84,12 @@ def ends_turn(node: StarRealmsNode) -> int:
     """`alphabeta`'s `ply_cost`: 1 for a node reached by ending a turn, else 0,
     so the search depth counts turns."""
     return 1 if node.moves and isinstance(node.moves[-1], EndTurn) else 0
+
+
+def transposition_key(node: StarRealmsNode) -> Hashable:
+    """`alphabeta`'s `key`: the state, which is hashable and includes the side
+    to move, and the number of moves to it, since a finished game's score
+    depends on how many moves it took (`StarRealmsNode.score`). Different
+    orders of the same plays reach the same state in the same number of moves,
+    so this still merges them."""
+    return node.state, len(node.moves)

@@ -68,11 +68,12 @@ def test_the_bench_command_reports_nodes_rates_and_time_per_decision(capsys):
     assert any(line.startswith("Horizon 2:") for line in lines)
 
 
-def test_the_turn_tree_counts_the_one_turn_search_and_its_distinct_states():
+def test_the_turn_tree_counts_the_one_turn_tree_and_its_distinct_states():
     state = position(seed=0, turn=5)
     tree = turn_tree(state)
-    assert tree.nodes == search(state, turns=1, max_nodes=100_000).nodes
     assert tree.states < tree.nodes  # orders of the same plays transpose
+    # the cheat's table merges them, so its search visits far fewer nodes
+    assert search(state, turns=1, max_nodes=100_000).nodes < tree.nodes
 
 
 def test_the_bench_command_with_states_sizes_each_whole_first_turn(capsys):

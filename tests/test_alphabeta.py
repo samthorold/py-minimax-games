@@ -1,12 +1,13 @@
+import random
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Callable, Hashable, Iterator
 from dataclasses import dataclass, field, replace
 from typing import ClassVar, Self
 
 import pytest
 
 from minimax_games.games.tic_tac_toe.node import Board, Move, Player
-from minimax_games.search.alphabeta import alphabeta
+from minimax_games.search.alphabeta import Table, alphabeta
 
 
 class ChildlessBoard(Board):
@@ -52,6 +53,12 @@ def minimax(node: Board) -> int:
     return max(values) if node.is_maximising() else min(values)
 
 
+def board_key(node: Board) -> Hashable:
+    """A tic-tac-toe position: the board and the side to move."""
+    return tuple(map(tuple, node.board)), node.player
+
+
+@pytest.mark.parametrize("key", [None, board_key])
 @pytest.mark.parametrize("depth", [None, 9])
 @pytest.mark.parametrize("prune_on_ties", [True, False])
 @pytest.mark.parametrize(
@@ -67,13 +74,23 @@ def minimax(node: Board) -> int:
     ],
 )
 def test_tic_tac_toe_agrees_with_brute_force_minimax(
-    position: str, player: Player, prune_on_ties: bool, depth: int | None
+    position: str,
+    player: Player,
+    prune_on_ties: bool,
+    depth: int | None,
+    key: Callable[[Board], Hashable] | None,
 ) -> None:
-    """With no limit, or one past the end of the game, the search is exact."""
+    """With no limit, or one past the end of the game, the search is exact,
+    with or without a transposition table."""
     b = Board.from_string(position, player)
 
     result = alphabeta(
-        b, b.minimum(), b.maximum(), prune_on_ties=prune_on_ties, depth=depth
+        b,
+        b.minimum(),
+        b.maximum(),
+        prune_on_ties=prune_on_ties,
+        depth=depth,
+        key=key,
     )
 
     assert result.score() == minimax(b)
@@ -315,3 +332,136 @@ def test_no_depth_limit_searches_to_terminal_nodes_whatever_the_cost(
 
     assert result.is_terminal()
     assert result.name == "n3"
+
+
+class CountingTree(Tree):
+    """A tree that records how often each node's children are generated."""
+
+    expanded: ClassVar[Counter[str]] = Counter()
+
+    def children(self) -> Iterator[Self]:
+        CountingTree.expanded[self.name] += 1
+        yield from super().children()
+
+
+def name(node: Tree) -> str:
+    return node.name
+
+
+def diamond() -> CountingTree:
+    """One player's turn of two plays, `p` and `q`, in either order: both
+    orders reach the same node `pq`, whose replies `r` and `s` end the line."""
+    pq = CountingTree("pq", 0, kids=(CountingTree("r", 3), CountingTree("s", 7)))
+    p = CountingTree("p", 0, kids=(replace(pq, name="pq"),))
+    q = CountingTree("q", 0, kids=(replace(pq, name="pq"),))
+    return CountingTree("root", 0, kids=(p, q))
+
+
+def test_a_transposition_is_searched_once_with_a_key() -> None:
+    CountingTree.expanded.clear()
+    root = diamond()
+
+    alphabeta(root, root.minimum(), root.maximum(), key=name)
+
+    assert CountingTree.expanded["pq"] == 1
+
+
+def test_without_a_key_a_transposition_is_searched_again() -> None:
+    CountingTree.expanded.clear()
+    root = diamond()
+
+    alphabeta(root, root.minimum(), root.maximum(), prune_on_ties=False)
+
+    assert CountingTree.expanded["pq"] == 2
+
+
+def test_a_transposed_result_keeps_the_path_that_reached_it() -> None:
+    """`pq` is first searched under `p`, which the opponent spoils, then reached
+    again under `q`: the best line runs through `q`, not `p`."""
+    CountingTree.expanded.clear()
+    pq = CountingTree("pq", 0, kids=(CountingTree("r", 3), CountingTree("s", 7)))
+    p = CountingTree(
+        "p", 0, maximising=False, kids=(replace(pq), CountingTree("t", -5))
+    )
+    q = CountingTree("q", 0, kids=(replace(pq),))
+    root = CountingTree("root", 0, kids=(p, q))
+
+    result = alphabeta(root, root.minimum(), root.maximum(), key=name)
+
+    assert CountingTree.expanded["pq"] == 1
+    assert result.moves == ["q", "pq", "s"]
+    assert result.moves == alphabeta(root, root.minimum(), root.maximum()).moves
+
+
+def dag(seed: int, layers: int = 6, width: int = 4, fan: int = 3) -> Tree:
+    """A random game tree full of transpositions: each layer's nodes pick
+    their children from the same few nodes of the next layer, so a node is
+    reached by many paths, with different windows and, since some moves are
+    free (`cost` 0), different depth budgets. The sides alternate by layer.
+    """
+    rng = random.Random(seed)
+    below: list[Tree] = []
+    for layer in reversed(range(1, layers + 1)):
+        below = [
+            Tree(
+                f"{layer}.{i}",
+                rng.randint(-20, 20),
+                kids=tuple(rng.sample(below, rng.randint(1, fan))) if below else (),
+                maximising=layer % 2 == 0,
+                cost=rng.randint(0, 1),
+            )
+            for i in range(width)
+        ]
+    return Tree("root", 0, kids=tuple(below))
+
+
+def depth_limited_minimax(node: Tree, depth: int | None) -> int:
+    """Brute-force minimax under the same depth budget as `alphabeta`'s."""
+    if node.is_terminal() or (depth is not None and depth <= 0):
+        return node.score()
+    values = [
+        depth_limited_minimax(kid, None if depth is None else depth - kid.cost)
+        for kid in node.children()
+    ]
+    return max(values) if node.is_maximising() else min(values)
+
+
+@pytest.mark.parametrize("depth", [None, 1, 2, 3])
+@pytest.mark.parametrize("prune_on_ties", [True, False])
+@pytest.mark.parametrize("seed", range(100))
+def test_a_keyed_search_agrees_with_brute_force_on_transposing_trees(
+    seed: int, prune_on_ties: bool, depth: int | None
+) -> None:
+    root = dag(seed)
+
+    result = alphabeta(
+        root,
+        root.minimum(),
+        root.maximum(),
+        prune_on_ties=prune_on_ties,
+        depth=depth,
+        ply_cost=cost,
+        key=name,
+    )
+
+    assert result.score() == depth_limited_minimax(root, depth)
+    first = next(kid for kid in root.children() if kid.name == result.moves[0])
+    assert depth_limited_minimax(
+        first, None if depth is None else depth - first.cost
+    ) == (result.score())
+    leaf = root
+    for move in result.moves:
+        leaf = next(kid for kid in leaf.children() if kid.name == move)
+    assert leaf.score() == result.score()
+
+
+def test_a_table_can_be_shared_between_searches() -> None:
+    CountingTree.expanded.clear()
+    root = diamond()
+    table: Table[CountingTree] = {}
+    first = alphabeta(root, root.minimum(), root.maximum(), key=name, table=table)
+
+    again = alphabeta(root, root.minimum(), root.maximum(), key=name, table=table)
+
+    assert again.moves == first.moves
+    assert CountingTree.expanded["root"] == 1
