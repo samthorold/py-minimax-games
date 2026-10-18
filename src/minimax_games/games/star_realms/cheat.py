@@ -15,6 +15,13 @@ from minimax_games.search.alphabeta import alphabeta
 logger = logging.getLogger(__name__)
 
 
+def search[N: StarRealmsNode](root: N, turns: int) -> N:
+    """The cheat's search: the best leaf `turns` turns below `root`."""
+    return alphabeta(
+        root, root.minimum(), root.maximum(), depth=turns, ply_cost=ends_turn
+    )
+
+
 class CheatBot:
     """Benchmark only, not a legitimate player: searches the true state.
 
@@ -35,9 +42,7 @@ class CheatBot:
         self, state: GameState, actions: tuple[Action, ...]
     ) -> Action:
         root = StarRealmsNode(state, state.current)
-        best = alphabeta(
-            root, root.minimum(), root.maximum(), depth=self.turns, ply_cost=ends_turn
-        )
+        best = search(root, self.turns)
         action = best.moves[0]
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("best line %s scores %s", best.moves, best.score())
