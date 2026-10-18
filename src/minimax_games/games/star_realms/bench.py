@@ -141,7 +141,7 @@ def turn_tree(state: GameState) -> TurnTree:
         if state not in sizes:
             total = 1
             for action in rules.legal_actions(state):
-                child = rules.advance(state, action)
+                child = rules.advance_legal(state, action)
                 if isinstance(action, EndTurn) or rules.winner(child) is not None:
                     sizes.setdefault(child, 1)
                     total += 1

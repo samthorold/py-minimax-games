@@ -46,6 +46,14 @@ class Card:
     scrap: tuple[Effect, ...] = ()
     copies: int = 1
 
+    def __hash__(self) -> int:
+        """The name's hash: equal cards have equal names, so this agrees with
+        `==`, and the catalogue rejects two cards with one name, so its cards
+        don't collide. The generated hash, over every field, was a quarter of
+        the search's time (two fields are enums, hashed in Python); `str`
+        caches its hash."""
+        return hash(self.name)
+
     @property
     def in_slice_1(self) -> bool:
         """Whether every effect, primary, ally or scrap, is trade, combat,

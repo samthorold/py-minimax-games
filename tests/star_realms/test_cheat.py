@@ -173,3 +173,20 @@ def test_the_bot_plays_the_budgeted_decision():
 def test_the_budget_is_at_least_one_node():
     with pytest.raises(ValueError, match="at least 1 node"):
         CheatBot(budget=0)
+
+
+def test_the_search_skips_the_legality_check_for_moves_from_legal_actions(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    expected = [
+        child.state for child in StarRealmsNode(mid_turn(5, 5, 20), 0).children()
+    ]
+
+    def checked(state: GameState, action: Action) -> GameState:
+        raise AssertionError("the search re-checked a move from legal_actions")
+
+    monkeypatch.setattr(rules, "apply", checked)
+    children = [
+        child.state for child in StarRealmsNode(mid_turn(5, 5, 20), 0).children()
+    ]
+    assert children == expected

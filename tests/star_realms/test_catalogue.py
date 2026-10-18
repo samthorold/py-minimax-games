@@ -159,3 +159,17 @@ def test_loading_is_deterministic_and_the_definitions_are_immutable():
         card.cost = 0  # ty: ignore[invalid-assignment]
     with pytest.raises(TypeError):
         catalogue.CATALOGUE["Ram"] = card  # ty: ignore[invalid-assignment]
+
+
+def test_card_hashes_agree_with_equality():
+    for card in catalogue.CATALOGUE.values():
+        copy = dataclasses.replace(card)
+        assert copy is not card
+        assert copy == card
+        assert hash(copy) == hash(card)
+        assert dataclasses.replace(card, cost=card.cost + 1) != card
+    cards = list(catalogue.CATALOGUE.values())
+    assert len(set(cards)) == len(cards)
+    assert {card: card.name for card in cards} == {
+        card: card.name for card in catalogue.load()
+    }

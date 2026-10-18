@@ -2,7 +2,8 @@
 
 A node is a state seen from one player's side, `perspective`, who maximises.
 Its children come from the shared move generator (`rules.legal_actions`,
-then `rules.advance`, so automatic play runs as in a match), and `moves` is
+then `rules.advance_legal`: `advance`, so automatic play runs as in a match,
+without re-checking an action just taken from `legal_actions`), and `moves` is
 the line of decisions from the root. Search depth counts turns
 (docs/star-realms.md, Search): pass `ends_turn` as `alphabeta`'s `ply_cost`.
 """
@@ -66,7 +67,7 @@ class StarRealmsNode:
     def children(self) -> Iterator[Self]:
         for action in rules.legal_actions(self.state):
             yield type(self)(
-                rules.advance(self.state, action),
+                rules.advance_legal(self.state, action),
                 self.perspective,
                 [*self.moves, action],
             )

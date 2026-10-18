@@ -1,4 +1,5 @@
 import dataclasses
+import random
 
 import pytest
 
@@ -508,3 +509,18 @@ def test_two_outposts_must_each_be_destroyed_before_the_player_can_be_attacked()
     state = rules.apply(state, AttackBase(WAR_WORLD))
     assert state.players[1].discard[-2:] == (WAR_WORLD, WAR_WORLD)
     assert attacks(state) == []
+
+
+def test_advance_legal_matches_advance_for_every_legal_action():
+    rng = random.Random(0)
+    for seed in range(10):
+        state = rules.auto_play(rules.new_game(seed))
+        for _ in range(40):
+            actions = rules.legal_actions(state)
+            if not actions:
+                break
+            for action in actions:
+                assert rules.advance_legal(state, action) == rules.advance(
+                    state, action
+                )
+            state = rules.advance(state, rng.choice(actions))
