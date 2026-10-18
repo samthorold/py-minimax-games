@@ -1,11 +1,12 @@
 from minimax_games.games.star_realms import rules
 from minimax_games.games.star_realms.bench import (
     POSITIONS,
+    decision,
     position,
     search,
     turn_tree,
 )
-from minimax_games.games.star_realms.cheat import CheatBot
+from minimax_games.games.star_realms.cheat import CheatBot, decide
 from minimax_games.games.star_realms.cli import main
 
 
@@ -87,3 +88,28 @@ def test_the_default_positions_are_games_still_in_play():
         state = position(seed, turn)
         assert state.turn == turn
         assert rules.winner(state) is None
+
+
+def test_a_budgeted_decision_reports_its_depth_nodes_and_time():
+    state = position(seed=2, turn=7)
+    timed = decision(state, turns=2, budget=1_000)
+    assert timed.decision == decide(state, 2, 1_000)
+    assert timed.seconds > 0
+    assert timed.nodes_per_second > 0
+
+
+def test_the_bench_command_with_a_budget_times_the_cheats_decisions(capsys):
+    argv = ["bench", "--positions", "0:1", "2:7", "--horizons", "2"]
+    main([*argv, "--budget", "1000"])
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == (
+        "Cheat decision benchmark: horizon 2 turns, budget 1000 nodes per decision"
+    )
+    header = lines[lines.index("") + 1].split()
+    assert header == ["Seed", "Turn", "Depth", "Nodes", "nodes/s", "ms"]
+    start = lines.index("") + 2
+    rows = [line.split() for line in lines[start : start + 2]]
+    assert [row[:3] for row in rows] == [["0", "1", "2"], ["2", "7", "1"]]
+    assert rows[0][3] == "124"
+    assert int(rows[1][3]) <= 1000
+    assert "Depth finished: 2 turns 1/2, 1 turn 1/2, none 0/2" in lines
