@@ -39,7 +39,7 @@ def test_the_breakdown_splits_the_search_time_into_nested_areas():
     for name in (
         "move generation (legal_actions of each node)",
         "rules.advance_legal",
-        "automatic-play scan (legal_actions)",
+        "automatic-play scan (rules._next_automatic)",
         "applying actions (rules._apply)",
         "evaluate",
         "transposition table",

@@ -160,7 +160,9 @@ def breakdown(stats: pstats.Stats) -> list[Area]:
         ),
         area(2, "rules.advance_legal", total(_key(rules.advance_legal))),
         area(
-            3, "automatic-play scan (legal_actions)", total(_key(rules._next_automatic))
+            3,
+            "automatic-play scan (rules._next_automatic)",
+            total(_key(rules._next_automatic)),
         ),
         area(3, "applying actions (rules._apply)", total(_key(rules._apply))),
         area(4, "dataclasses.replace", total(_key(dataclasses.replace))),
