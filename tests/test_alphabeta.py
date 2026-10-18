@@ -1,6 +1,7 @@
 from collections import Counter
 from collections.abc import Iterator
-from typing import ClassVar
+from dataclasses import dataclass, field, replace
+from typing import ClassVar, Self
 
 import pytest
 
@@ -197,3 +198,120 @@ def test_depth_zero_returns_the_node_itself() -> None:
     b = Board.from_string("x...o....", Player.X)
 
     assert alphabeta(b, b.minimum(), b.maximum(), depth=0) is b
+
+
+@dataclass
+class Tree:
+    """A hand-built game tree node, with a `cost` for `ply_cost` to read.
+
+    `value` is the node's score: the true value of a leaf, or the heuristic
+    evaluation of an inner node when the search stops there.
+    """
+
+    name: str
+    value: int
+    kids: tuple[Self, ...] = ()
+    maximising: bool = True
+    cost: int = 1
+    moves: list[str] = field(default_factory=list)
+
+    def __gt__(self, other: Self) -> bool:
+        return self.value > other.value
+
+    def __lt__(self, other: Self) -> bool:
+        return self.value < other.value
+
+    def __ge__(self, other: Self) -> bool:
+        return self.value >= other.value
+
+    def __le__(self, other: Self) -> bool:
+        return self.value <= other.value
+
+    def score(self) -> int:
+        return self.value
+
+    def is_terminal(self) -> bool:
+        return not self.kids
+
+    def children(self) -> Iterator[Self]:
+        for kid in self.kids:
+            yield replace(kid, moves=[*self.moves, kid.name])
+
+    def is_maximising(self) -> bool:
+        return self.maximising
+
+    def minimum(self) -> Self:
+        return replace(self, name="min", value=-1000, kids=())
+
+    def maximum(self) -> Self:
+        return replace(self, name="max", value=1000, kids=())
+
+
+def cost(node: Tree) -> int:
+    return node.cost
+
+
+def test_free_plies_do_not_use_up_the_depth_budget() -> None:
+    """`a` costs nothing, so a one-ply search looks through it to its replies."""
+    root = Tree(
+        "root",
+        0,
+        kids=(
+            Tree(
+                "a",
+                100,
+                maximising=False,
+                cost=0,
+                kids=(Tree("a1", 3), Tree("a2", 5)),
+            ),
+            Tree("b", 4, maximising=False, kids=(Tree("b1", -9),)),
+        ),
+    )
+
+    result = alphabeta(root, root.minimum(), root.maximum(), depth=1, ply_cost=cost)
+
+    assert result.moves == ["b"]
+    assert result.score() == 4
+
+
+def chain(*costs: int) -> Tree:
+    """A line of single moves, `n0` to `nk`, where `nk` costs `costs[k - 1]`.
+
+    Each node's heuristic value is its index, and the last one is terminal.
+    """
+    node = Tree(f"n{len(costs)}", len(costs), cost=costs[-1])
+    for i in reversed(range(1, len(costs))):
+        node = Tree(f"n{i}", i, kids=(node,), cost=costs[i - 1])
+    return Tree("n0", 0, kids=(node,))
+
+
+@pytest.mark.parametrize(
+    ("costs", "depth", "stop"),
+    [
+        ((0, 0, 1, 0, 1, 1), 1, "n3"),
+        ((0, 0, 1, 0, 1, 1), 2, "n5"),
+        ((1, 0, 0, 1, 1), 1, "n1"),
+        ((2, 1, 1), 1, "n1"),
+        ((0, 0, 0), 1, "n3"),
+    ],
+)
+def test_search_stops_at_the_node_that_uses_up_the_budget(
+    costs: tuple[int, ...], depth: int, stop: str
+) -> None:
+    root = chain(*costs)
+
+    result = alphabeta(root, root.minimum(), root.maximum(), depth=depth, ply_cost=cost)
+
+    assert result.name == stop
+
+
+@pytest.mark.parametrize("costs", [(1, 1, 1), (0, 0, 0), (1, 0, 1), (5, 5, 5)])
+def test_no_depth_limit_searches_to_terminal_nodes_whatever_the_cost(
+    costs: tuple[int, ...],
+) -> None:
+    root = chain(*costs)
+
+    result = alphabeta(root, root.minimum(), root.maximum(), ply_cost=cost)
+
+    assert result.is_terminal()
+    assert result.name == "n3"
