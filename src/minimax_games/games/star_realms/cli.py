@@ -11,12 +11,18 @@ benchmark, not a legitimate player: it searches the true state.
 each bot's mean time per move. Game `seed` replays on its own with `--seed`
 and its bots in seat order, first player first: bot A moves first in games
 `base_seed`, `base_seed + 2`, ...
+
+`python -m minimax_games.games.star_realms bench` times the cheat's search on
+fixed seeded positions (see `bench`): nodes, nodes per second and time per
+decision at each horizon, each search stopped past `--max-nodes`. `--states`
+also counts distinct states, to measure transpositions.
 """
 
 import argparse
 import sys
 from collections.abc import Callable
 
+from minimax_games.games.star_realms import bench
 from minimax_games.games.star_realms.bots import AnyBot, GreedyBot, RandomBot
 from minimax_games.games.star_realms.cheat import CheatBot
 from minimax_games.games.star_realms.match import play_match
@@ -52,6 +58,9 @@ def main(argv: list[str] | None = None) -> None:
         argv = sys.argv[1:]
     if argv[:1] == ["tournament"]:
         tournament(argv[1:])
+        return
+    if argv[:1] == ["bench"]:
+        benchmark(argv[1:])
         return
     parser = argparse.ArgumentParser(prog="python -m minimax_games.games.star_realms")
     parser.add_argument("--seed", type=int, default=0, help="the game's seed")
@@ -105,6 +114,69 @@ def tournament(argv: list[str]) -> None:
     )
     for line in report(played, (a, b) if a != b else (f"{a}-A", f"{b}-B")):
         print(line)
+
+
+def _seed_turn(text: str) -> tuple[int, int]:
+    seed, _, turn = text.partition(":")
+    return int(seed), int(turn)
+
+
+def benchmark(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(
+        prog="python -m minimax_games.games.star_realms bench"
+    )
+    parser.add_argument(
+        "--positions",
+        nargs="+",
+        type=_seed_turn,
+        default=bench.POSITIONS,
+        metavar="SEED:TURN",
+        help="start of TURN in seed SEED's greedy-vs-greedy game"
+        " (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--horizons",
+        nargs="+",
+        type=int,
+        default=bench.HORIZONS,
+        metavar="TURNS",
+        help="search depths in turns (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--max-nodes",
+        type=int,
+        default=bench.MAX_NODES,
+        help="stop a search past this many nodes (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--states",
+        action="store_true",
+        help="also count distinct states, in each search and in each"
+        " position's whole first turn (slows the search: time without)",
+    )
+    args = parser.parse_args(argv)
+
+    print(
+        "Cheat search benchmark: horizons"
+        f" {', '.join(map(str, args.horizons))} turns,"
+        f" max {args.max_nodes} nodes per search"
+    )
+    entries = bench.run(
+        tuple(args.positions),
+        tuple(args.horizons),
+        args.max_nodes,
+        count_states=args.states,
+    )
+    for line in bench.report(entries):
+        print(line)
+    if args.states:
+        print()
+        for seed, turn in args.positions:
+            tree = bench.turn_tree(bench.position(seed, turn))
+            print(
+                f"Seed {seed} turn {turn}, one whole turn: {tree.nodes} nodes,"
+                f" {tree.states} distinct states ({tree.nodes / tree.states:.1f}x)"
+            )
 
 
 def report(played: Tournament, names: tuple[str, str]) -> list[str]:

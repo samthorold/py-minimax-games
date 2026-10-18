@@ -38,3 +38,8 @@ tasks:
         msg: "Usage: task bump -- patch|minor|major"
     cmds:
       - uv version --bump {{.CLI_ARGS}}
+
+  bench:
+    desc: "Benchmark the cheat's search (nodes/sec): task bench -- [--states] [--max-nodes N]"
+    cmds:
+      - uv run python -m minimax_games.games.star_realms bench {{.CLI_ARGS}}
