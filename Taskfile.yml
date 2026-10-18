@@ -43,3 +43,8 @@ tasks:
     desc: "Benchmark the cheat's search (nodes/sec): task bench -- [--states] [--max-nodes N] [--budget N]"
     cmds:
       - uv run python -m minimax_games.games.star_realms bench {{.CLI_ARGS}}
+
+  profile:
+    desc: "Profile the cheat's budgeted decisions, report in profiles/: task profile -- [--budget N] [--game-turns N]"
+    cmds:
+      - uv run python -m minimax_games.games.star_realms profile {{.CLI_ARGS}}

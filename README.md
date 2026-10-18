@@ -33,7 +33,43 @@ task                        # list tasks
 task test                   # uv run pytest (extra args: task test -- -k name)
 task lint                   # ruff check, ruff format --check, ty check
 task fmt                    # ruff fix + format
+task bench                  # Star Realms: the cheat's search speed (nodes/sec)
+task profile                # Star Realms: profile the cheat's search
 ```
+
+### Profiling the Star Realms search
+
+`task profile` (`python -m minimax_games.games.star_realms profile`) runs the
+cheat's real workload under a profiler: its budgeted decisions (2 turns, 5,000
+nodes) at the 8 benchmark positions and in the first 6 turns of seed 0's
+cheat-vs-heuristic game (`--positions`, `--budget`, `--turns`, `--game-seed`,
+`--game-turns`). It takes about 12 s and writes two files to `profiles/`
+(`--out`), which git ignores:
+
+- `profile.txt`, the report. First the workload's speed without and with the
+  profiler. Then **time by area**: the search's cumulative time split into
+  generating children (move generation, then `rules.advance`: the legality
+  check, the automatic-play scan and applying actions), `evaluate`, the
+  transposition table, and the search's own work; indented areas are part of
+  the area above them, and us/node is per node generated. Then **hashing and
+  equality**, the self time of every `__hash__` and `__eq__`, which all the
+  areas call. Last, `pstats`'s own tables: the top 30 functions by self time
+  (`tottime`, time in the function itself) and by cumulative time (`cumtime`,
+  including what it calls); `ncalls` reads `total/primitive` for recursive
+  functions.
+- `profile.pstats`, the raw profile, for any `pstats` viewer: for instance
+  `uvx snakeviz profiles/profile.pstats` for an interactive icicle chart, or
+  `python -m pstats profiles/profile.pstats` to sort and filter it.
+
+The profiler is the standard library's `cProfile`: no dependency, it runs
+unattended, and it counts every call exactly, so call counts are the same on
+every run (the decisions are deterministic) and only the times vary. It
+slows the search about 3x, by roughly the same amount per call, so read its
+times relative to each other, and confirm a hotspot's real cost by timing
+without the profiler. (`pyinstrument` was tried: its overhead on this workload
+is about the same, since it also hooks every call, and its call tree follows
+`alphabeta`'s recursion many levels deep. `py-spy` samples without overhead
+but needs `sudo` on macOS, so it can't run unattended.)
 
 ## Releasing
 

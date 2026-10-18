@@ -200,7 +200,7 @@ def run(
     return entries
 
 
-def _table(rows: Sequence[tuple[str, ...]]) -> list[str]:
+def table(rows: Sequence[tuple[str, ...]]) -> list[str]:
     """`rows` as left-aligned columns."""
     widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
     return [
@@ -226,7 +226,7 @@ def report(entries: list[Entry]) -> list[str]:
                 f"{1000 * found.seconds:.1f}",
             )
         )
-    table = _table(rows)
+    lines = table(rows)
     summary = []
     for turns in sorted({entry.turns for entry in entries}):
         searches = [entry.search for entry in entries if entry.turns == turns]
@@ -247,7 +247,7 @@ def report(entries: list[Entry]) -> list[str]:
     return [
         "Rows: one search each; a stopped search's nodes read >N (the budget).",
         "",
-        *table,
+        *lines,
         "",
         *summary,
     ]
@@ -313,7 +313,7 @@ def decision_report(
     return [
         "Rows: one decision each; Depth is the deepest search that finished.",
         "",
-        *_table(rows),
+        *table(rows),
         "",
         f"Depth finished: {finished}",
         f"{nodes} nodes in {seconds:.1f}s ({rate:.0f} nodes/s),"
