@@ -2,7 +2,8 @@
 
 `python -m minimax_games.games.star_realms --seed 7 --log` prints the game's
 transcript; without `--log` it prints only who won. `--bots greedy random`
-picks the bots, first player first (both random by default).
+picks the bots, first player first (both random by default). `cheat` is a
+benchmark, not a legitimate player: it searches the true state.
 
 `python -m minimax_games.games.star_realms tournament --bots greedy random
 --games 500` plays seeded games with alternating seats (`--base-seed`,
@@ -16,7 +17,8 @@ import argparse
 import sys
 from collections.abc import Callable
 
-from minimax_games.games.star_realms.bots import Bot, GreedyBot, RandomBot
+from minimax_games.games.star_realms.bots import AnyBot, GreedyBot, RandomBot
+from minimax_games.games.star_realms.cheat import CheatBot
 from minimax_games.games.star_realms.match import play_match
 from minimax_games.games.star_realms.tournament import (
     MAX_TURNS,
@@ -24,11 +26,25 @@ from minimax_games.games.star_realms.tournament import (
     play_tournament,
 )
 
-BOTS: dict[str, Callable[[int], Bot]] = {
+BOTS: dict[str, Callable[[int], AnyBot]] = {
     "random": RandomBot,
     "greedy": lambda seed: GreedyBot(),
+    "cheat": lambda seed: CheatBot(),
 }
 """Each bot by name, built from a seed (which only `random` uses)."""
+
+BENCHMARK_ONLY = {"cheat"}
+"""Bots that see the true state: benchmarks, not legitimate players."""
+
+
+def _names() -> str:
+    """The bots' names for help texts, benchmark-only ones marked."""
+    return ", ".join(
+        f"{name} (benchmark only: sees the whole state)"
+        if name in BENCHMARK_ONLY
+        else name
+        for name in BOTS
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -46,7 +62,7 @@ def main(argv: list[str] | None = None) -> None:
         choices=BOTS,
         default=["random", "random"],
         metavar="BOT",
-        help=f"the two bots, first player first: {', '.join(BOTS)}",
+        help=f"the two bots, first player first: {_names()}",
     )
     args = parser.parse_args(argv)
 
@@ -66,7 +82,7 @@ def tournament(argv: list[str]) -> None:
         choices=BOTS,
         required=True,
         metavar="BOT",
-        help=f"bots A and B (A moves first in even games): {', '.join(BOTS)}",
+        help=f"bots A and B (A moves first in even games): {_names()}",
     )
     parser.add_argument("--games", type=int, default=500, help="how many games")
     parser.add_argument("--base-seed", type=int, default=0, help="the first seed")

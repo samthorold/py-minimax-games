@@ -5,15 +5,16 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from minimax_games.games.star_realms.action import Action
-from minimax_games.games.star_realms.bots import Bot
+from minimax_games.games.star_realms.bots import AnyBot, BenchmarkBot, Bot
 from minimax_games.games.star_realms.match import MatchTooLong, play_match
+from minimax_games.games.star_realms.state import GameState
 from minimax_games.games.star_realms.view import View
 
 MAX_TURNS = 300
 """The default turn cap. Games with greedy end in a few dozen turns; random
 against random can take several hundred, so raise the cap for those."""
 
-type BotFactory = Callable[[int], Bot]
+type BotFactory = Callable[[int], AnyBot]
 """Builds a bot for one game from a seed (which only seeded bots use)."""
 
 
@@ -113,6 +114,32 @@ class _Timed:
         return action
 
 
+class _TimedBenchmark:
+    """Wraps a benchmark-only bot: times each of its decisions on `clock`,
+    and stays a `BenchmarkBot`, so it is still given the true state."""
+
+    def __init__(self, bot: BenchmarkBot, clock: _Clock) -> None:
+        self._bot = bot
+        self._clock = clock
+
+    def choose_from_state(
+        self, state: GameState, actions: tuple[Action, ...]
+    ) -> Action:
+        start = time.perf_counter()
+        action = self._bot.choose_from_state(state, actions)
+        self._clock.seconds += time.perf_counter() - start
+        self._clock.decisions += 1
+        return action
+
+
+def _timed(bot: AnyBot, clock: _Clock) -> AnyBot:
+    """`bot`, timed on `clock`: a benchmark-only bot stays one, and every
+    other bot still gets views only."""
+    if isinstance(bot, BenchmarkBot):
+        return _TimedBenchmark(bot, clock)
+    return _Timed(bot, clock)
+
+
 def play_tournament(
     bots: tuple[BotFactory, BotFactory],
     games: int,
@@ -132,8 +159,8 @@ def play_tournament(
         seed = base_seed + i
         first = i % 2
         seats = (
-            _Timed(bots[first](seed), clocks[first]),
-            _Timed(bots[1 - first](seed + 1), clocks[1 - first]),
+            _timed(bots[first](seed), clocks[first]),
+            _timed(bots[1 - first](seed + 1), clocks[1 - first]),
         )
         try:
             match = play_match(seats, seed, max_turns=max_turns)

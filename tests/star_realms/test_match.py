@@ -321,3 +321,28 @@ def test_bots_are_only_ever_given_their_own_view():
         play_match(bots, seed)
         assert bots[0].calls > 0
         assert bots[1].calls > 0
+
+
+class SeesTheState:
+    """A benchmark-only bot: checks it is given the true state, then plays
+    greedily."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def choose_from_state(
+        self, state: GameState, actions: tuple[Action, ...]
+    ) -> Action:
+        assert isinstance(state, GameState)
+        assert rules.legal_actions(state) == actions
+        self.calls += 1
+        return GreedyBot().choose(observe(state, state.current), actions)
+
+
+def test_only_a_benchmark_bot_is_given_the_true_state():
+    for seed in range(4):
+        cheat, ordinary = SeesTheState(), OnlyViews(RandomBot(seed), seed % 2)
+        bots = (ordinary, cheat) if seed % 2 == 0 else (cheat, ordinary)
+        play_match(bots, seed)
+        assert cheat.calls > 0
+        assert ordinary.calls > 0

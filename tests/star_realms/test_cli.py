@@ -1,4 +1,11 @@
-from minimax_games.games.star_realms.cli import main
+import pytest
+
+from minimax_games.games.star_realms.action import Action
+from minimax_games.games.star_realms.bots import GreedyBot
+from minimax_games.games.star_realms.cheat import CheatBot
+from minimax_games.games.star_realms.cli import BOTS, main
+from minimax_games.games.star_realms.state import GameState
+from minimax_games.games.star_realms.view import observe
 
 
 def test_prints_the_result_of_a_seeded_game(capsys):
@@ -44,3 +51,45 @@ def test_tournament_lists_unfinished_games_and_tells_same_bots_apart(capsys):
     assert "Win rates are of the 0 finished games." in out
     assert any(line.startswith("random-A  0/0") for line in out)
     assert any(line.startswith("random-B  0/0") for line in out)
+
+
+def test_tournament_plays_the_cheat(capsys):
+    # The cheat at its default horizon is slow past the opening: stop early.
+    argv = ["tournament", "--bots", "cheat", "greedy", "--games", "2"]
+    main([*argv, "--max-turns", "4"])
+    out = capsys.readouterr().out.splitlines()
+    assert "Unfinished: 2 (seeds 0, 1)" in out
+    cheat = next(line for line in out if line.split()[:2] == ["cheat", "0/0"])
+    assert float(cheat.split()[-1]) > 0  # it made timed decisions
+
+
+def test_the_cheat_is_marked_benchmark_only_in_the_help(capsys):
+    for argv in (["--help"], ["tournament", "--help"]):
+        with pytest.raises(SystemExit):
+            main(argv)
+        help_text = " ".join(capsys.readouterr().out.split())
+        assert "cheat (benchmark only: sees the whole state)" in help_text
+
+
+class Peeker:
+    """A fast stand-in for the cheat: benchmark-only, plays greedily."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def choose_from_state(
+        self, state: GameState, actions: tuple[Action, ...]
+    ) -> Action:
+        self.calls += 1
+        return GreedyBot().choose(observe(state, state.current), actions)
+
+
+def test_a_single_game_plays_the_cheat(capsys, monkeypatch):
+    # The real cheat is too slow for a whole game: check it is the one
+    # registered, then play a fast benchmark-only stand-in under its name.
+    assert isinstance(BOTS["cheat"](0), CheatBot)
+    peeker = Peeker()
+    monkeypatch.setitem(BOTS, "cheat", lambda seed: peeker)
+    main(["--seed", "7", "--bots", "cheat", "greedy"])
+    assert "wins on turn" in capsys.readouterr().out
+    assert peeker.calls > 0

@@ -48,10 +48,13 @@ def alphabeta[N: Node](
     searched through, so with a cost of 0 everywhere a positive `depth`
     is never reached. `ply_cost` is ignored when `depth` is `None`.
     """
-    logger.debug("got node=%s a=%s b=%s", node.moves, a.moves, b.moves)
+    debug = logger.isEnabledFor(logging.DEBUG)
+    if debug:
+        logger.debug("got node=%s a=%s b=%s", node.moves, a.moves, b.moves)
     if node.is_terminal() or (depth is not None and depth <= 0):
-        logger.debug("leaf")
-        logger.debug("returned node=%s a=%s b=%s", node.moves, a.moves, b.moves)
+        if debug:
+            logger.debug("leaf")
+            logger.debug("returned node=%s a=%s b=%s", node.moves, a.moves, b.moves)
         return node
 
     fails_high = operator.ge if prune_on_ties else operator.gt
@@ -82,9 +85,11 @@ def alphabeta[N: Node](
                 break
 
     if not has_children:
-        logger.debug("no children, treated as a leaf")
+        if debug:
+            logger.debug("no children, treated as a leaf")
         return node
 
-    logger.debug("returned node=%s a=%s b=%s", node.moves, a.moves, b.moves)
+    if debug:
+        logger.debug("returned node=%s a=%s b=%s", node.moves, a.moves, b.moves)
 
     return best_node

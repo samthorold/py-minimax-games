@@ -6,7 +6,7 @@ from functools import partial
 
 from minimax_games.games.star_realms import rules, transcript
 from minimax_games.games.star_realms.action import Action
-from minimax_games.games.star_realms.bots import Bot
+from minimax_games.games.star_realms.bots import AnyBot, BenchmarkBot
 from minimax_games.games.star_realms.state import GameState
 from minimax_games.games.star_realms.view import observe
 
@@ -27,7 +27,7 @@ class MatchResult:
 
 
 def play_match(
-    bots: tuple[Bot, Bot],
+    bots: tuple[AnyBot, AnyBot],
     seed: int,
     max_turns: int = MAX_TURNS,
     log: Log | None = None,
@@ -35,7 +35,8 @@ def play_match(
     """Play one game from `seed`, `bots[0]` moving first.
 
     Each bot is given only its own view of the game (`view.observe`), never
-    the state.
+    the state, unless it marks itself benchmark-only by being a
+    `bots.BenchmarkBot` (the cheat): that one is given the true state.
 
     Automatic play (`rules.auto_play`) runs at the start and after each
     action, so bots are only ever offered decisions.
@@ -61,7 +62,11 @@ def play_match(
             msg = f"no winner after {max_turns} turns (seed {seed})"
             raise MatchTooLong(msg)
         actions = rules.legal_actions(state)
-        action = bots[state.current].choose(observe(state, state.current), actions)
+        bot = bots[state.current]
+        if isinstance(bot, BenchmarkBot):
+            action = bot.choose_from_state(state, actions)
+        else:
+            action = bot.choose(observe(state, state.current), actions)
         if log is not None:
             record(state, action)
         state = rules.advance(state, action, on_auto)
