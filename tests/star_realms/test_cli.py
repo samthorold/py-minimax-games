@@ -1,7 +1,7 @@
 import pytest
 
 from minimax_games.games.star_realms.action import Action
-from minimax_games.games.star_realms.bots import GreedyBot
+from minimax_games.games.star_realms.bots import GreedyBot, HeuristicBot
 from minimax_games.games.star_realms.cheat import CheatBot
 from minimax_games.games.star_realms.cli import BOTS, main
 from minimax_games.games.star_realms.state import GameState
@@ -27,6 +27,12 @@ def test_bots_can_be_picked_by_name(capsys):
     out = capsys.readouterr().out.splitlines()
     assert out[-1].startswith("Player 1 wins on turn")
     assert any(line.startswith("Player 1 acquires ") for line in out)
+
+
+def test_the_heuristic_bot_is_registered_as_heuristic(capsys):
+    assert isinstance(BOTS["heuristic"](0), HeuristicBot)
+    main(["--seed", "7", "--bots", "heuristic", "greedy"])
+    assert "wins on turn" in capsys.readouterr().out
 
 
 def test_tournament_reports_win_rates_by_seat_and_time_per_move(capsys):
