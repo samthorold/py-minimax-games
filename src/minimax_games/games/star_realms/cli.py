@@ -21,13 +21,20 @@ decision at each horizon, each search stopped past `--max-nodes`. `--states`
 also counts distinct states, to measure transpositions. `--budget N` times
 the cheat's budgeted decisions instead (`cheat.decide`, deepening up to the
 largest horizon within N nodes): how deep each got, its nodes and time.
+
+`python -m minimax_games.games.star_realms profile` profiles the cheat's
+budgeted decisions (see `profiling`) at the same positions and in the first
+`--game-turns` turns of a seeded cheat-vs-heuristic game, and writes a report
+(`profile.txt`) and the raw profile (`profile.pstats`) to `--out`
+(`profiles/` by default, which git ignores).
 """
 
 import argparse
 import sys
 from collections.abc import Callable
+from pathlib import Path
 
-from minimax_games.games.star_realms import bench
+from minimax_games.games.star_realms import bench, cheat, profiling
 from minimax_games.games.star_realms.bots import (
     AnyBot,
     GreedyBot,
@@ -86,6 +93,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if argv[:1] == ["bench"]:
         benchmark(argv[1:])
+        return
+    if argv[:1] == ["profile"]:
+        profile(argv[1:])
         return
     parser = argparse.ArgumentParser(prog="python -m minimax_games.games.star_realms")
     parser.add_argument("--seed", type=int, default=0, help="the game's seed")
@@ -231,6 +241,70 @@ def benchmark(argv: list[str]) -> None:
                 f"Seed {seed} turn {turn}, one whole turn: {tree.nodes} nodes,"
                 f" {tree.states} distinct states ({tree.nodes / tree.states:.1f}x)"
             )
+
+
+def profile(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(
+        prog="python -m minimax_games.games.star_realms profile"
+    )
+    parser.add_argument(
+        "--positions",
+        nargs="+",
+        type=_seed_turn,
+        default=bench.POSITIONS,
+        metavar="SEED:TURN",
+        help="start of TURN in seed SEED's greedy-vs-greedy game"
+        " (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--turns", type=int, default=2, help="the cheat's horizon (default: 2)"
+    )
+    parser.add_argument(
+        "--budget",
+        type=int,
+        default=cheat.BUDGET,
+        help="nodes per decision (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--game-seed",
+        type=int,
+        default=0,
+        help="the seed of the cheat-vs-heuristic game (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--game-turns",
+        type=int,
+        default=6,
+        help="also profile the cheat's decisions in the first GAME_TURNS turns"
+        " of that game, the cheat moving first; 0 for none (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=Path("profiles"),
+        help="where to write the report (default: %(default)s)",
+    )
+    args = parser.parse_args(argv)
+
+    states = [bench.position(seed, turn) for seed, turn in args.positions]
+    game = profiling.game_decisions(
+        args.game_seed, args.game_turns, args.budget, args.turns
+    )
+    positions = len(states)
+    workload = (
+        f"Cheat decisions profiled: {positions + len(game)}"
+        f" ({positions} benchmark position{'s' if positions != 1 else ''},"
+        f" {len(game)} from seed {args.game_seed}'s cheat-vs-heuristic game,"
+        f" turns 1-{args.game_turns}), horizon {args.turns} turns,"
+        f" budget {args.budget} nodes"
+    )
+    print(workload)
+    profiled = profiling.profile([*states, *game], args.turns, args.budget)
+    args.out.mkdir(parents=True, exist_ok=True)
+    text = args.out / "profile.txt"
+    text.write_text("\n".join(profiling.report(profiled, workload)) + "\n")
+    profiled.stats.dump_stats(args.out / "profile.pstats")
+    print(f"Wrote {text}")
 
 
 def report(played: Tournament, names: tuple[str, str]) -> list[str]:
