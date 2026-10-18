@@ -1,3 +1,5 @@
+import dataclasses
+
 from minimax_games.games.star_realms import rules
 from minimax_games.games.star_realms.action import (
     Acquire,
@@ -10,10 +12,11 @@ from minimax_games.games.star_realms.action import (
     UseAlly,
     UseBase,
 )
-from minimax_games.games.star_realms.bots import GreedyBot, RandomBot
+from minimax_games.games.star_realms.bots import GreedyBot, HeuristicBot, RandomBot
+from minimax_games.games.star_realms.card import Card
 from minimax_games.games.star_realms.catalogue import CATALOGUE, EXPLORER
 from minimax_games.games.star_realms.match import play_match
-from minimax_games.games.star_realms.view import observe
+from minimax_games.games.star_realms.view import View, observe
 
 VIEW = observe(rules.new_game(seed=1), 0)
 
@@ -76,3 +79,146 @@ def test_greedy_beats_random_in_the_large_majority_of_seeded_games():
         result = play_match((bots[0], bots[1]), seed, max_turns=100)
         wins += result.winner == seat
     assert wins >= 27
+
+
+def view_with(
+    *,
+    owned: tuple[Card, ...] = (),
+    in_play: tuple[Card, ...] = (),
+    opponent_authority: int = 50,
+    opponent_bases: tuple[Card, ...] = (),
+    turn: int = 1,
+    combat: int = 0,
+) -> View:
+    """VIEW, observer 0 to move, owning the starting deck plus `owned` (in
+    the discard pile) with `in_play`, against an opponent at
+    `opponent_authority` with `opponent_bases`, with `combat` to spend."""
+    me, them = VIEW.players
+    me = dataclasses.replace(me, discard=owned, in_play=in_play)
+    them = dataclasses.replace(them, authority=opponent_authority, bases=opponent_bases)
+    return dataclasses.replace(VIEW, players=(me, them), turn=turn, combat=combat)
+
+
+def heuristic(*actions: Action, view: View = VIEW) -> Action:
+    return HeuristicBot().choose(view, actions)
+
+
+def test_heuristic_buys_into_a_faction_it_already_owns():
+    """Cutter (Trade Federation) and Corvette (Star Empire) both cost 2;
+    late on, Corvette's 1 combat favours it unless the bot owns Federation."""
+    buys = (Acquire(CUTTER), Acquire(CORVETTE), EndTurn())
+    federation = view_with(owned=(CATALOGUE["Federation Shuttle"],) * 4, turn=30)
+    empire = view_with(owned=(CATALOGUE["Imperial Frigate"],) * 4, turn=30)
+    assert heuristic(*buys, view=federation) == Acquire(CUTTER)
+    assert heuristic(*buys, view=empire) == Acquire(CORVETTE)
+
+
+def test_heuristic_plays_cards_and_uses_abilities_before_anything_else():
+    rest = (Scrap(EXPLORER), Acquire(BATTLE_BLOB), AttackPlayer(), EndTurn())
+    for first in (PlayCard(WHEEL), UseAlly(CUTTER), UseBase(WHEEL)):
+        assert heuristic(first, *rest) == first
+
+
+WAR_WORLD = CATALOGUE["War World"]  # outpost, defense 4, cost 5
+BATTLE_STATION = CATALOGUE["Battle Station"]  # outpost, defense 5, cost 3
+
+
+def test_heuristic_destroys_the_most_valuable_outpost_it_cannot_get_past():
+    """6 combat can't clear 13 defense of Outposts this turn, so it takes out
+    the dearest one it can (War World, cost 5), not the weakest."""
+    outposts = (WAR_WORLD, STATION, BATTLE_STATION)
+    view = view_with(opponent_bases=outposts, combat=6)
+    attacks = tuple(AttackBase(o) for o in outposts)
+    for actions in (attacks, attacks[::-1]):
+        assert heuristic(*actions, EndTurn(), view=view) == AttackBase(WAR_WORLD)
+
+
+def test_heuristic_destroys_the_weakest_outpost_first_when_it_can_clear_them():
+    """Order doesn't matter when all go: weakest first, as greedy does."""
+    outposts = (REDOUBT, STATION)
+    view = view_with(opponent_bases=outposts, combat=10)
+    attacks = tuple(AttackBase(o) for o in outposts)
+    for actions in (attacks, attacks[::-1]):
+        assert heuristic(*actions, EndTurn(), view=view) == AttackBase(STATION)
+
+
+HIVE = CATALOGUE["The Hive"]  # base, defense 5, cost 5
+
+
+def test_heuristic_destroys_a_valuable_base_before_hitting_the_player():
+    view = view_with(opponent_bases=(WHEEL, HIVE), combat=7)
+    actions = (AttackBase(WHEEL), AttackBase(HIVE), AttackPlayer(), EndTurn())
+    assert heuristic(*actions, view=view) == AttackBase(HIVE)
+
+
+def test_heuristic_destroys_even_a_cheap_base_before_hitting_the_player():
+    """A base keeps working every turn; the damage to the player waits."""
+    view = view_with(opponent_bases=(WHEEL,), combat=7)
+    actions = (AttackBase(WHEEL), AttackPlayer(), EndTurn())
+    assert heuristic(*actions, view=view) == AttackBase(WHEEL)
+
+
+def test_heuristic_hits_the_player_whatever_the_bases_when_that_wins():
+    view = view_with(opponent_bases=(HIVE,), combat=7, opponent_authority=7)
+    actions = (AttackBase(HIVE), AttackPlayer(), EndTurn())
+    assert heuristic(*actions, view=view) == AttackPlayer()
+
+
+RAM = CATALOGUE["Ram"]  # scrap: 3 trade
+
+
+def test_heuristic_scraps_cards_for_combat_when_that_wins_the_game():
+    """3 combat, plus 4 from scrapping Battle Blob, reaches 7 Authority."""
+    view = view_with(in_play=(BATTLE_BLOB,), combat=3, opponent_authority=7)
+    actions = (Scrap(BATTLE_BLOB), AttackPlayer(), EndTurn())
+    assert heuristic(*actions, view=view) == Scrap(BATTLE_BLOB)
+
+
+def test_heuristic_keeps_its_good_cards_when_scrapping_wouldnt_win():
+    view = view_with(in_play=(BATTLE_BLOB, RAM), combat=3, opponent_authority=8)
+    actions = (Scrap(BATTLE_BLOB), Scrap(RAM), AttackPlayer(), EndTurn())
+    assert heuristic(*actions, view=view) == AttackPlayer()
+
+
+SHUTTLE = CATALOGUE["Federation Shuttle"]  # cost 1, 2 trade
+FIGHTER = CATALOGUE["Blob Fighter"]  # cost 1, 3 combat
+
+
+def test_heuristic_prefers_economy_early_and_combat_late():
+    buys = (Acquire(SHUTTLE), Acquire(FIGHTER), EndTurn())
+    assert heuristic(*buys, view=view_with(turn=1)) == Acquire(SHUTTLE)
+    assert heuristic(*buys, view=view_with(turn=30)) == Acquire(FIGHTER)
+
+
+def test_heuristic_scraps_explorers_for_combat_once_it_has_bought():
+    """An Explorer's trade only helps the turn it is played: once spent, its
+    2 combat and a thinner deck are worth more than keeping it."""
+    view = view_with(in_play=(EXPLORER,), combat=3)
+    buying = (Scrap(EXPLORER), Acquire(CUTTER), AttackPlayer(), EndTurn())
+    bought = (Scrap(EXPLORER), AttackPlayer(), EndTurn())
+    assert heuristic(*buying, view=view) == Acquire(CUTTER)
+    assert heuristic(*bought, view=view) == Scrap(EXPLORER)
+
+
+ESCORT = CATALOGUE["Trade Escort"]  # ship, cost 5, 4 combat
+
+
+def test_heuristic_values_a_base_for_the_turns_it_stays_in_play():
+    """The Hive (base, 3 combat) over Trade Escort (ship, 4 combat), both
+    cost 5: a base works every turn until destroyed."""
+    view = view_with(turn=30)
+    buys = (Acquire(ESCORT), Acquire(HIVE), EndTurn())
+    assert heuristic(*buys, view=view) == Acquire(HIVE)
+
+
+def test_heuristic_beats_greedy_in_clearly_more_than_half_of_seeded_games():
+    """40 seeds, alternating seats. Measured: the heuristic wins 38 of 40
+    (427 of 500 over seeds 0-499; tuned on seeds from 1000)."""
+    wins = 0
+    for seed in range(40):
+        seat = seed % 2
+        bots = [GreedyBot(), GreedyBot()]
+        bots[seat] = HeuristicBot()
+        result = play_match((bots[0], bots[1]), seed, max_turns=100)
+        wins += result.winner == seat
+    assert wins >= 28

@@ -12,7 +12,7 @@ The ladder of baselines:
 
 - **random**: a random legal action.
 - **greedy**: play everything, buy the most expensive affordable card (repeatedly), attack the opponent directly, destroying the weakest Outpost first while Outposts guard them; never scrap. `GreedyBot`'s docstring has the exact priority order.
-- **heuristic**: a hand-written buying and attacking policy (faction synergy, scrapping Scouts/Vipers, respecting Outposts).
+- **heuristic**: a hand-written buying and attacking policy: faction synergy, economy early and combat late, valuing bases, scrapping Explorers (and anything with a combat scrap ability when that wins), destroying bases before hitting the player and Outposts sensibly. `HeuristicBot`'s docstring has the exact priority order. Scrapping Scouts and Vipers needs scrap-from-hand/discard effects, which arrive with a later card slice (milestone 4), so it isn't possible with the current cards yet.
 
 ## Rules and scope
 
