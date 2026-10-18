@@ -4,7 +4,11 @@ from minimax_games.games.star_realms import transcript
 from minimax_games.games.star_realms.action import Action, EndTurn
 from minimax_games.games.star_realms.bots import GreedyBot, RandomBot
 from minimax_games.games.star_realms.match import play_match
-from minimax_games.games.star_realms.tournament import TournamentResult, play_tournament
+from minimax_games.games.star_realms.tournament import (
+    TournamentResult,
+    combine,
+    play_tournament,
+)
 from minimax_games.games.star_realms.view import View
 
 
@@ -75,3 +79,29 @@ def test_each_game_replays_as_a_single_match():
     match = play_match((RandomBot(1), GreedyBot()), seed=1)
     assert (game.first, game.turns) == (1, match.turns)
     assert game.winner == 1 - match.winner
+
+
+def test_chunks_from_even_offsets_combine_into_the_whole_run():
+    whole = play_tournament((greedy, RandomBot), games=6)
+    chunks = [
+        play_tournament((greedy, RandomBot), games=4),
+        play_tournament((greedy, RandomBot), games=2, base_seed=4),
+    ]
+    combined = combine(chunks)
+    assert combined.result == whole.result
+    assert combined.timing.decisions == whole.timing.decisions
+    assert combined.timing.wall_seconds == sum(
+        chunk.timing.wall_seconds for chunk in chunks
+    )
+
+
+def test_games_in_parallel_give_the_serial_result():
+    serial = play_tournament((RandomBot, RandomBot), games=7, base_seed=3)
+    parallel = play_tournament((RandomBot, RandomBot), games=7, base_seed=3, jobs=3)
+    assert parallel.result == serial.result
+    assert parallel.timing.decisions == serial.timing.decisions
+
+
+def test_jobs_must_be_positive():
+    with pytest.raises(ValueError, match="jobs"):
+        play_tournament((RandomBot, RandomBot), games=2, jobs=0)

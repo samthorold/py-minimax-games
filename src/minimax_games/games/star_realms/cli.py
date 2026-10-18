@@ -10,9 +10,10 @@ searches the true state.
 --games 500` plays seeded games with alternating seats (`--base-seed`,
 `--max-turns`) and prints the cheat's horizon and node budget if it plays,
 win rates overall and by seat, unfinished games and each bot's mean time per
-move. Game `seed` replays on its own with `--seed`
-and its bots in seat order, first player first: bot A moves first in games
-`base_seed`, `base_seed + 2`, ...
+move. `--jobs N` spreads the games over N processes, with the same results.
+Game `seed` replays on its own with `--seed` and its bots in seat order,
+first player first: bot A moves first in games `base_seed`,
+`base_seed + 2`, ...
 
 `python -m minimax_games.games.star_realms bench` times the cheat's search on
 fixed seeded positions (see `bench`): nodes, nodes per second and time per
@@ -41,13 +42,27 @@ from minimax_games.games.star_realms.tournament import (
     play_tournament,
 )
 
+
+def _greedy(seed: int) -> GreedyBot:
+    return GreedyBot()
+
+
+def _heuristic(seed: int) -> HeuristicBot:
+    return HeuristicBot()
+
+
+def _cheat(seed: int) -> CheatBot:
+    return CheatBot()
+
+
 BOTS: dict[str, Callable[[int], AnyBot]] = {
     "random": RandomBot,
-    "greedy": lambda seed: GreedyBot(),
-    "heuristic": lambda seed: HeuristicBot(),
-    "cheat": lambda seed: CheatBot(),
+    "greedy": _greedy,
+    "heuristic": _heuristic,
+    "cheat": _cheat,
 }
-"""Each bot by name, built from a seed (which only `random` uses)."""
+"""Each bot by name, built from a seed (which only `random` uses). Module
+functions, not lambdas, so `tournament --jobs` can send them to workers."""
 
 BENCHMARK_ONLY = {"cheat"}
 """Bots that see the true state: benchmarks, not legitimate players."""
@@ -111,11 +126,17 @@ def tournament(argv: list[str]) -> None:
         default=MAX_TURNS,
         help="games past this many turns are unfinished",
     )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=1,
+        help="play the games in this many processes (same results)",
+    )
     args = parser.parse_args(argv)
 
     a, b = args.bots
     played = play_tournament(
-        (BOTS[a], BOTS[b]), args.games, args.base_seed, args.max_turns
+        (BOTS[a], BOTS[b]), args.games, args.base_seed, args.max_turns, args.jobs
     )
     last = args.base_seed + args.games - 1
     print(
