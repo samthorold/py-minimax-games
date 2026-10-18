@@ -55,11 +55,11 @@ The ladder of baselines:
 - **Depth counts turns, not plies.** `alphabeta` gains a generic `ply_cost: Callable[[N], int]` hook, defaulting to 1 per node so other games are unchanged. Star Realms passes 1 at the end of a turn and 0 otherwise, so the search only stops at turn boundaries. The default horizon is 2 turns: my turn plus the opponent's reply.
 - **Evaluation**: `evaluate(state, perspective) -> int`, where bigger is better for `perspective`. It starts as a hand-written linear function of:
   - the Authority difference;
-  - base defense, with Outposts weighted higher;
-  - deck economy: average trade and combat per card over the whole deck;
-  - a penalty per Scout/Viper still in the deck.
+  - base defense in play, with Outposts weighted higher;
+  - deck economy: average primary trade and combat per card over every card the player owns (deck, hand, in play, discard and bases);
+  - a penalty per Scout/Viper still owned.
 
-  The weights live in one place and are tuned by tournament. Rollouts (playing out with the greedy policy) are the next contender. Learned evaluation is deferred.
+  Each term is scored for both players and differenced, so the score is antisymmetric. A finished game scores `WIN` (or `-WIN`), and other scores are capped strictly inside that. The weights live in one place (`evaluate.Weights`, default `WEIGHTS`) and are tuned by tournament. Rollouts (playing out with the greedy policy) are the next contender. Learned evaluation is deferred.
 - **Bots**, in the order they're built:
   1. **cheat**: alpha-beta on the true world. It's a benchmark and upper bound, not a legitimate player.
   2. **sampler (PIMC)**: sample K worlds from the bot's view, run depth-limited alpha-beta on each, and vote on the move.
