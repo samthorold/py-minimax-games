@@ -79,8 +79,10 @@ class Search:
     move: Action | None
     """The move the cheat plays, or None if the search was stopped."""
     states: int | None = None
-    """Distinct states among the nodes, if counted: the gap to `nodes` is
-    what a transposition table could save."""
+    """Distinct states among the nodes, if counted. The cheat's transposition
+    table expands each state once (per depth and move count), but a node is
+    counted each time it is generated, before the table is consulted, so
+    `nodes` is still above this."""
 
     @property
     def nodes_per_second(self) -> float:
@@ -116,8 +118,9 @@ class TurnTree:
     """The whole of one turn's search tree, from its first decision."""
 
     nodes: int
-    """Nodes in the tree: what a 1-turn search without pruning visits (and the
-    1-turn cheat prunes nothing, since every node in it is the same player's)."""
+    """Nodes in the tree: what a 1-turn search visits without pruning or a
+    transposition table (a 1-turn search prunes nothing, since every node in
+    it is the same player's)."""
     states: int
     """Distinct states among them: what a search that merged transpositions
     would visit."""

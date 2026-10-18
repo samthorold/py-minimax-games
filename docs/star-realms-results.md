@@ -106,3 +106,40 @@ Follow-up, in order:
 1. **Merge transpositions within a turn**: a transposition table keyed on the state, or generating each turn's plays in one canonical order (play all cards before buying, for instance). Merged, seed 2's turn 21 is 44,750 states, about 4 s at today's speed, instead of 4 hours.
 2. **Bound what's left**: the 2-turn tree is still each of the mover's turn outcomes (up to tens of thousands) times the opponent's turn, too big to search in full. A deterministic node budget, and move ordering so alpha-beta prunes the opponent's turn, are the next levers.
 3. **Only then per-node speed** (#67 profiling, #68 PyPy), which multiplies whatever the first two leave.
+
+## Milestone 2b: cheat search with a transposition table
+
+- Date: 2026-10-18
+- Commit: `06465ae` plus the transposition table (#72).
+- Budget, positions, horizons and machine: as in Milestone 2 above, so the rows compare directly.
+
+The cheat's search now passes `alphabeta` a `key` (`node.transposition_key`: the state and the number of moves to it), so a state reached by another order of the same plays is searched once at a given depth. Nodes are still counted as they are generated, before the table is consulted, so a search's nodes are about the edges between the states it expands, not the states themselves.
+
+| Position | Horizon | Nodes before | Nodes now | Distinct states now | nodes/s now | ms before | ms now |
+|---|---|---|---|---|---|---|---|
+| 1:3 | 1 | 106 | 69 | 56 | 13,704 | 8 | 5 |
+| 1:3 | 2 | 625 | 361 | 315 | 14,883 | 43 | 24 |
+| 1:7 | 1 | 64 | 64 | 64 | 9,228 | 7 | 7 |
+| 1:7 | 2 | >200,000 | 38,590 | 28,673 | 13,741 | >17,002 | 2,808 |
+| 1:11 | 1 | 36,652 | 2,057 | 918 | 13,762 | 3,309 | 150 |
+| 1:11 | 2 | 171,722 | 8,192 | 5,468 | 13,847 | 12,999 | 592 |
+| 1:15 | 1 | 17,158 | 1,757 | 724 | 15,535 | 1,407 | 113 |
+| 1:15 | 2 | >200,000 | 20,929 | 10,149 | 15,371 | >14,678 | 1,362 |
+| 1:19 | 1 | 6,780 | 1,116 | 848 | 9,234 | 864 | 121 |
+| 1:19 | 2 | >200,000 | >200,000 | 152,940 | 14,667 | >15,034 | >13,636 |
+| 2:5 | 1 | >200,000 | 9,039 | 3,864 | 18,354 | >12,636 | 493 |
+| 2:5 | 2 | >200,000 | 28,013 | 16,194 | 18,817 | >10,636 | 1,489 |
+| 2:13 | 1 | >200,000 | 4,119 | 2,330 | 14,700 | >16,184 | 280 |
+| 2:13 | 2 | >200,000 | 9,018 | 6,715 | 16,383 | >12,415 | 550 |
+| 2:21 | 1 | >200,000 | 107,972 | 44,750 | 11,370 | >19,430 | 9,496 |
+| 2:21 | 2 | >200,000 | >200,000 | 109,203 | 13,227 | >17,747 | >15,120 |
+
+- Horizon 1: 8/8 searches complete (5/8 before), 126,193 nodes in 10.7 s (11,834 nodes/s), 1,333 ms per completed decision.
+- Horizon 2: 6/8 searches complete (2/8 before), 505,103 nodes in 35.6 s (14,196 nodes/s), 1,138 ms per completed decision.
+- 46 s wall time (2.6 minutes before; 58 s with `--states`).
+
+Each 1-turn search now expands exactly the distinct states of its turn (the "Distinct states" column matches `bench.turn_tree`'s count for every position), and seed 2's turn 21, 175 million nodes and about 4 hours before, takes 9.5 s. Per-node speed is unchanged (the table costs a hash per expanded node), so the gain is all tree size.
+
+### Verdict
+
+**The transposition table removes the factor of thousands; what is left is the size of the merged 2-turn tree.** Every 1-turn search now finishes, the slowest in under 10 s, and 6 of 8 2-turn searches finish, at a median of about 1 s. But a 2-turn search still costs seconds in the opening and mid-game and passes 200,000 nodes late in the game (seed 1's turn 19, seed 2's turn 21), where the mover's turn has thousands of outcomes and each is followed by a whole opponent turn. That is still far from 500 games in 10 minutes. Next: a deterministic node budget with iterative deepening (#73), then move ordering so alpha-beta prunes the opponent's turn, then per-node speed (#67, #68).
