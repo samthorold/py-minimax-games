@@ -2,7 +2,7 @@ import pytest
 
 from minimax_games.games.star_realms.action import Action
 from minimax_games.games.star_realms.bots import GreedyBot, HeuristicBot
-from minimax_games.games.star_realms.cheat import CheatBot
+from minimax_games.games.star_realms.cheat import BUDGET, CheatBot
 from minimax_games.games.star_realms.cli import BOTS, main
 from minimax_games.games.star_realms.state import GameState
 from minimax_games.games.star_realms.view import observe
@@ -53,17 +53,19 @@ def test_tournament_lists_unfinished_games_and_tells_same_bots_apart(capsys):
     argv = ["tournament", "--bots", "random", "random", "--games", "2"]
     main([*argv, "--max-turns", "5"])
     out = capsys.readouterr().out.splitlines()
+    assert not any("budget" in line for line in out)  # no search, no budget
     assert "Unfinished: 2 (seeds 0, 1)" in out
     assert "Win rates are of the 0 finished games." in out
     assert any(line.startswith("random-A  0/0") for line in out)
     assert any(line.startswith("random-B  0/0") for line in out)
 
 
-def test_tournament_plays_the_cheat(capsys):
-    # The cheat at its default horizon is slow past the opening: stop early.
+def test_tournament_plays_the_cheat_and_states_its_budget(capsys):
+    # Whole games at the default budget take seconds each: stop early.
     argv = ["tournament", "--bots", "cheat", "greedy", "--games", "2"]
     main([*argv, "--max-turns", "4"])
     out = capsys.readouterr().out.splitlines()
+    assert f"cheat: 2-turn horizon, budget {BUDGET} nodes per decision" in out
     assert "Unfinished: 2 (seeds 0, 1)" in out
     cheat = next(line for line in out if line.split()[:2] == ["cheat", "0/0"])
     assert float(cheat.split()[-1]) > 0  # it made timed decisions

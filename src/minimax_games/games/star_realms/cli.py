@@ -8,15 +8,18 @@ searches the true state.
 
 `python -m minimax_games.games.star_realms tournament --bots greedy random
 --games 500` plays seeded games with alternating seats (`--base-seed`,
-`--max-turns`) and prints win rates overall and by seat, unfinished games and
-each bot's mean time per move. Game `seed` replays on its own with `--seed`
+`--max-turns`) and prints the cheat's horizon and node budget if it plays,
+win rates overall and by seat, unfinished games and each bot's mean time per
+move. Game `seed` replays on its own with `--seed`
 and its bots in seat order, first player first: bot A moves first in games
 `base_seed`, `base_seed + 2`, ...
 
 `python -m minimax_games.games.star_realms bench` times the cheat's search on
 fixed seeded positions (see `bench`): nodes, nodes per second and time per
 decision at each horizon, each search stopped past `--max-nodes`. `--states`
-also counts distinct states, to measure transpositions.
+also counts distinct states, to measure transpositions. `--budget N` times
+the cheat's budgeted decisions instead (`cheat.decide`, deepening up to the
+largest horizon within N nodes): how deep each got, its nodes and time.
 """
 
 import argparse
@@ -119,6 +122,13 @@ def tournament(argv: list[str]) -> None:
         f"{a} vs {b}: {args.games} games, seeds {args.base_seed}-{last},"
         f" max {args.max_turns} turns"
     )
+    for name in dict.fromkeys(args.bots):
+        bot = BOTS[name](args.base_seed)
+        if isinstance(bot, CheatBot):
+            print(
+                f"{name}: {bot.turns}-turn horizon,"
+                f" budget {bot.budget} nodes per decision"
+            )
     for line in report(played, (a, b) if a != b else (f"{a}-A", f"{b}-B")):
         print(line)
 
@@ -156,6 +166,12 @@ def benchmark(argv: list[str]) -> None:
         help="stop a search past this many nodes (default: %(default)s)",
     )
     parser.add_argument(
+        "--budget",
+        type=int,
+        help="time the cheat's budgeted decisions instead, deepening up to the"
+        " largest horizon within BUDGET nodes per decision",
+    )
+    parser.add_argument(
         "--states",
         action="store_true",
         help="also count distinct states, in each search and in each"
@@ -163,6 +179,16 @@ def benchmark(argv: list[str]) -> None:
     )
     args = parser.parse_args(argv)
 
+    if args.budget is not None:
+        turns = max(args.horizons)
+        print(
+            f"Cheat decision benchmark: horizon {turns} turns,"
+            f" budget {args.budget} nodes per decision"
+        )
+        timed = bench.decisions(tuple(args.positions), turns, args.budget)
+        for line in bench.decision_report(timed, turns):
+            print(line)
+        return
     print(
         "Cheat search benchmark: horizons"
         f" {', '.join(map(str, args.horizons))} turns,"

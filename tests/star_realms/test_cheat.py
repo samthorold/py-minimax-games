@@ -5,11 +5,17 @@ from typing import ClassVar, Self
 import pytest
 
 from minimax_games.games.star_realms import rules
-from minimax_games.games.star_realms.action import AttackPlayer
+from minimax_games.games.star_realms.action import Action, AttackPlayer
 from minimax_games.games.star_realms.bench import position, turn_tree
 from minimax_games.games.star_realms.bots import GreedyBot
 from minimax_games.games.star_realms.catalogue import CATALOGUE, STARTING_DECK
-from minimax_games.games.star_realms.cheat import CheatBot, search
+from minimax_games.games.star_realms.cheat import (
+    BUDGET,
+    CheatBot,
+    Decision,
+    decide,
+    search,
+)
 from minimax_games.games.star_realms.match import MatchTooLong, play_match
 from minimax_games.games.star_realms.node import StarRealmsNode, transposition_key
 from minimax_games.games.star_realms.state import GameState, PlayerState
@@ -98,3 +104,72 @@ def test_the_cheat_searches_each_position_of_its_turn_once():
     assert ExpansionCounter.expanded
     assert max(ExpansionCounter.expanded.values()) == 1
     assert sum(ExpansionCounter.expanded.values()) < turn_tree(state).nodes
+
+
+def unbudgeted_move(state: GameState, turns: int) -> Action:
+    return search(StarRealmsNode(state, state.current), turns).moves[0]
+
+
+@pytest.mark.parametrize(("seed", "turn"), [(0, 3), (1, 3), (1, 11)])
+def test_with_a_budget_big_enough_it_plays_the_unbudgeted_move(seed, turn):
+    state = position(seed, turn)
+    decision = decide(state, turns=2, budget=1_000_000)
+    assert decision.depth == 2
+    assert decision.move == unbudgeted_move(state, turns=2)
+
+
+@pytest.mark.parametrize("budget", [1, 2, 50, 3_000])
+def test_a_decision_never_passes_its_budget_and_is_deterministic(budget):
+    state = position(seed=1, turn=11)
+    decision = decide(state, turns=2, budget=budget)
+    assert decision.nodes <= budget
+    assert decide(state, turns=2, budget=budget) == decision
+    assert decision.move in rules.legal_actions(state)
+
+
+def test_a_finished_decision_counts_the_nodes_it_searched():
+    state = position(seed=1, turn=3)
+    decision = decide(state, turns=2, budget=1_000_000)
+    assert 1 < decision.nodes < 1_000_000
+    assert decide(state, turns=2, budget=decision.nodes) == decision
+    assert decide(state, turns=2, budget=decision.nodes - 1).depth == 1
+
+
+def test_when_the_deeper_search_is_cut_off_it_plays_the_deepest_finished_one():
+    state = position(seed=2, turn=7)  # 1 turn and 2 turns disagree here
+    one_turn, two_turns = unbudgeted_move(state, 1), unbudgeted_move(state, 2)
+    assert one_turn != two_turns
+    decision = decide(state, turns=2, budget=1_000)
+    assert decision.depth == 1
+    assert decision.move == one_turn
+    assert decide(state, turns=2, budget=10_000).move == two_turns
+
+
+def test_a_cut_off_first_search_plays_the_best_root_move_it_finished():
+    state = mid_turn(combat=5, trade=6, opponent_authority=5)
+    actions = rules.legal_actions(state)
+    assert actions.index(AttackPlayer()) == len(actions) - 2  # then EndTurn
+    # enough to search every move but ending the turn: the attack wins
+    decision = decide(state, turns=1, budget=17)
+    assert decision.depth == 0
+    assert decision.move == AttackPlayer()
+
+
+def test_with_no_root_move_searched_it_plays_the_first_legal_action():
+    state = position(seed=1, turn=11)
+    decision = decide(state, turns=2, budget=1)
+    assert decision == Decision(rules.legal_actions(state)[0], nodes=1, depth=0)
+
+
+def test_the_bot_plays_the_budgeted_decision():
+    state = position(seed=2, turn=7)
+    actions = rules.legal_actions(state)
+    bot = CheatBot(turns=2, budget=1_000)
+    assert bot.budget == 1_000
+    assert bot.choose_from_state(state, actions) == decide(state, 2, 1_000).move
+    assert CheatBot().budget == BUDGET
+
+
+def test_the_budget_is_at_least_one_node():
+    with pytest.raises(ValueError, match="at least 1 node"):
+        CheatBot(budget=0)

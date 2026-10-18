@@ -4,10 +4,13 @@ Each position is the start of a turn in a seeded greedy-vs-greedy game, so
 the node counts are the same on every run; only the timings vary. A search
 that passes its node budget is stopped there, so the benchmark always
 finishes, and reports the nodes per second it measured up to then.
+
+`decisions` times the cheat's budgeted decisions (`cheat.decide`) on the same
+positions instead: how deep each got within the budget, and how long it took.
 """
 
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Self
 
@@ -197,6 +200,15 @@ def run(
     return entries
 
 
+def _table(rows: Sequence[tuple[str, ...]]) -> list[str]:
+    """`rows` as left-aligned columns."""
+    widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
+    return [
+        "  ".join(c.ljust(w) for c, w in zip(row, widths, strict=True)).rstrip()
+        for row in rows
+    ]
+
+
 def report(entries: list[Entry]) -> list[str]:
     """The benchmark as plain-text lines: a row per search, then a summary per
     horizon. A stopped search's nodes read `>N`."""
@@ -214,11 +226,7 @@ def report(entries: list[Entry]) -> list[str]:
                 f"{1000 * found.seconds:.1f}",
             )
         )
-    widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
-    table = [
-        "  ".join(c.ljust(w) for c, w in zip(row, widths, strict=True)).rstrip()
-        for row in rows
-    ]
+    table = _table(rows)
     summary = []
     for turns in sorted({entry.turns for entry in entries}):
         searches = [entry.search for entry in entries if entry.turns == turns]
@@ -242,4 +250,72 @@ def report(entries: list[Entry]) -> list[str]:
         *table,
         "",
         *summary,
+    ]
+
+
+@dataclass(frozen=True, slots=True)
+class TimedDecision:
+    """One budgeted decision: its result is reproducible, its time measured."""
+
+    decision: cheat.Decision
+    seconds: float
+
+    @property
+    def nodes_per_second(self) -> float:
+        return self.decision.nodes / self.seconds if self.seconds else 0.0
+
+
+def decision(state: GameState, turns: int, budget: int) -> TimedDecision:
+    """Time the cheat's decision in `state`: `turns` deep, `budget` nodes."""
+    start = time.perf_counter()
+    decided = cheat.decide(state, turns, budget)
+    return TimedDecision(decided, time.perf_counter() - start)
+
+
+def decisions(
+    positions: tuple[tuple[int, int], ...], turns: int, budget: int
+) -> list[tuple[int, int, TimedDecision]]:
+    """Time the cheat's decision at each (seed, turn) position, in order."""
+    return [
+        (seed, turn, decision(position(seed, turn), turns, budget))
+        for seed, turn in positions
+    ]
+
+
+def decision_report(
+    timed: list[tuple[int, int, TimedDecision]], turns: int
+) -> list[str]:
+    """The decision benchmark as plain-text lines: a row per decision, then
+    how often each depth finished and the totals."""
+    rows = [("Seed", "Turn", "Depth", "Nodes", "nodes/s", "ms")]
+    for seed, turn, found in timed:
+        rows.append(
+            (
+                str(seed),
+                str(turn),
+                str(found.decision.depth),
+                str(found.decision.nodes),
+                f"{found.nodes_per_second:.0f}",
+                f"{1000 * found.seconds:.1f}",
+            )
+        )
+    depths = [found.decision.depth for _, _, found in timed]
+    finished = ", ".join(
+        f"{depth} turn{'s' if depth > 1 else ''} {depths.count(depth)}/{len(timed)}"
+        if depth
+        else f"none {depths.count(0)}/{len(timed)}"
+        for depth in range(turns, -1, -1)
+    )
+    nodes = sum(found.decision.nodes for _, _, found in timed)
+    seconds = sum(found.seconds for _, _, found in timed)
+    rate = nodes / seconds if seconds else 0.0
+    ms = 1000 * seconds / len(timed) if timed else 0.0
+    return [
+        "Rows: one decision each; Depth is the deepest search that finished.",
+        "",
+        *_table(rows),
+        "",
+        f"Depth finished: {finished}",
+        f"{nodes} nodes in {seconds:.1f}s ({rate:.0f} nodes/s),"
+        f" {ms:.1f} ms per decision",
     ]
