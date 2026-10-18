@@ -47,7 +47,7 @@ The ladder of baselines:
 
   `rules.auto_play(state)` applies automatic actions, in `legal_actions` order, until none is left; `rules.advance(state, action)` applies a decision then auto-plays. The match runner auto-plays after dealing and after every action, so bots are only offered decisions. `rules.apply` stays the bare rules, without automatic play. Tests brute-force every way to play a turn from small hand-built states with and without automatic play: every outcome with it is reachable without, and every outcome without it is matched by one with it that leaves the player at least as much Authority and the opponent at most as much (a pure-gain card left unplayed only loses Authority or damage).
 - **Fully specified worlds.** The state always holds a concrete order for every deck, driven by a seeded RNG, so a seed fully determines a game.
-- **Observation views.** `observe(state, player)` returns what that player knows: their own hand, everything public, and the contents but not the order of hidden piles. **Bots only ever receive views**, enforced by tests. The one exception is the benchmark-only "cheat" bot.
+- **Observation views.** `observe(state, player)` returns what that player knows: their own hand, everything public, and the contents but not the order of hidden piles. **Bots only ever receive views**, enforced by tests. The one exception is the benchmark-only "cheat" bot: a bot marks itself benchmark-only by implementing `bots.BenchmarkBot` (`choose_from_state(state, actions)`) instead of `bots.Bot` (`choose(view, actions)`), and only then does the match runner give it the true state. The tournament's timing wrapper keeps that marking.
 - **Sampling.** A sampler builds a full world consistent with a view, used by the sampler bot and ISMCTS.
 
 ## Search
@@ -61,7 +61,7 @@ The ladder of baselines:
 
   Each term is scored for both players and differenced, so the score is antisymmetric. A finished game scores `WIN` (or `-WIN`), and other scores are capped strictly inside that. The weights live in one place (`evaluate.Weights`, default `WEIGHTS`) and are tuned by tournament. Rollouts (playing out with the greedy policy) are the next contender. Learned evaluation is deferred.
 - **Bots**, in the order they're built:
-  1. **cheat**: alpha-beta on the true world. It's a benchmark and upper bound, not a legitimate player.
+  1. **cheat**: alpha-beta on the true world. It's a benchmark and upper bound, not a legitimate player. `node.StarRealmsNode` adapts a state to `search.Node` from the searching player's side: children from `legal_actions` + `rules.advance`, `score()` from `evaluate` (a finished game's `WIN` moved one point toward 0 per move, so quicker wins and slower losses rank higher), and `node.ends_turn` as the `ply_cost`. `CheatBot(turns=2)` plays the first move of the best line; it is `cheat` in the CLI. The search has no transposition table, so every ordering of a turn's micro-actions is searched: mid-game decisions take seconds at 1 turn and minutes at 2, so the nodes/sec benchmark comes next.
   2. **sampler (PIMC)**: sample K worlds from the bot's view, run depth-limited alpha-beta on each, and vote on the move.
   3. **ISMCTS**: in `search/`, sampling a world on each iteration, with a rollout policy.
 - **Deterministic budgets**: worlds × turn depth for the sampler, iterations for ISMCTS, and a number of rollouts. No wall-clock limits in anything we measure. Bots are compared at equal budgets.

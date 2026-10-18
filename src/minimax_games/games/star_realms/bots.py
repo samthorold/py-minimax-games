@@ -1,11 +1,13 @@
 """Bots: anything that picks one of the legal actions.
 
 A bot sees only its player's view of the game (`view.View`), never the state
-(docs/star-realms.md).
+(docs/star-realms.md). The one exception is a `BenchmarkBot`, such as the
+cheat: a benchmark, not a legitimate player, which the match runner gives
+the true state.
 """
 
 import random
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from minimax_games.games.star_realms.action import (
     Acquire,
@@ -18,6 +20,7 @@ from minimax_games.games.star_realms.action import (
     UseBase,
 )
 from minimax_games.games.star_realms.card import CardType
+from minimax_games.games.star_realms.state import GameState
 from minimax_games.games.star_realms.view import View
 
 
@@ -25,6 +28,23 @@ class Bot(Protocol):
     def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
         """Pick one of `actions`, the legal actions in the game `view` shows."""
         ...
+
+
+@runtime_checkable
+class BenchmarkBot(Protocol):
+    """A benchmark-only bot: it sees the true state, so it is a yardstick, not
+    a legitimate player. Implementing `choose_from_state` is how a bot marks
+    itself benchmark-only; every other bot is a `Bot` and gets views only."""
+
+    def choose_from_state(
+        self, state: GameState, actions: tuple[Action, ...]
+    ) -> Action:
+        """Pick one of `actions`, the legal actions in the true `state`."""
+        ...
+
+
+type AnyBot = Bot | BenchmarkBot
+"""A bot the match runner accepts: a `Bot`, or a `BenchmarkBot`."""
 
 
 class RandomBot:
