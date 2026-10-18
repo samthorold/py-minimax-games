@@ -298,3 +298,53 @@ In order of expected gain for the effort (not done here). Two were checked by pa
 4. **Build states directly instead of `dataclasses.replace`** (10 calls per node, 21.8%): `replace` re-inspects the dataclass's fields on every call; a constructor call with the fields spelled out, or one `replace` per action instead of several, is cheaper.
 
 `evaluate` (7.5%), the transposition table (4.9%) and the search itself (4.0%) are not worth optimising yet. Between them the four wins target most of `rules.advance`'s 78%, and the two measured ones alone save about a quarter of the wall time; at 5,000 nodes per decision, more nodes per second means more decisions finish the 2-turn search, the cheat's main handicap in the ladder above. PyPy (#68) multiplies whatever is left, and can reuse `task profile`.
+
+## Milestone 2e: PyPy against CPython
+
+- Date: 2026-10-18
+- Commit: `cb98d4c` (#68: measurements only, no code change).
+- Interpreters: CPython 3.14.0 (the project's environment; there is no 3.13 in it) against PyPy 3.12.14 (PyPy 8.0.0, `uv python install pypy-3.12.14`).
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2). Each run alone on the machine, one at a time.
+
+PyPy has no 3.13, and the project requires `>=3.13`, so PyPy ran from a copy of the repo with `requires-python = ">=3.12"` and its own environment, outside the repo:
+
+```
+uv python install pypy-3.12.14
+# in a copy of the repo, with requires-python lowered to ">=3.12"
+UV_PROJECT_ENVIRONMENT=<copy>/.venv-pypy uv sync --python pypy@3.12
+UV_PROJECT_ENVIRONMENT=<copy>/.venv-pypy uv run --frozen python -m minimax_games.games.star_realms <command>
+```
+
+Lowering `requires-python` is the only change PyPy needs: every dependency installs, superenums and the dev tools included (ruff, ty, actionlint and shellcheck ship platform binaries, not CPython extensions), and no code uses anything newer than 3.12. The CPython side ran the same commands with plain `uv run` in the repo.
+
+The machine sometimes slept during the long runs; the reported times are `time.perf_counter`, which on macOS stops while asleep, and they agree with each process's CPU time to within 1%.
+
+### Results
+
+| Workload | CPython 3.14 | PyPy 3.12 | PyPy speed-up |
+|---|---|---|---|
+| Test suite (`pytest -q`) | 1,245 passed, 12.2 s | 1,243 passed, 2 failed, 20-21 s | 0.6x |
+| `bench`, horizon 1 | 11.0 s, 11,430 nodes/s | 7.3 s, 17,227 nodes/s | 1.5x |
+| `bench`, horizon 2 | 37.3 s, 13,554 nodes/s | 19.9 s, 25,383 nodes/s | 1.9x |
+| `bench --budget 5000` | 2.6 s, 13,458 nodes/s, 329 ms/decision | 2.9 s, 12,236 nodes/s, 362 ms/decision | 0.9x |
+| `tournament --bots cheat greedy --games 20` | 228 ms/decision, 323 s | 140 ms/decision, 199 s | 1.6x |
+| `tournament --bots cheat greedy --games 60` | 220 ms/decision, 902 s | 129 ms/decision, 530 s | 1.7x |
+
+**Same results on both.** Every `bench` search visits the same number of nodes, every budgeted decision finishes the same depth with the same nodes, and the tournaments give the same wins, seats and mean turns (20 games: cheat 14/20, 8/10 first and 6/10 second, 27.7 turns; 60 games: cheat 47/60, 25/30 and 22/30, 26.6 turns). No hash-order or set-iteration dependence showed up.
+
+**The test suite passes except two profiler tests**, both in `tests/star_realms/test_profiling.py`, and both because PyPy's `cProfile` reports differently, not because the code is wrong: `test_hashing_lists_the_self_time_of_every_hash_and_equality_by_class` finds no `Card.__hash__` entry (PyPy's profiler doesn't record the dataclass-generated `__hash__` that builtin `hash` calls), and `test_the_breakdown_splits_the_search_time_into_nested_areas` finds `cheat.decide`'s cumulative time (0.1 ms) smaller than its children's (150 ms). So `task profile` would need CPython anyway. The suite as a whole is slower under PyPy: it is many short runs, which the JIT doesn't have time to compile.
+
+**Warm-up decides the speed-up.** PyPy is slower than CPython until its JIT has compiled the search: the first `bench` searches (tens of nodes) ran 3-5x slower, and the whole 35,000-node `--budget 5000` run (under 3 s) was 10% slower. The speed-up then grows with the length of the run: 1.5x over `bench`'s horizon-1 searches, 1.9x over its horizon-2 searches (2.1x on the largest, seed 1's turn 19), 1.6x over a 20-game tournament, 1.7x over 60 games, and 1.75x over that run's last 40 games (331 s against 579 s). It levels off at about **1.7-1.9x** once warm. The non-search bots get slower (greedy 0.003 → 0.022 ms per move), which doesn't matter beside the cheat's 100+ ms.
+
+1.7-1.9x is modest for PyPy on pure-Python code, and in line with what the profile (Milestone 2d) shows the search doing: mostly allocating short-lived frozen dataclasses and tuples (`dataclasses.replace`, 10 per node), building lists and dicts of legal actions, and hashing cards and enums into dicts and sets. The JIT speeds the interpretation but can't remove those allocations and hash-table operations, which escape into the states the search keeps.
+
+### Recommendation
+
+**Don't adopt PyPy now.** 1.7x on long tournaments is real (the 81-minute cheat ladder of Milestone 2 would take about 48 minutes), but:
+
+- **It costs support.** `requires-python` must drop to `>=3.12` (no PyPy 3.13 exists), ruff's `target-version` with it, and CI needs a PyPy entry, which turns the single `pre-commit` job into a matrix and renames the required check, so the `main` ruleset must be updated in step. ty and actionlint do install under PyPy, so the hooks themselves would run.
+- **It loses the profiler.** Two profiling tests fail and `task profile`'s breakdown is wrong under PyPy, so optimisation work stays on CPython either way.
+- **The CPython optimisations come first and are comparable.** Milestone 2d's two measured wins (skipping the legality check in the search, a cheap `Card` hash) save about a quarter of the wall time between them, about 1.3x, and the dedicated automatic-play scan and building states without `dataclasses.replace` target most of the rest of `rules.advance`'s 78%. Together they plausibly reach PyPy's 1.7x on CPython, for everyone and without a second interpreter. They also cut the very allocation and hashing that limits PyPy, so PyPy's own gain after them is unknown.
+- **Short runs get slower.** The budgeted benchmark, the tests and any single-game replay run slower under PyPy.
+
+Re-measure after the CPython optimisations of #67's list are done (the same commands as above): if PyPy then still gives 1.5x or more on a 60-game tournament, adopting it for long tournaments is worth the support cost.
