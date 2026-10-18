@@ -49,6 +49,17 @@ def test_tournament_reports_win_rates_by_seat_and_time_per_move(capsys):
     assert random_[1] == "0/4"
 
 
+def test_tournament_jobs_split_the_games_without_changing_the_results(capsys):
+    def results(*jobs: str) -> list[list[str]]:
+        main(["tournament", "--bots", "greedy", "heuristic", "--games", "6", *jobs])
+        out = capsys.readouterr().out.splitlines()
+        assert "Unfinished: 0" in out
+        bots = [line.split() for line in out if line.startswith(("greedy", "heur"))]
+        return [row[:-1] for row in bots]  # all but ms/move, which varies
+
+    assert results("--jobs", "3") == results()
+
+
 def test_tournament_lists_unfinished_games_and_tells_same_bots_apart(capsys):
     argv = ["tournament", "--bots", "random", "random", "--games", "2"]
     main([*argv, "--max-turns", "5"])

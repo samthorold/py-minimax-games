@@ -1,7 +1,8 @@
 """The tournament: seeded games between two bots, alternating seats."""
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 
 from minimax_games.games.star_realms.action import Action
@@ -145,13 +146,25 @@ def play_tournament(
     games: int,
     base_seed: int = 0,
     max_turns: int = MAX_TURNS,
+    jobs: int = 1,
 ) -> Tournament:
     """Play `games` games from seeds `base_seed`, `base_seed + 1`, ...
 
     Bot A (`bots[0]`) moves first in even-numbered games, bot B in odd ones.
     A game that passes `max_turns` is unfinished: it has no winner and counts
     in no win rate.
+
+    With `jobs` above 1 the games are split into up to `jobs` runs of
+    consecutive seeds, played in separate processes (so `bots` must pickle),
+    and combined: the result is the same as one run's. Each bot's time per
+    decision is measured in the process that made the decision; the wall
+    time is the whole parallel run's.
     """
+    if jobs < 1:
+        msg = f"jobs must be at least 1, not {jobs}"
+        raise ValueError(msg)
+    if jobs > 1 and games > 0:
+        return _play_parallel(bots, games, base_seed, max_turns, jobs)
     start = time.perf_counter()
     clocks = (_Clock(), _Clock())
     played = []
@@ -176,3 +189,62 @@ def play_tournament(
         wall_seconds=time.perf_counter() - start,
     )
     return Tournament(result=TournamentResult(games=tuple(played)), timing=timing)
+
+
+def _play_parallel(
+    bots: tuple[BotFactory, BotFactory],
+    games: int,
+    base_seed: int,
+    max_turns: int,
+    jobs: int,
+) -> Tournament:
+    """`play_tournament`'s games, in runs of an even number of games each, so
+    every run starts with bot A first, as its games do in one long run."""
+    start = time.perf_counter()
+    size = -(-games // jobs)
+    size += size % 2
+    offsets = range(0, games, size)
+    with ProcessPoolExecutor(max_workers=len(offsets)) as pool:
+        parts = list(
+            pool.map(
+                play_tournament,
+                [bots] * len(offsets),
+                [min(size, games - offset) for offset in offsets],
+                [base_seed + offset for offset in offsets],
+                [max_turns] * len(offsets),
+            )
+        )
+    combined = combine(parts)
+    timing = Timing(
+        decisions=combined.timing.decisions,
+        seconds=combined.timing.seconds,
+        wall_seconds=time.perf_counter() - start,
+    )
+    return Tournament(result=combined.result, timing=timing)
+
+
+def combine(parts: Sequence[Tournament]) -> Tournament:
+    """The tournament that `parts`, run on consecutive seeds, add up to.
+
+    Each part after the first must start an even number of games after the
+    first part's base seed, so its seats alternate as in one long run; then
+    the result is exactly that run's. Decisions and their time add up, and
+    so does the wall time (the time the parts took one after another).
+    """
+    timings = [part.timing for part in parts]
+    return Tournament(
+        result=TournamentResult(
+            games=tuple(game for part in parts for game in part.result.games)
+        ),
+        timing=Timing(
+            decisions=(
+                sum(t.decisions[0] for t in timings),
+                sum(t.decisions[1] for t in timings),
+            ),
+            seconds=(
+                sum(t.seconds[0] for t in timings),
+                sum(t.seconds[1] for t in timings),
+            ),
+            wall_seconds=sum(t.wall_seconds for t in timings),
+        ),
+    )
