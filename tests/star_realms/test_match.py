@@ -17,10 +17,16 @@ from minimax_games.games.star_realms.action import (
     UseAlly,
     UseBase,
 )
-from minimax_games.games.star_realms.bots import Bot, GreedyBot, RandomBot
+from minimax_games.games.star_realms.bots import (
+    BenchmarkBot,
+    Bot,
+    GreedyBot,
+    RandomBot,
+)
 from minimax_games.games.star_realms.catalogue import CATALOGUE, EXPLORER, VIPER
 from minimax_games.games.star_realms.effect import Authority, Draw
 from minimax_games.games.star_realms.match import MatchTooLong, play_match
+from minimax_games.games.star_realms.sampler import SamplerBot
 from minimax_games.games.star_realms.state import GameState
 from minimax_games.games.star_realms.view import View, observe
 
@@ -321,6 +327,17 @@ def test_bots_are_only_ever_given_their_own_view():
         play_match(bots, seed)
         assert bots[0].calls > 0
         assert bots[1].calls > 0
+
+
+def test_the_sampler_is_only_ever_given_its_own_view():
+    # It searches sampled worlds, never the state: it is no benchmark.
+    assert not isinstance(SamplerBot(0), BenchmarkBot)
+    for seed in range(2):
+        sampler = SamplerBot(seed, worlds=2, turns=1, budget=60)
+        bots = (OnlyViews(sampler, 0), OnlyViews(GreedyBot(), 1))
+        with pytest.raises(MatchTooLong):
+            play_match(bots, seed, max_turns=4)
+        assert bots[0].calls > 0
 
 
 class SeesTheState:

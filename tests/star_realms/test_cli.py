@@ -4,6 +4,7 @@ from minimax_games.games.star_realms.action import Action
 from minimax_games.games.star_realms.bots import GreedyBot, HeuristicBot
 from minimax_games.games.star_realms.cheat import BUDGET, CheatBot
 from minimax_games.games.star_realms.cli import BOTS, main
+from minimax_games.games.star_realms.sampler import WORLDS, SamplerBot
 from minimax_games.games.star_realms.state import GameState
 from minimax_games.games.star_realms.view import observe
 
@@ -112,3 +113,28 @@ def test_a_single_game_plays_the_cheat(capsys, monkeypatch):
     main(["--seed", "7", "--bots", "cheat", "greedy"])
     assert "wins on turn" in capsys.readouterr().out
     assert peeker.calls > 0
+
+
+def test_a_single_game_plays_the_sampler(capsys, monkeypatch):
+    # Whole games at the default budget are too slow: check the registered
+    # sampler is seeded from the game, then play a small-budget one.
+    sampler = BOTS["sampler"](7)
+    assert isinstance(sampler, SamplerBot)
+    assert (sampler.worlds, sampler.turns, sampler.budget) == (WORLDS, 2, BUDGET)
+    monkeypatch.setitem(
+        BOTS, "sampler", lambda seed: SamplerBot(seed, worlds=2, turns=1, budget=40)
+    )
+    main(["--seed", "7", "--bots", "sampler", "greedy"])
+    assert "wins on turn" in capsys.readouterr().out
+
+
+def test_tournament_plays_the_sampler_and_states_its_worlds_and_budget(capsys):
+    argv = ["tournament", "--bots", "sampler", "greedy", "--games", "2"]
+    main([*argv, "--max-turns", "2"])
+    out = capsys.readouterr().out.splitlines()
+    assert (
+        f"sampler: {WORLDS} worlds, 2-turn horizon,"
+        f" budget {BUDGET} nodes per decision ({BUDGET // WORLDS} per world)"
+    ) in out
+    sampler = next(line for line in out if line.split()[:2] == ["sampler", "0/0"])
+    assert float(sampler.split()[-1]) > 0  # it made timed decisions
