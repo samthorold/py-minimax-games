@@ -11,10 +11,12 @@ from minimax_games.games.star_realms.action import (
     Action,
     AttackBase,
     AttackPlayer,
+    Choose,
     DestroyTarget,
     Discard,
     EndTurn,
     PlayCard,
+    Recycle,
     Scrap,
     ScrapDiscardCard,
     ScrapHandCard,
@@ -22,6 +24,7 @@ from minimax_games.games.star_realms.action import (
     UseAlly,
     UseBase,
 )
+from minimax_games.games.star_realms.card import Card
 from minimax_games.games.star_realms.effect import (
     AcquireShipFreeOnTop,
     AllyForAllFactions,
@@ -66,9 +69,9 @@ def result(state: GameState, winner: int) -> str:
     return f"{_player(winner)} wins on turn {state.turn}. {_authorities(state)}"
 
 
-def _gain(effect: Effect, state: GameState) -> str:
-    """What `effect` gives the current player of `state`, e.g. "3 trade",
-    "1 card" or "1 discard by Player 2"."""
+def _gain(effect: Effect, state: GameState, card: Card) -> str:
+    """What `effect`, one of `card`'s, gives the current player of `state`,
+    e.g. "3 trade", "1 card" or "1 discard by Player 2"."""
     match effect:
         case Trade(amount):
             return f"{amount} trade"
@@ -89,14 +92,18 @@ def _gain(effect: Effect, state: GameState) -> str:
             return f"1 base of {_player(1 - state.current)} to destroy"
         case ScrapTradeRow(cards):
             return f"{cards} scrap{'s' if cards != 1 else ''} from the Trade Row"
+        case DrawPerFactionCard():
+            faction = card.faction.value if card.faction is not None else "no"
+            return f"1 card per {faction} card played"
+        case DiscardThenDraw(cards):
+            return f"up to {cards} cards discarded then drawn"
+        case Choice(options):
+            return " or ".join(_gains(option, state, card) for option in options)
         case (
             AcquireShipFreeOnTop()
             | AllyForAllFactions()
-            | Choice()
             | CopyShip()
-            | DiscardThenDraw()
             | DrawIfBases()
-            | DrawPerFactionCard()
             | NextShipOnTop()
             | ScrapThenDraw()
             | ShipsGainCombat()
@@ -107,6 +114,11 @@ def _gain(effect: Effect, state: GameState) -> str:
             assert_never(effect)
 
 
+def _gains(effects: tuple[Effect, ...], state: GameState, card: Card) -> str:
+    """What `effects`, `card`'s, give, e.g. "3 trade, 1 card"."""
+    return ", ".join(_gain(effect, state, card) for effect in effects)
+
+
 def describe(action: Action, state: GameState) -> str:
     """Describe `action` as the current player takes it in `state` (before it)."""
     player = _player(state.current)
@@ -114,14 +126,12 @@ def describe(action: Action, state: GameState) -> str:
         case PlayCard(card):
             return f"{player} plays {card.name}"
         case UseAlly(card):
-            gains = ", ".join(_gain(effect, state) for effect in card.ally)
+            gains = _gains(card.ally, state, card)
             return f"{player} uses {card.name}'s ally ability for {gains}"
         case UseBase(card):
-            gains = ", ".join(_gain(effect, state) for effect in card.primary)
-            return f"{player} uses {card.name} for {gains}"
+            return f"{player} uses {card.name} for {_gains(card.primary, state, card)}"
         case Scrap(card):
-            gains = ", ".join(_gain(effect, state) for effect in card.scrap)
-            return f"{player} scraps {card.name} for {gains}"
+            return f"{player} scraps {card.name} for {_gains(card.scrap, state, card)}"
         case Acquire(card):
             return f"{player} acquires {card.name} (cost {card.cost})"
         case AttackPlayer():
@@ -149,6 +159,12 @@ def describe(action: Action, state: GameState) -> str:
             if not state.trade_deck:
                 return scrapped
             return f"{scrapped}; {state.trade_deck[0].name} replaces it"
+        case Choose(card, option):
+            return f"{player} chooses {_gains(option, state, card)} from {card.name}"
+        case Recycle(cards):
+            discarded = ", ".join(card.name for card in cards)
+            drawn = f"{len(cards)} card{'s' if len(cards) != 1 else ''}"
+            return f"{player} discards {discarded} and draws {drawn}"
         case EndTurn():
             return f"{player} ends the turn"
         case _:

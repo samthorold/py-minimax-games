@@ -191,6 +191,9 @@ IMPLEMENTED: frozenset[type[Effect]] = frozenset(
         ScrapFromHand,
         DestroyBase,
         ScrapTradeRow,
+        Choice,
+        DrawPerFactionCard,
+        DiscardThenDraw,
     }
 )
 """The kinds of effect the rules implement. Each card slice adds its own
@@ -198,10 +201,29 @@ IMPLEMENTED: frozenset[type[Effect]] = frozenset(
 offers both follow from this one set."""
 
 
+def implemented_effect(
+    effect: Effect, implemented: frozenset[type[Effect]] = IMPLEMENTED
+) -> bool:
+    """Whether `effect` is of a kind in `implemented`, and, for a `Choice`,
+    so is every effect of each of its options."""
+    if type(effect) not in implemented:
+        return False
+    if isinstance(effect, Choice):
+        return all(
+            implemented_effect(e, implemented)
+            for option in effect.options
+            for e in option
+        )
+    return True
+
+
 def playable(card: Card, implemented: frozenset[type[Effect]] = IMPLEMENTED) -> bool:
     """Whether every effect of `card`, primary, ally or scrap, is of a kind in
-    `implemented`."""
-    return all(type(e) in implemented for e in card.primary + card.ally + card.scrap)
+    `implemented` (`implemented_effect`)."""
+    return all(
+        implemented_effect(e, implemented)
+        for e in card.primary + card.ally + card.scrap
+    )
 
 
 def playable_deck(

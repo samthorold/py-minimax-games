@@ -35,6 +35,18 @@ usable at any time in the turn, and lost at its end.
 the Trade Row this turn (`ScrapTradeRow` effects), like `may_scrap`:
 optional, usable at any time in the turn, and lost at its end.
 
+`choosing` holds the cards whose "or" choice (a `Choice` effect in their
+primary ability) the current player must make right now, before anything
+else: the first is chosen first.
+
+`recycling` is how many cards the current player may discard right now,
+before anything else, to draw as many (Recycling Station's
+`DiscardThenDraw`, once chosen).
+
+`factions_played` counts the cards of each faction (in `Faction` order) the
+current player has played this turn, whatever became of them since (Blob
+World draws a card per Blob card played); it empties at the end of the turn.
+
 `PlayerState.to_discard` counts the discards an opponent's `OpponentDiscards`
 effects have left a player to make at the start of their next turn. It is
 public, and capped at the hand's size when their turn starts.
@@ -42,12 +54,13 @@ public, and capped at the hand's size when their turn starts.
 
 from dataclasses import dataclass
 
-from minimax_games.games.star_realms.card import Card
+from minimax_games.games.star_realms.card import Card, Faction
 
 STARTING_AUTHORITY = 50
 HAND_SIZE = 5
 FIRST_HAND_SIZE = 3
 TRADE_ROW_SIZE = 5
+NO_FACTIONS_PLAYED = (0,) * len(Faction)
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +115,9 @@ class GameState:
     must_scrap: int = 0
     may_destroy: int = 0
     may_scrap_row: int = 0
+    choosing: tuple[Card, ...] = ()
+    recycling: int = 0
+    factions_played: tuple[int, ...] = NO_FACTIONS_PLAYED
 
     def replace(
         self,
@@ -122,6 +138,9 @@ class GameState:
         must_scrap: int | None = None,
         may_destroy: int | None = None,
         may_scrap_row: int | None = None,
+        choosing: tuple[Card, ...] | None = None,
+        recycling: int | None = None,
+        factions_played: tuple[int, ...] | None = None,
     ) -> "GameState":
         """`dataclasses.replace(self, ...)`, without its introspection of the
         fields on every call: the search builds several states per node, so
@@ -144,4 +163,7 @@ class GameState:
             self.must_scrap if must_scrap is None else must_scrap,
             self.may_destroy if may_destroy is None else may_destroy,
             self.may_scrap_row if may_scrap_row is None else may_scrap_row,
+            self.choosing if choosing is None else choosing,
+            self.recycling if recycling is None else recycling,
+            self.factions_played if factions_played is None else factions_played,
         )

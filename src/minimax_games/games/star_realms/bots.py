@@ -14,10 +14,12 @@ from minimax_games.games.star_realms.action import (
     Action,
     AttackBase,
     AttackPlayer,
+    Choose,
     DestroyTarget,
     Discard,
     EndTurn,
     PlayCard,
+    Recycle,
     Scrap,
     ScrapDiscardCard,
     ScrapHandCard,
@@ -25,9 +27,17 @@ from minimax_games.games.star_realms.action import (
     UseAlly,
     UseBase,
 )
-from minimax_games.games.star_realms.card import Card, CardType
+from minimax_games.games.star_realms.card import Card, CardType, Faction
 from minimax_games.games.star_realms.catalogue import EXPLORER, SCOUT, VIPER
-from minimax_games.games.star_realms.effect import Combat, Effect, Trade
+from minimax_games.games.star_realms.effect import (
+    Authority,
+    Choice,
+    Combat,
+    DiscardThenDraw,
+    DrawPerFactionCard,
+    Effect,
+    Trade,
+)
 from minimax_games.games.star_realms.state import GameState
 from minimax_games.games.star_realms.view import PlayerView, View
 
@@ -84,7 +94,12 @@ class GreedyBot:
 
     0. when it must discard (an opponent's `OpponentDiscards`) or scrap a
        card from hand (Machine Base), discards or scraps its cheapest card,
-       ties broken by name: that is the only decision offered then.
+       ties broken by name: that is the only decision offered then. When it
+       must make an "or" choice (Patrol Mech, Trading Post, ...), it takes
+       the option with the most trade plus combat, ties broken by the card's
+       order (so the first option when neither has any): so it never
+       draws with Blob World or recycles with Recycling Station, and if made
+       to recycle it gives up as few and as cheap cards as it can.
     1. plays every card it can and uses every ally and base ability, in
        `actions` order. Bots are only offered the plays automatic play leaves
        (draws, bases, and ships that could be scrapped from hand instead),
@@ -108,6 +123,13 @@ class GreedyBot:
     def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
         if (forced := _forced(view, actions)) is not None:
             return min(forced, key=_cheapest)
+        if options := _choices(actions):
+            return min(
+                options,
+                key=lambda a: (-_trade(a.option) - _combat(a.option), _order(a)),
+            )
+        if recycles := _recycles(actions):
+            return min(recycles, key=_fewest_cheapest)
         for action in actions:
             if isinstance(action, PlayCard | UseAlly | UseBase):
                 return action
@@ -142,6 +164,32 @@ def _forced(view: View, actions: tuple[Action, ...]) -> list[CardChoice] | None:
     return None
 
 
+def _choices(actions: tuple[Action, ...]) -> list[Choose]:
+    """The options of the "or" choice the bot must make, if one is pending
+    (they are then the only actions), else empty."""
+    return [a for a in actions if isinstance(a, Choose)]
+
+
+def _recycles(actions: tuple[Action, ...]) -> list[Recycle]:
+    """The sets of cards the bot may recycle, if it must choose one (they are
+    then the only actions), else empty."""
+    return [a for a in actions if isinstance(a, Recycle)]
+
+
+def _fewest_cheapest(action: Recycle) -> tuple[int, int, tuple[str, ...]]:
+    """A sort key for recycling: the fewest cards, then the cheapest, ties
+    by name."""
+    cards = action.cards
+    return len(cards), sum(c.cost for c in cards), tuple(c.name for c in cards)
+
+
+def _order(action: Choose) -> int:
+    """Where `action`'s option comes among its card's options."""
+    effects = action.card.primary + action.card.ally + action.card.scrap
+    choice = next(e for e in effects if isinstance(e, Choice))
+    return choice.options.index(action.option)
+
+
 SYNERGY = 0.5
 """What each card of its faction the heuristic bot owns adds to a buy."""
 
@@ -158,6 +206,14 @@ AGGRESSION = 1.5
 BASE_DEFENSE = 0.5
 """What each point of defense adds to buying a base that isn't an Outpost."""
 
+BLOB_WORLD_DRAWS = 3
+"""The heuristic bot draws with Blob World instead of taking 5 combat once
+that draws at least this many cards."""
+
+LOW_AUTHORITY = 10
+"""At or below this much Authority, the heuristic bot's "or" choices take
+Authority first."""
+
 
 def _trade(effects: tuple[Effect, ...]) -> int:
     """The trade among `effects`."""
@@ -167,6 +223,11 @@ def _trade(effects: tuple[Effect, ...]) -> int:
 def _combat(effects: tuple[Effect, ...]) -> int:
     """The combat among `effects`."""
     return sum(e.amount for e in effects if isinstance(e, Combat))
+
+
+def _authority(effects: tuple[Effect, ...]) -> int:
+    """The Authority among `effects`."""
+    return sum(e.amount for e in effects if isinstance(e, Authority))
 
 
 def _owned(view: View) -> tuple[Card, ...]:
@@ -244,6 +305,18 @@ class HeuristicBot:
        them `AGGRESSION` per point of primary combat, the weights it buys
        with. So Vipers and Scouts go first: a Viper early, when trade builds
        the deck, and a Scout late.
+       When it must make an "or" choice: with Recycling Station, it
+       discards and draws while its hand holds a Viper or Scout, and then
+       recycles as many of them as it may (up to 2), the ones it least wants
+       first, otherwise it takes the trade; with Blob World, it draws once
+       that draws at least `BLOB_WORLD_DRAWS` cards (Blob cards played this
+       turn), otherwise it takes the 5 combat. Between trade, combat and
+       Authority, it takes the most Authority at or below `LOW_AUTHORITY`,
+       otherwise the most trade in its first `ECONOMY_TURNS` turns and the
+       most combat after them, ties broken by trade, then combat, then
+       Authority, then the card's order: so trade early and combat late
+       (Patrol Mech), combat over Authority (Defense Center), and trade over
+       Authority (Trading Post, Barter World) unless its Authority is low.
     1. while it may scrap from hand or discard pile (Trade Bot, Junkyard,
        ...), scraps a Viper or Scout, the one it least wants to play (as in
        0) first: from the discard pile while one is there, where it does
@@ -294,6 +367,10 @@ class HeuristicBot:
     def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
         if (forced := _forced(view, actions)) is not None:
             return _least_wanted(forced, view)
+        if options := _choices(actions):
+            return self._choose(view, options)
+        if recycles := _recycles(actions):
+            return self._recycle(view, recycles)
         if (thin := self._thin(view, actions)) is not None:
             return thin
         for action in actions:
@@ -311,6 +388,49 @@ class HeuristicBot:
         if (attack := self._attack(view, actions)) is not None:
             return attack
         return EndTurn()
+
+    def _choose(self, view: View, options: list[Choose]) -> Action:
+        hand = view.players[view.observer].hand
+        gains = []
+        for action in options:
+            if any(isinstance(e, DrawPerFactionCard) for e in action.option):
+                faction = action.card.faction
+                if (
+                    faction is not None
+                    and view.factions_played[list(Faction).index(faction)]
+                    >= BLOB_WORLD_DRAWS
+                ):
+                    return action
+            elif any(isinstance(e, DiscardThenDraw) for e in action.option):
+                if SCOUT in hand or VIPER in hand:
+                    return action
+            else:
+                gains.append(action)
+        return self._best_gain(view, gains or options)
+
+    def _recycle(self, view: View, recycles: list[Recycle]) -> Action:
+        starters = (SCOUT, VIPER)
+        only = [a for a in recycles if all(c in starters for c in a.cards)] or [
+            a for a in recycles if len(a.cards) == 1
+        ]
+
+        def key(action: Recycle) -> tuple[int, float, tuple[str, ...]]:
+            keep = sum(_keep(card, view) for card in action.cards)
+            return -len(action.cards), keep, tuple(c.name for c in action.cards)
+
+        return min(only, key=key)
+
+    def _best_gain(self, view: View, options: list[Choose]) -> Action:
+        low = view.players[view.observer].authority <= LOW_AUTHORITY
+        economy = (view.turn + 1) // 2 <= ECONOMY_TURNS
+
+        def key(action: Choose) -> tuple[int, int, int, int]:
+            trade, combat = _trade(action.option), _combat(action.option)
+            authority = _authority(action.option)
+            first = authority if low else trade if economy else combat
+            return -first, -trade, -combat, -authority
+
+        return min(options, key=lambda a: (key(a), _order(a)))
 
     def _thin(self, view: View, actions: tuple[Action, ...]) -> Action | None:
         starters = (SCOUT, VIPER)

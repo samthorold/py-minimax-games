@@ -98,6 +98,11 @@ def public_changes(state: GameState, observer: int) -> list[GameState]:
         dataclasses.replace(state, must_scrap=state.must_scrap + 1),
         dataclasses.replace(state, may_destroy=state.may_destroy + 1),
         dataclasses.replace(state, may_scrap_row=state.may_scrap_row + 1),
+        dataclasses.replace(state, choosing=(*state.choosing, card)),
+        dataclasses.replace(
+            state,
+            factions_played=(state.factions_played[0] + 1, *state.factions_played[1:]),
+        ),
         # the observer's own hand, even with the same size and unseen cards
         with_player(state, observer, dataclasses.replace(mine, hand=(card,))),
     ]
@@ -115,11 +120,12 @@ def public_changes(state: GameState, observer: int) -> list[GameState]:
         ]
     # the opponent's hand size, with the same cards unseen
     unseen = theirs.hand + theirs.deck
+    size = 2 if len(theirs.hand) == 3 else 3
     changes.append(
         with_player(
             state,
             opponent,
-            dataclasses.replace(theirs, hand=unseen[:3], deck=unseen[3:]),
+            dataclasses.replace(theirs, hand=unseen[:size], deck=unseen[size:]),
         )
     )
     return changes

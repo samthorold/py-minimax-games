@@ -56,7 +56,7 @@ def test_a_search_can_count_the_distinct_states_it_reaches():
 
 def test_the_bench_command_reports_nodes_rates_and_time_per_decision(capsys):
     argv = ["bench", "--positions", "0:1", "0:3", "--horizons", "1", "2"]
-    main([*argv, "--max-nodes", "100", "--states"])
+    main([*argv, "--max-nodes", "40", "--states"])
     lines = capsys.readouterr().out.splitlines()
     header = lines[lines.index("") + 1].split()
     assert header[:5] == ["Seed", "Turn", "Horizon", "Nodes", "States"]
@@ -69,8 +69,8 @@ def test_the_bench_command_reports_nodes_rates_and_time_per_decision(capsys):
         ["0", "3", "1"],
         ["0", "3", "2"],
     ]
-    assert rows[0][3] == "10"
-    assert rows[-1][3] == ">100"  # stopped at the budget
+    assert rows[0][3] == "16"
+    assert rows[-1][3] == ">40"  # stopped at the budget
     assert any(line.startswith("Horizon 2:") for line in lines)
 
 
@@ -85,7 +85,7 @@ def test_the_turn_tree_counts_the_one_turn_tree_and_its_distinct_states():
 def test_the_bench_command_with_states_sizes_each_whole_first_turn(capsys):
     main(["bench", "--positions", "0:3", "--horizons", "1", "--states"])
     lines = capsys.readouterr().out.splitlines()
-    assert "Seed 0 turn 3, one whole turn: 86 nodes, 48 distinct states (1.8x)" in lines
+    assert "Seed 0 turn 3, one whole turn: 16 nodes, 12 distinct states (1.3x)" in lines
 
 
 def test_the_default_positions_are_games_still_in_play():
@@ -115,7 +115,7 @@ def test_the_bench_command_with_a_budget_times_the_cheats_decisions(capsys):
     start = lines.index("") + 2
     rows = [line.split() for line in lines[start : start + 2]]
     assert [row[:3] for row in rows] == [["0", "1", "2"], ["2", "5", "1"]]
-    assert rows[0][3] == "58"
+    assert rows[0][3] == "63"
     assert int(rows[1][3]) <= 1000
     assert "Depth finished: 2 turns 1/2, 1 turn 1/2, none 0/2" in lines
 
