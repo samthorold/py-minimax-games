@@ -6,6 +6,7 @@ from minimax_games.games.star_realms.action import (
     Action,
     AttackBase,
     AttackPlayer,
+    DestroyTarget,
     Discard,
     EndTurn,
     PlayCard,
@@ -89,10 +90,15 @@ def test_greedy_never_scraps_when_it_may():
     assert GreedyBot().choose(view, actions) == EndTurn()
 
 
+def test_greedy_never_uses_a_destroy_base_ability():
+    actions = (DestroyTarget(WHEEL), DestroyTarget(REDOUBT), EndTurn())
+    assert greedy(*actions) == EndTurn()
+
+
 def test_greedy_beats_random_in_the_large_majority_of_seeded_games():
     """30 seeds, alternating seats. Measured: greedy wins all 30 (500 of
-    500 over seeds 0-499, with the Milestone 4 scrap-from-hand-or-discard
-    deck), in about 23 turns on average."""
+    500 over seeds 0-499, with the Milestone 4 destroy-base deck), in about
+    24 turns on average."""
     wins = 0
     for seed in range(30):
         seat = seed % 2
@@ -187,6 +193,21 @@ def test_heuristic_hits_the_player_whatever_the_bases_when_that_wins():
     assert heuristic(*actions, view=view) == AttackPlayer()
 
 
+def test_heuristic_destroys_the_toughest_base_it_may_before_buying_or_attacking():
+    """A free destroy saves the most combat on the base with the most
+    defense, Outpost or not (ties: the dearest, then by name)."""
+    bases = (WHEEL, REDOUBT, HIVE, STATION)
+    view = view_with(opponent_bases=bases, combat=7)
+    destroys = tuple(DestroyTarget(b) for b in bases)
+    rest = (Acquire(BATTLE_BLOB), AttackBase(STATION), EndTurn())
+    for actions in (destroys, destroys[::-1]):
+        assert heuristic(*actions, *rest, view=view) == DestroyTarget(REDOUBT)
+    ties = (DestroyTarget(WHEEL), DestroyTarget(HIVE))
+    for actions in (ties, ties[::-1]):
+        assert heuristic(*actions, EndTurn(), view=view) == DestroyTarget(HIVE)
+    assert heuristic(PlayCard(WHEEL), *destroys, view=view) == PlayCard(WHEEL)
+
+
 RAM = CATALOGUE["Ram"]  # scrap: 3 trade
 
 
@@ -269,10 +290,9 @@ def test_heuristic_values_a_base_for_the_turns_it_stays_in_play():
 
 
 def test_heuristic_beats_greedy_in_clearly_more_than_half_of_seeded_games():
-    """40 seeds, alternating seats. Measured: the heuristic wins 31 of 40
-    (428 of 500 over seeds 0-499) with the Milestone 4
-    scrap-from-hand-or-discard deck. Tuned on seeds from 1000 with the
-    30-card first slice."""
+    """40 seeds, alternating seats. Measured: the heuristic wins 39 of 40
+    (443 of 500 over seeds 0-499) with the Milestone 4 destroy-base deck.
+    Tuned on seeds from 1000 with the 30-card first slice."""
     wins = 0
     for seed in range(40):
         seat = seed % 2

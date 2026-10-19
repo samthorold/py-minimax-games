@@ -114,6 +114,19 @@ class ScrapDiscardCard(Variant):
     card: Card
 
 
+class DestroyTarget(Variant):
+    """Destroy `card`, one of the opponent's bases, for a `DestroyBase`
+    ability: it goes to its owner's discard pile, with no combat spent.
+
+    Offered while the turn has destroy-base abilities left
+    (`GameState.may_destroy`), for any of the opponent's bases: Outposts
+    don't protect the others from it. Like `PlayCard`, the action names the
+    card.
+    """
+
+    card: Card
+
+
 class EndTurn(Variant):
     """Discard the hand and ships in play (bases stay), lose unspent trade and
     combat, draw 5."""
@@ -127,6 +140,7 @@ type Action = (
     | Acquire
     | AttackPlayer
     | AttackBase
+    | DestroyTarget
     | Discard
     | ScrapHandCard
     | ScrapDiscardCard

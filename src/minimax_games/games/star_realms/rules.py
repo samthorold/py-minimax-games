@@ -10,6 +10,7 @@ from minimax_games.games.star_realms.action import (
     Action,
     AttackBase,
     AttackPlayer,
+    DestroyTarget,
     Discard,
     EndTurn,
     PlayCard,
@@ -141,6 +142,12 @@ def _resolve(state: GameState, effect: Effect) -> GameState:
             return state.replace(players=_players(state, them, opponent))
         case ScrapHandOrDiscard(cards):
             return state.replace(may_scrap=state.may_scrap + cards)
+        case DestroyBase():
+            # The opponent gains no bases during this turn, so with none now
+            # there is nothing to destroy.
+            if not state.players[1 - state.current].bases:
+                return state
+            return state.replace(may_destroy=state.may_destroy + 1)
         case ScrapFromHand():
             # Machine Base draws first, so the hand is empty only when the
             # player has no cards left to draw: then there is nothing to scrap.
@@ -152,7 +159,6 @@ def _resolve(state: GameState, effect: Effect) -> GameState:
             | AllyForAllFactions()
             | Choice()
             | CopyShip()
-            | DestroyBase()
             | DiscardThenDraw()
             | DrawIfBases()
             | DrawPerFactionCard()
@@ -219,7 +225,9 @@ def legal_actions(state: GameState) -> tuple[Action, ...]:
     hand or discard pile (`GameState.may_scrap`), one `ScrapHandCard` per
     distinct card in hand and one `ScrapDiscardCard` per distinct card in
     the discard pile; one `Acquire` per distinct affordable card
-    in the Trade Row or on the Explorer pile; one `AttackBase` per distinct
+    in the Trade Row or on the Explorer pile; while the player may still
+    destroy a base (`GameState.may_destroy`), one `DestroyTarget` per
+    distinct opponent's base, Outposts or not; one `AttackBase` per distinct
     opponent's base whose defense the combat covers, only Outposts while the
     opponent has one; `AttackPlayer` while there is combat to spend and the
     opponent has no Outpost; and `EndTurn`. Empty once the game is over.
@@ -245,6 +253,8 @@ def legal_actions(state: GameState) -> tuple[Action, ...]:
         Acquire(card) for card in dict.fromkeys(market) if card.cost <= state.trade
     )
     targets = state.players[1 - state.current].bases
+    if state.may_destroy:
+        actions.extend(DestroyTarget(card) for card in dict.fromkeys(targets))
     outposts = tuple(c for c in targets if c.type is CardType.OUTPOST)
     actions.extend(
         AttackBase(card)
@@ -302,10 +312,17 @@ def _maybe_automatic(state: GameState) -> Iterator[Action]:
 
 def _pure_gain(effects: tuple[Effect, ...]) -> bool:
     """Whether `effects` only add trade, combat or Authority, make the
-    opponent discard, or let the player scrap from hand or discard pile."""
+    opponent discard, or let the player scrap from hand or discard pile or
+    destroy one of the opponent's bases."""
     return all(
         isinstance(
-            e, Trade | Combat | Authority | OpponentDiscards | ScrapHandOrDiscard
+            e,
+            Trade
+            | Combat
+            | Authority
+            | OpponentDiscards
+            | ScrapHandOrDiscard
+            | DestroyBase,
         )
         for e in effects
     )
@@ -341,7 +358,10 @@ def automatic(state: GameState, action: Action) -> bool:
       combat, Authority, making the opponent discard: that only adds to the
       discards they make at the start of their next turn, so nothing this
       turn depends on when it happens; or letting the player scrap a card
-      from hand or discard pile, which they may do at any time in the turn),
+      from hand or discard pile, or destroy one of the opponent's bases,
+      which they may do at any time in the turn: the opponent's bases only
+      change when the player destroys them, and a `DestroyBase` with no
+      base to target is lost either way),
       unless something could scrap it from hand this turn instead
       (`_hand_scrap_ahead`). A ship in hand and a ship in play both go to
       the discard pile at the end of the turn; in play it only adds options
@@ -356,7 +376,8 @@ def automatic(state: GameState, action: Action) -> bool:
     is a decision too: a base left in hand goes to the discard pile, so it
     changes what is reshuffled. `Scrap` loses the card, and `Acquire`,
     attacks and `EndTurn` are the turn's real choices. `Discard`,
-    `ScrapHandCard` and `ScrapDiscardCard` are the player's choice of card.
+    `ScrapHandCard` and `ScrapDiscardCard` are the player's choice of card,
+    and `DestroyTarget` their choice of the opponent's base.
 
     This is sound only for the effects the engine implements so far, with
     one accepted gap: a draw may bring a card that scraps from hand, and a
@@ -375,6 +396,7 @@ def automatic(state: GameState, action: Action) -> bool:
             | Acquire()
             | AttackPlayer()
             | AttackBase()
+            | DestroyTarget()
             | Discard()
             | ScrapHandCard()
             | ScrapDiscardCard()
@@ -495,6 +517,22 @@ def _to_scrap_heap(state: GameState, card: Card) -> GameState:
     return state.replace(scrap_heap=(*state.scrap_heap, card))
 
 
+def _destroy(state: GameState, card: Card) -> GameState:
+    """`state` with `card`, one of the opponent's bases, destroyed: in its
+    owner's discard pile. Destroy-base abilities left over once the opponent
+    has no bases are dropped (`may_destroy`), as nothing could use them."""
+    them = 1 - state.current
+    opponent = state.players[them]
+    opponent = opponent.replace(
+        bases=_without(opponent.bases, card),
+        discard=(*opponent.discard, card),
+    )
+    players = _players(state, them, opponent)
+    if not opponent.bases:
+        return state.replace(players=players, may_destroy=0)
+    return state.replace(players=players)
+
+
 def _apply(state: GameState, action: Action) -> GameState:
     """`apply` for an action already known to be legal."""
     me = state.current
@@ -569,15 +607,11 @@ def _apply(state: GameState, action: Action) -> GameState:
             opponent = opponent.replace(authority=opponent.authority - state.combat)
             return state.replace(players=_players(state, 1 - me, opponent), combat=0)
         case AttackBase(card):
-            opponent = state.players[1 - me]
-            opponent = opponent.replace(
-                bases=_without(opponent.bases, card),
-                discard=(*opponent.discard, card),
-            )
-            return state.replace(
-                players=_players(state, 1 - me, opponent),
-                combat=state.combat - (card.defense or 0),
-            )
+            state = _destroy(state, card)
+            return state.replace(combat=state.combat - (card.defense or 0))
+        case DestroyTarget(card):
+            state = _destroy(state, card)
+            return state.replace(may_destroy=max(state.may_destroy - 1, 0))
         case Discard(card):
             player = player.replace(
                 hand=_without(player.hand, card),
@@ -623,6 +657,7 @@ def _apply(state: GameState, action: Action) -> GameState:
                 allies_used=(),
                 bases_used=(),
                 may_scrap=0,
+                may_destroy=0,
                 rng_seed=seed,
             )
         case _:
