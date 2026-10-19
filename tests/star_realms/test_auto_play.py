@@ -122,6 +122,26 @@ def test_scrap_abilities_are_granted_automatically_but_the_scraps_are_decisions(
     assert not any(rules.automatic(after, a) for a in rules.legal_actions(after))
 
 
+MISSILE_MECH = CATALOGUE["Missile Mech"]  # 6 combat, may destroy target base
+COMMAND_SHIP = CATALOGUE["Command Ship"]  # ally: may destroy target base
+THE_HIVE = CATALOGUE["The Hive"]  # Blob base
+
+
+def test_destroy_abilities_are_granted_automatically_but_the_target_is_a_decision():
+    state = with_hand(rules.new_game(seed=1), MISSILE_MECH, CORVETTE)
+    second = dataclasses.replace(state.players[1], bases=(THE_HIVE, WAR_WORLD))
+    state = dataclasses.replace(state, players=(state.players[0], second))
+    after = rules.auto_play(state)
+    assert after.players[0].hand == (CORVETTE,)
+    assert after.may_destroy == 1
+    assert after.combat == 6
+    assert not any(rules.automatic(after, a) for a in rules.legal_actions(after))
+    first = dataclasses.replace(after.players[0], in_play=(COMMAND_SHIP, CUTTER))
+    after = rules.auto_play(dataclasses.replace(after, players=(first, second)))
+    assert COMMAND_SHIP in after.allies_used
+    assert after.may_destroy == 2
+
+
 def test_ships_wait_in_hand_while_something_could_scrap_them_from_hand():
     state = with_bases(with_hand(rules.new_game(seed=1), SCOUT, VIPER), JUNKYARD)
     after = rules.auto_play(state)
@@ -290,6 +310,13 @@ SMALL_STATES = {
         bases=(MACHINE_BASE,),
         in_play=(SHUTTLE, CUTTER),
     ),
+    # Destroying a base: a ship's ability and an ally's, against the base
+    # combat could destroy too, around a draw.
+    "destroy": small(
+        hand=(MISSILE_MECH, CORVETTE),
+        deck=(SCOUT,),
+        in_play=(COMMAND_SHIP, CUTTER),
+    ),
 }
 
 
@@ -349,10 +376,11 @@ def auto_played(state: GameState) -> tuple[list[Action], GameState]:
     return taken, rules.auto_play(state, lambda _, action: taken.append(action))
 
 
-def unplayed_states(seed: int, moves: int = 150) -> list[GameState]:
+def unplayed_states(seed: int, moves: int = 250) -> list[GameState]:
     """The states of a random game from `seed` played with the bare rules,
     without automatic play, so automatic actions pile up. It buys whenever it
-    can, so that later turns have bases and allies to use."""
+    can, so that later turns have bases and allies to use (long enough that
+    some survive the random destroy-base choices)."""
     rng = random.Random(seed)
     state = rules.new_game(seed)
     states = [state]

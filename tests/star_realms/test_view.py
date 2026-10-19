@@ -92,6 +92,7 @@ def public_changes(state: GameState, observer: int) -> list[GameState]:
         dataclasses.replace(state, bases_used=(*state.bases_used, card)),
         dataclasses.replace(state, may_scrap=state.may_scrap + 1),
         dataclasses.replace(state, must_scrap=state.must_scrap + 1),
+        dataclasses.replace(state, may_destroy=state.may_destroy + 1),
         # the observer's own hand, even with the same size and unseen cards
         with_player(state, observer, dataclasses.replace(mine, hand=(card,))),
     ]
@@ -163,13 +164,15 @@ def test_a_sampled_world_keeps_pending_discards_and_so_the_legal_actions():
                 )
 
 
-def test_a_sampled_world_keeps_pending_scraps():
+def test_a_sampled_world_keeps_pending_scraps_and_destroys():
     rng = random.Random(6)
     for seed in range(5):
-        state = dataclasses.replace(midgame(seed), may_scrap=2, must_scrap=1)
+        state = dataclasses.replace(
+            midgame(seed), may_scrap=2, must_scrap=1, may_destroy=3
+        )
         for observer in (0, 1):
             world = sample_world(observe(state, observer), rng)
-            assert (world.may_scrap, world.must_scrap) == (2, 1)
+            assert (world.may_scrap, world.must_scrap, world.may_destroy) == (2, 1, 3)
 
 
 def test_the_same_rng_state_samples_the_same_world():

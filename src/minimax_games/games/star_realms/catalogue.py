@@ -189,6 +189,7 @@ IMPLEMENTED: frozenset[type[Effect]] = frozenset(
         OpponentDiscards,
         ScrapHandOrDiscard,
         ScrapFromHand,
+        DestroyBase,
     }
 )
 """The kinds of effect the rules implement. Each card slice adds its own

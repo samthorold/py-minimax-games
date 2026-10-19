@@ -27,6 +27,10 @@ any time in the turn, and lost at its end. `must_scrap` counts the scraps
 from hand they owe right now (Machine Base: "draw a card, then scrap a card
 from your hand"), which they make before anything else.
 
+`may_destroy` counts the opponent's bases the current player may still
+destroy this turn (`DestroyBase` effects), like `may_scrap`: optional,
+usable at any time in the turn, and lost at its end.
+
 `PlayerState.to_discard` counts the discards an opponent's `OpponentDiscards`
 effects have left a player to make at the start of their next turn. It is
 public, and capped at the hand's size when their turn starts.
@@ -92,6 +96,7 @@ class GameState:
     bases_used: tuple[Card, ...] = ()
     may_scrap: int = 0
     must_scrap: int = 0
+    may_destroy: int = 0
 
     def replace(
         self,
@@ -110,6 +115,7 @@ class GameState:
         bases_used: tuple[Card, ...] | None = None,
         may_scrap: int | None = None,
         must_scrap: int | None = None,
+        may_destroy: int | None = None,
     ) -> "GameState":
         """`dataclasses.replace(self, ...)`, without its introspection of the
         fields on every call: the search builds several states per node, so
@@ -130,4 +136,5 @@ class GameState:
             self.bases_used if bases_used is None else bases_used,
             self.may_scrap if may_scrap is None else may_scrap,
             self.must_scrap if must_scrap is None else must_scrap,
+            self.may_destroy if may_destroy is None else may_destroy,
         )

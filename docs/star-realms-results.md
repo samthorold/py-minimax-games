@@ -679,3 +679,56 @@ With the 52-card deck the trees are bigger: while a scrap may be made, every dec
 **Passes.** No crashes, no unfinished games, and the ladder order holds: heuristic beats greedy (85.6%), greedy beats random (100%), cheat beats greedy (84.0%). Random players can now scrap every card they own, which can deadlock a random-vs-random game (neither can deal damage); a sampled-world test met one and now accepts that dead position. Greedy never scraps when it may, so the tournaments above can't deadlock.
 
 Raw outputs (not committed): `scrap/heuristic-greedy-500.txt`, `scrap/greedy-random-500.txt`, `scrap/cheat-greedy-100.txt`, `scrap/bench-new-deck.txt`.
+
+## Milestone 4: destroy target base
+
+- Date: 2026-10-19
+- Commit: the `issue-97-destroy` branch (#97).
+- **The deck changed.** `DestroyBase` joins `catalogue.IMPLEMENTED`, so the playable Trade Deck grows from 52 to **56 cards**: 1 Command Ship, 1 Port of Call, 1 Battlecruiser and 1 Missile Mech (Blob Destroyer waits for scrapping from the Trade Row). These results compare with the previous slice's ("Milestone 4: scrap from hand or discard pile") only loosely.
+- The heuristic now uses each destroy-base ability at once on the opponent's base with the most defense (step 3 of `HeuristicBot`'s docstring); greedy never uses them.
+- Budgets, machine and the check itself as in the previous slices: 500 games each of heuristic vs greedy and greedy vs random, 100 of cheat vs greedy at its defaults (2-turn horizon, 5,000 nodes per decision), seeds from 0, alternating seats, max 300 turns, `--jobs 3`, each run alone in the foreground.
+
+### heuristic vs greedy
+
+`python -m minimax_games.games.star_realms tournament --bots heuristic greedy --games 500 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| heuristic | 443/500 | 88.6% | 231/250 | 212/250 | 0.0060 |
+| greedy | 57/500 | 11.4% | 38/250 | 19/250 | 0.0033 |
+
+500 games, 0 unfinished, mean 22.9 turns, 1.0 s wall time. The first player won 269/500 (53.8%). The heuristic's win rate: 88.6%, interval 85.5-91.1% (scrap slice: 85.6%, 82.3-88.4%). Greedy buys the new cards without using their destroy-base abilities.
+
+### greedy vs random
+
+`python -m minimax_games.games.star_realms tournament --bots greedy random --games 500 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| greedy | 500/500 | 100.0% | 250/250 | 250/250 | 0.0034 |
+| random | 0/500 | 0.0% | 0/250 | 0/250 | 0.0004 |
+
+500 games, 0 unfinished, mean 23.8 turns, 0.9 s wall time.
+
+### cheat vs greedy
+
+`python -m minimax_games.games.star_realms tournament --bots cheat greedy --games 100 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| cheat | 85/100 | 85.0% | 46/50 | 39/50 | 95.4 |
+| greedy | 15/100 | 15.0% | 11/50 | 4/50 | 0.0047 |
+
+100 games, 0 unfinished, mean 24.8 turns, 255 s wall time. The cheat's win rate: 85.0%, interval 76.7-90.7% (scrap slice: 84.0%).
+
+### Search speed
+
+The rules add one check per `legal_actions` (may a base be destroyed?), a field to `GameState`, and `DestroyBase` to the pure-gain effects. On the 52-card deck (`new_game`'s default patched back to it), `bench` searches the identical trees as before the change (224,313 nodes at horizon 1 and 342,851 at horizon 2, 7/8 searches finished at each) at the same speed: 57,000 and 47,100-47,200 nodes/s after, 56,900-57,700 and 47,400-47,600 before, over two runs each.
+
+With the 56-card deck the default `bench` positions are different games: horizon 1 7/8 searches finished within 200,000 nodes, 381,301 nodes at 51,700 nodes/s; horizon 2 5/8, 648,781 nodes at 44,300 nodes/s. `bench --budget 5000`: the cheat's decisions finished 2 turns at 3/8 positions, 1 turn at 3/8 and none at 2/8 (scrap deck: 2/8, 3/8 and 3/8), 73.8 ms per decision. A destroy adds at most one branch per distinct opponent base, and only while one may be made.
+
+### Verdict
+
+**Passes.** No crashes, no unfinished games, and the ladder order holds: heuristic beats greedy (88.6%), greedy beats random (100%), cheat beats greedy (85.0%).
+
+Raw outputs (not committed): `destroy/heuristic-greedy-500.txt`, `destroy/greedy-random-500.txt`, `destroy/cheat-greedy-100.txt`, `destroy/bench-new-deck.txt`, `destroy/bench-budget-new-deck.txt`.

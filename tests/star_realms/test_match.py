@@ -12,6 +12,7 @@ from minimax_games.games.star_realms.action import (
     Action,
     AttackBase,
     AttackPlayer,
+    DestroyTarget,
     Discard,
     EndTurn,
     PlayCard,
@@ -213,6 +214,7 @@ def test_random_games_neither_create_nor_lose_cards_and_use_every_action():
         Discard,
         ScrapHandCard,
         ScrapDiscardCard,
+        DestroyTarget,
     )
     for kind in kinds:
         assert taken[kind.__name__] > 0, kind
@@ -320,6 +322,18 @@ def test_the_log_shows_scraps_from_hand_or_discard_pile_given_and_made():
     assert transcript.describe(
         ScrapDiscardCard(EXPLORER), dataclasses.replace(state, current=1)
     ) == ("Player 2 scraps Explorer from the discard pile")
+
+
+def test_the_log_shows_bases_to_destroy_given_and_destroyed():
+    state = rules.new_game(seed=1)
+    mech, hive = CATALOGUE["Missile Mech"], CATALOGUE["The Hive"]
+    assert transcript.describe(UseAlly(CATALOGUE["Command Ship"]), state) == (
+        "Player 1 uses Command Ship's ally ability for 1 base of Player 2 to destroy"
+    )
+    assert transcript.describe(PlayCard(mech), state) == "Player 1 plays Missile Mech"
+    assert transcript.describe(
+        DestroyTarget(hive), dataclasses.replace(state, current=1)
+    ) == ("Player 2 destroys Player 1's The Hive (no combat)")
 
 
 class OnlyViews:

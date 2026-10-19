@@ -14,6 +14,7 @@ from minimax_games.games.star_realms.action import (
     Action,
     AttackBase,
     AttackPlayer,
+    DestroyTarget,
     Discard,
     EndTurn,
     PlayCard,
@@ -97,6 +98,9 @@ class GreedyBot:
        the most Outposts with the combat it has, so it reaches the player
        soonest. Other bases are ignored.
     4. ends the turn. It never scraps when it may: greedy keeps every card.
+       Nor does it use destroy-base abilities (Missile Mech, Command Ship,
+       ...): it leaves the targeting to the heuristic, as it leaves bases
+       that don't guard the player.
     """
 
     def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
@@ -217,6 +221,12 @@ def _dearest(action: AttackBase) -> tuple[int, str]:
     return -action.card.cost, action.card.name
 
 
+def _toughest(action: DestroyTarget) -> tuple[int, int, str]:
+    """A sort key for destroying bases for free: the most defense first,
+    then the dearest, ties by name."""
+    return -(action.card.defense or 0), -action.card.cost, action.card.name
+
+
 class HeuristicBot:
     """The heuristic baseline: faction synergy, bases, scrapping and targets.
 
@@ -239,7 +249,12 @@ class HeuristicBot:
        cards are kept.
     2. plays every card it can and uses every ally and base ability, in
        `actions` order, as greedy does: all of them are gains.
-    3. acquires the affordable card worth most, ties broken by name, and
+    3. while it may destroy one of the opponent's bases (Missile Mech,
+       Command Ship, ...), destroys the one with the most defense, Outpost
+       or not, ties broken by the dearest then by name: that is the combat
+       the free destroy saves, and Outposts don't protect bases from it.
+       Before attacking, so its combat goes to what is left.
+    4. acquires the affordable card worth most, ties broken by name, and
        repeats while it can afford one. A card is worth its cost, plus
        `SYNERGY` for each card of its faction it already owns (for ally
        abilities), plus `BASE_DEFENSE` per point of defense for a base that
@@ -248,21 +263,22 @@ class HeuristicBot:
        them `AGGRESSION` per point of primary combat: economy early, combat
        late. Outposts get no bonus for their defense: tuning found it lost
        games, as an Outpost's defense only delays the opponent.
-    4. scraps cards for combat (after buying, so their trade is spent):
+    5. scraps cards for combat (after buying, so their trade is spent):
        every card with a combat scrap ability when the combat in hand and in
        those abilities reaches the opponent's Authority plus the defense of
        their Outposts, so this turn wins; otherwise only Explorers, whose
        trade helps only the turn they are played, so 2 combat and a thinner
        deck are worth more than keeping them. Other cards are kept. (Scrap
-       abilities that give trade aren't used.)
-    5. attacks: while Outposts guard the opponent, destroys the weakest one
+       abilities without combat, such as trade or a draw and a base to
+       destroy, aren't used.)
+    6. attacks: while Outposts guard the opponent, destroys the weakest one
        first if the combat clears them all (the order doesn't matter then),
        otherwise the dearest one it can (ties by name), as it can't reach the
        player this turn anyway. With no Outposts, it hits the player if that
        wins; otherwise it destroys the dearest base it can first (ties by
        name), since a base works every turn and the damage to the player
        can wait, then hits the player with the rest.
-    6. ends the turn.
+    7. ends the turn.
     """
 
     def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
@@ -273,6 +289,9 @@ class HeuristicBot:
         for action in actions:
             if isinstance(action, PlayCard | UseAlly | UseBase):
                 return action
+        destroys = [a for a in actions if isinstance(a, DestroyTarget)]
+        if destroys:
+            return min(destroys, key=_toughest)
         if (buy := self._buy(view, actions)) is not None:
             return buy
         if (scrap := self._scrap(view, actions)) is not None:

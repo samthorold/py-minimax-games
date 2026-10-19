@@ -11,6 +11,7 @@ from minimax_games.games.star_realms.action import (
     Action,
     AttackBase,
     AttackPlayer,
+    DestroyTarget,
     Discard,
     EndTurn,
     PlayCard,
@@ -83,12 +84,13 @@ def _gain(effect: Effect, state: GameState) -> str:
             return f"{cards} scrap{'s' if cards != 1 else ''} from hand or discard pile"
         case ScrapFromHand():
             return "1 scrap from hand"
+        case DestroyBase():
+            return f"1 base of {_player(1 - state.current)} to destroy"
         case (
             AcquireShipFreeOnTop()
             | AllyForAllFactions()
             | Choice()
             | CopyShip()
-            | DestroyBase()
             | DiscardThenDraw()
             | DrawIfBases()
             | DrawPerFactionCard()
@@ -131,6 +133,9 @@ def describe(action: Action, state: GameState) -> str:
         case AttackBase(card):
             opponent = _player(1 - state.current)
             return f"{player} destroys {opponent}'s {card.name} ({card.defense} combat)"
+        case DestroyTarget(card):
+            opponent = _player(1 - state.current)
+            return f"{player} destroys {opponent}'s {card.name} (no combat)"
         case Discard(card):
             return f"{player} discards {card.name}"
         case ScrapHandCard(card):

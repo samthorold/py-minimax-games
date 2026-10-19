@@ -9,6 +9,7 @@ from minimax_games.games.star_realms.action import (
     Acquire,
     AttackBase,
     AttackPlayer,
+    DestroyTarget,
     Discard,
     EndTurn,
     PlayCard,
@@ -33,6 +34,9 @@ from minimax_games.games.star_realms.effect import (
     Combat,
     Draw,
     OpponentDiscards,
+    ScrapFromHand,
+    ScrapHandOrDiscard,
+    ScrapTradeRow,
     Trade,
 )
 from minimax_games.games.star_realms.state import GameState
@@ -172,8 +176,12 @@ def test_the_playable_deck_adds_the_opponent_discard_cards_to_the_first_slice():
     assert len(deck) == 40
 
 
+SLICE_3_EFFECTS = SLICE_2_EFFECTS | {ScrapHandOrDiscard, ScrapFromHand}
+
+
 def test_the_playable_deck_adds_the_scrap_from_hand_or_discard_cards():
-    added = Counter(PLAYABLE_TRADE_DECK) - Counter(playable_deck(SLICE_2_EFFECTS))
+    deck = playable_deck(SLICE_3_EFFECTS)
+    added = Counter(deck) - Counter(playable_deck(SLICE_2_EFFECTS))
     assert {card.name: n for card, n in added.items()} == {
         "Trade Bot": 3,
         "Missile Bot": 3,
@@ -183,8 +191,21 @@ def test_the_playable_deck_adds_the_scrap_from_hand_or_discard_cards():
         "Machine Base": 1,
     }
     # Patrol Mech's primary is an "or" choice, not implemented yet.
-    assert CATALOGUE["Patrol Mech"] not in PLAYABLE_TRADE_DECK
-    assert len(PLAYABLE_TRADE_DECK) == 52
+    assert CATALOGUE["Patrol Mech"] not in deck
+    assert len(deck) == 52
+
+
+def test_the_playable_deck_adds_the_destroy_base_cards():
+    added = Counter(PLAYABLE_TRADE_DECK) - Counter(playable_deck(SLICE_3_EFFECTS))
+    assert {card.name: n for card, n in added.items()} == {
+        "Command Ship": 1,
+        "Port of Call": 1,
+        "Battlecruiser": 1,
+        "Missile Mech": 1,
+    }
+    # Blob Destroyer's ally ability also scraps from the Trade Row.
+    assert CATALOGUE["Blob Destroyer"] not in PLAYABLE_TRADE_DECK
+    assert len(PLAYABLE_TRADE_DECK) == 56
 
 
 CUTTER = CATALOGUE["Cutter"]
@@ -324,9 +345,10 @@ def test_each_copy_in_play_can_be_scrapped_once():
 
 def test_scrap_abilities_with_effects_not_yet_implemented_are_unavailable():
     frigate = CATALOGUE["Imperial Frigate"]  # scrap: draw a card
-    battlecruiser = CATALOGUE["Battlecruiser"]  # scrap: draw, destroy target base
+    # Every base-set scrap ability is implemented now, so make one that isn't.
+    culler = dataclasses.replace(frigate, name="Culler", scrap=(ScrapTradeRow(1),))
     state = rules.new_game(seed=1)
-    in_play = (frigate, battlecruiser)
+    in_play = (frigate, culler)
     first = dataclasses.replace(state.players[0], hand=(), in_play=in_play)
     state = dataclasses.replace(state, players=(first, state.players[1]))
     assert scraps(state) == [Scrap(frigate)]
@@ -747,3 +769,87 @@ def test_machine_base_owes_no_scrap_when_there_is_nothing_to_draw_or_scrap():
     assert state.players[0].hand == ()
     assert state.must_scrap == 0
     assert EndTurn() in rules.legal_actions(state)
+
+
+MISSILE_MECH = CATALOGUE["Missile Mech"]  # 6 combat, may destroy target base
+COMMAND_SHIP = CATALOGUE["Command Ship"]  # ally: may destroy target base
+PORT_OF_CALL = CATALOGUE["Port of Call"]  # outpost; scrap: draw, destroy base
+BATTLECRUISER = CATALOGUE["Battlecruiser"]  # scrap: draw, destroy base
+
+
+def destroys(state: GameState) -> list[DestroyTarget]:
+    return [a for a in rules.legal_actions(state) if isinstance(a, DestroyTarget)]
+
+
+def test_destroy_target_base_ignores_outposts_and_spends_no_combat():
+    state = with_hand(rules.new_game(seed=1), MISSILE_MECH)
+    state = with_opponent_bases(state, THE_HIVE, WAR_WORLD, combat=0)
+    discard = state.players[1].discard
+    assert destroys(state) == []
+    state = rules.apply(state, PlayCard(MISSILE_MECH))
+    assert destroys(state) == [DestroyTarget(THE_HIVE), DestroyTarget(WAR_WORLD)]
+    after = rules.apply(state, DestroyTarget(THE_HIVE))
+    assert after.combat == 6
+    assert after.players[1].bases == (WAR_WORLD,)
+    assert after.players[1].discard == (*discard, THE_HIVE)
+    assert destroys(after) == []
+
+
+def test_destroy_target_base_does_nothing_when_the_opponent_has_no_bases():
+    state = with_hand(rules.new_game(seed=1), MISSILE_MECH)
+    state = rules.apply(state, PlayCard(MISSILE_MECH))
+    assert state.may_destroy == 0
+    assert destroys(state) == []
+
+
+def test_destroying_is_optional_and_lost_at_the_end_of_the_turn():
+    state = with_hand(rules.new_game(seed=1), MISSILE_MECH)
+    state = with_opponent_bases(state, THE_HIVE, combat=0)
+    state = rules.apply(state, PlayCard(MISSILE_MECH))
+    assert EndTurn() in rules.legal_actions(state)
+    state = rules.apply(state, EndTurn())
+    assert state.may_destroy == 0
+    assert state.players[1].bases == (THE_HIVE,)
+
+
+def test_battlecruiser_and_port_of_call_scrap_abilities_draw_and_destroy_a_base():
+    state = rules.new_game(seed=1)
+    first = dataclasses.replace(
+        state.players[0],
+        hand=(),
+        in_play=(BATTLECRUISER,),
+        bases=(PORT_OF_CALL,),
+    )
+    state = dataclasses.replace(state, players=(first, state.players[1]))
+    state = with_opponent_bases(state, WAR_WORLD, THE_HIVE, BLOB_WHEEL, combat=0)
+    state = rules.apply(state, Scrap(BATTLECRUISER))
+    assert len(state.players[0].hand) == 1
+    state = rules.apply(state, Scrap(PORT_OF_CALL))
+    assert len(state.players[0].hand) == 2
+    assert state.may_destroy == 2
+    state = rules.apply(state, DestroyTarget(WAR_WORLD))
+    state = rules.apply(state, DestroyTarget(BLOB_WHEEL))
+    assert state.players[1].bases == (THE_HIVE,)
+    assert destroys(state) == []
+
+
+def test_command_ships_ally_ability_destroys_a_base():
+    state = rules.new_game(seed=1)
+    first = dataclasses.replace(
+        state.players[0], hand=(), in_play=(COMMAND_SHIP, CUTTER)
+    )
+    state = dataclasses.replace(state, players=(first, state.players[1]))
+    state = with_opponent_bases(state, THE_HIVE, combat=0)
+    state = rules.apply(state, UseAlly(COMMAND_SHIP))
+    state = rules.apply(state, DestroyTarget(THE_HIVE))
+    assert state.players[1].bases == ()
+
+
+def test_abilities_left_over_once_the_opponent_has_no_bases_are_dropped():
+    state = with_hand(rules.new_game(seed=1), MISSILE_MECH)
+    state = with_opponent_bases(state, THE_HIVE, combat=0)
+    state = dataclasses.replace(state, may_destroy=1)
+    state = rules.apply(state, PlayCard(MISSILE_MECH))
+    assert state.may_destroy == 2
+    state = rules.apply(state, DestroyTarget(THE_HIVE))
+    assert state.may_destroy == 0
