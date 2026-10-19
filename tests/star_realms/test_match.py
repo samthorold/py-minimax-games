@@ -11,6 +11,7 @@ from minimax_games.games.star_realms.action import (
     Action,
     AttackBase,
     AttackPlayer,
+    Discard,
     EndTurn,
     PlayCard,
     Scrap,
@@ -31,11 +32,6 @@ from minimax_games.games.star_realms.state import GameState
 from minimax_games.games.star_realms.view import View, observe
 
 SEEDS = range(50)
-
-# Seeds where two random bots never finish: once the market is empty, the
-# Authority automatic play gains them outpaces the damage of bots that attack
-# only at random.
-STALLS = {13}
 
 
 class Recorder:
@@ -82,24 +78,20 @@ def test_applying_an_action_leaves_the_state_alone():
 
 
 class Passive:
+    """Ends every turn, after a discard it must make."""
+
     def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
-        return EndTurn()
+        return EndTurn() if EndTurn() in actions else actions[0]
 
 
 def test_games_between_random_bots_end_with_a_winner():
+    # With the 30-card first slice, seed 13 stalled: once the market was
+    # empty, the Authority automatic play gave outpaced random attacks. Since
+    # opponent discards joined the deck, none of seeds 0-299 does.
     for seed in SEEDS:
-        if seed in STALLS:
-            continue
         result = play_match((RandomBot(seed), RandomBot(seed + 1000)), seed)
         assert result.winner in (0, 1)
         assert result.turns > 0
-
-
-def test_the_known_stalls_still_stall():
-    for seed in STALLS:
-        with pytest.raises(MatchTooLong):
-            bots = (RandomBot(seed), RandomBot(seed + 1000))
-            play_match(bots, seed, max_turns=300)
 
 
 def test_the_same_seed_gives_the_same_game():
@@ -126,7 +118,7 @@ class Aggressive:
                 return action
         if AttackPlayer() in actions:
             return AttackPlayer()
-        return EndTurn()
+        return EndTurn() if EndTurn() in actions else actions[0]
 
 
 def test_the_log_shows_each_turns_plays_attacks_and_authority():
@@ -202,24 +194,31 @@ def all_cards(state: GameState) -> Counter[str]:
 def test_random_games_neither_create_nor_lose_cards_and_use_every_action():
     taken: Counter[str] = Counter()
     for seed in SEEDS:
-        if seed in STALLS:
-            continue
         cards = all_cards(rules.new_game(seed))
         for state, action in moves(seed, (RandomBot(seed), RandomBot(seed + 1000))):
             assert all_cards(state) == cards
             assert all_cards(rules.apply(state, action)) == cards
             taken[type(action).__name__] += 1
-    kinds = (Acquire, Scrap, UseAlly, UseBase, AttackBase, AttackPlayer, PlayCard)
+    kinds = (
+        Acquire,
+        Scrap,
+        UseAlly,
+        UseBase,
+        AttackBase,
+        AttackPlayer,
+        PlayCard,
+        Discard,
+    )
     for kind in kinds:
         assert taken[kind.__name__] > 0, kind
 
 
 class Buyer:
-    """Plays its whole hand, acquires whatever it can, attacks bases then the
-    player, ends the turn."""
+    """Makes any discard it must, plays its whole hand, acquires whatever it
+    can, attacks bases then the player, ends the turn."""
 
     def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
-        for kind in (PlayCard, Acquire, AttackBase, AttackPlayer):
+        for kind in (Discard, PlayCard, Acquire, AttackBase, AttackPlayer):
             for action in actions:
                 if isinstance(action, kind):
                     return action
@@ -277,6 +276,20 @@ def test_the_log_shows_a_base_used_and_a_base_destroyed():
     assert transcript.describe(
         AttackBase(station), dataclasses.replace(state, current=1)
     ) == ("Player 2 destroys Player 1's Space Station (4 combat)")
+
+
+def test_the_log_shows_opponent_discards_given_and_made():
+    state = rules.new_game(seed=1)
+    survey, redoubt = CATALOGUE["Survey Ship"], CATALOGUE["Royal Redoubt"]
+    assert transcript.describe(Scrap(survey), state) == (
+        "Player 1 scraps Survey Ship for 1 discard by Player 2"
+    )
+    assert transcript.describe(
+        UseAlly(redoubt), dataclasses.replace(state, current=1)
+    ) == ("Player 2 uses Royal Redoubt's ally ability for 1 discard by Player 1")
+    assert transcript.describe(
+        Discard(VIPER), dataclasses.replace(state, current=1)
+    ) == ("Player 2 discards Viper")
 
 
 class OnlyViews:

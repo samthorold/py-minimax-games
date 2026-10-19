@@ -92,17 +92,22 @@ def test_the_explorer_pile_holds_ten_unaligned_explorers():
     assert explorer not in catalogue.TRADE_DECK
 
 
-SLICE_1_EFFECTS = (Trade, Combat, Authority, Draw)
+SLICE_1_EFFECTS = frozenset({Trade, Combat, Authority, Draw})
 
 
-def test_slice_1_cards_use_only_trade_combat_authority_and_draw():
+def test_a_card_is_playable_when_every_effect_is_of_an_implemented_kind():
     for card in catalogue.CATALOGUE.values():
         effects = card.primary + card.ally + card.scrap
-        assert card.in_slice_1 == all(isinstance(e, SLICE_1_EFFECTS) for e in effects)
+        assert catalogue.playable(card, SLICE_1_EFFECTS) == all(
+            isinstance(e, Trade | Combat | Authority | Draw) for e in effects
+        )
 
 
 def test_the_slice_1_cards_are_the_ones_with_only_simple_effects():
-    assert {card.name for card in catalogue.CATALOGUE.values() if card.in_slice_1} == {
+    cards = catalogue.CATALOGUE.values()
+    assert {
+        card.name for card in cards if catalogue.playable(card, SLICE_1_EFFECTS)
+    } == {
         "Scout",
         "Viper",
         "Explorer",

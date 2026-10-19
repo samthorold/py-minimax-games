@@ -20,6 +20,10 @@ A player's bases stay in play (`PlayerState.bases`) across turns, unlike
 ships, which are discarded at the end of the turn. `bases_used` lists the
 current player's bases whose primary ability has been used this turn (bases
 played this turn among them), in the same one-entry-per-use way.
+
+`PlayerState.to_discard` counts the discards an opponent's `OpponentDiscards`
+effects have left a player to make at the start of their next turn. It is
+public, and capped at the hand's size when their turn starts.
 """
 
 from dataclasses import dataclass
@@ -40,6 +44,7 @@ class PlayerState:
     in_play: tuple[Card, ...] = ()
     discard: tuple[Card, ...] = ()
     bases: tuple[Card, ...] = ()
+    to_discard: int = 0
 
     def replace(
         self,
@@ -50,6 +55,7 @@ class PlayerState:
         in_play: tuple[Card, ...] | None = None,
         discard: tuple[Card, ...] | None = None,
         bases: tuple[Card, ...] | None = None,
+        to_discard: int | None = None,
     ) -> "PlayerState":
         """`dataclasses.replace(self, ...)`, without its introspection of the
         fields on every call (see `GameState.replace`)."""
@@ -60,6 +66,7 @@ class PlayerState:
             self.in_play if in_play is None else in_play,
             self.discard if discard is None else discard,
             self.bases if bases is None else bases,
+            self.to_discard if to_discard is None else to_discard,
         )
 
 

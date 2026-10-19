@@ -14,6 +14,7 @@ from minimax_games.games.star_realms.action import (
     Action,
     AttackBase,
     AttackPlayer,
+    Discard,
     EndTurn,
     PlayCard,
     Scrap,
@@ -77,6 +78,9 @@ class GreedyBot:
     order. It needs nothing from the view beyond what the legal actions
     already say. In priority order, it:
 
+    0. when it must discard (an opponent's `OpponentDiscards`), discards its
+       cheapest card, ties broken by name: a discard is the only decision
+       offered then.
     1. plays every card it can and uses every ally and base ability, in
        `actions` order. Bots are only offered the plays automatic play leaves
        (draws and bases), and all of them are gains; playing before buying
@@ -93,6 +97,9 @@ class GreedyBot:
     """
 
     def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
+        discards = [a for a in actions if isinstance(a, Discard)]
+        if discards:
+            return min(discards, key=lambda a: (a.card.cost, a.card.name))
         for action in actions:
             if isinstance(action, PlayCard | UseAlly | UseBase):
                 return action
@@ -164,6 +171,14 @@ def _worth(card: Card, view: View, owned: tuple[Card, ...]) -> float:
     return worth
 
 
+def _keep(card: Card, view: View) -> float:
+    """How much the heuristic bot wants to keep `card` in hand rather than
+    discard it (see its docstring)."""
+    if (view.turn + 1) // 2 <= ECONOMY_TURNS:
+        return card.cost + ECONOMY * _trade(card.primary)
+    return card.cost + AGGRESSION * _combat(card.primary)
+
+
 def _dearest(action: AttackBase) -> tuple[int, str]:
     """A sort key for attacks: the dearest base first, ties by name."""
     return -action.card.cost, action.card.name
@@ -176,6 +191,12 @@ class HeuristicBot:
     weights are module constants, tuned against greedy on seeds outside the
     test range. In priority order, it:
 
+    0. when it must discard (an opponent's `OpponentDiscards`), discards the
+       card it least wants to play, ties broken by name: the lowest cost plus,
+       in its first `ECONOMY_TURNS` turns, `ECONOMY` per point of primary
+       trade, and after them `AGGRESSION` per point of primary combat, the
+       weights it buys with. So Vipers and Scouts go first: a Viper early,
+       when trade builds the deck, and a Scout late.
     1. plays every card it can and uses every ally and base ability, in
        `actions` order, as greedy does: all of them are gains.
     2. acquires the affordable card worth most, ties broken by name, and
@@ -206,6 +227,9 @@ class HeuristicBot:
     """
 
     def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
+        discards = [a for a in actions if isinstance(a, Discard)]
+        if discards:
+            return min(discards, key=lambda a: (_keep(a.card, view), a.card.name))
         for action in actions:
             if isinstance(action, PlayCard | UseAlly | UseBase):
                 return action

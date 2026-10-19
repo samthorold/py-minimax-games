@@ -9,6 +9,7 @@ from minimax_games.games.star_realms.action import (
     Action,
     AttackBase,
     AttackPlayer,
+    Discard,
     EndTurn,
     PlayCard,
     Scrap,
@@ -19,7 +20,8 @@ from minimax_games.games.star_realms.card import Card, CardType
 from minimax_games.games.star_realms.catalogue import (
     EXPLORER,
     EXPLORER_PILE,
-    SLICE_1_TRADE_DECK,
+    IMPLEMENTED,
+    PLAYABLE_TRADE_DECK,
     STARTING_DECK,
 )
 from minimax_games.games.star_realms.effect import (
@@ -74,7 +76,10 @@ def _draw(player: PlayerState, n: int, seed: int) -> tuple[PlayerState, int]:
     return player.replace(deck=deck, hand=hand, discard=discard), seed
 
 
-def new_game(seed: int, trade_deck: tuple[Card, ...] = SLICE_1_TRADE_DECK) -> GameState:
+def new_game(
+    seed: int,
+    trade_deck: tuple[Card, ...] = PLAYABLE_TRADE_DECK,
+) -> GameState:
     """Deal a game from `seed`.
 
     `trade_deck` is shuffled and its top 5 cards revealed as the Trade Row,
@@ -126,6 +131,11 @@ def _resolve(state: GameState, effect: Effect) -> GameState:
             player, seed = _draw(state.players[state.current], cards, state.rng_seed)
             players = _players(state, state.current, player)
             return state.replace(players=players, rng_seed=seed)
+        case OpponentDiscards(cards):
+            them = 1 - state.current
+            opponent = state.players[them]
+            opponent = opponent.replace(to_discard=opponent.to_discard + cards)
+            return state.replace(players=_players(state, them, opponent))
         case (
             AcquireShipFreeOnTop()
             | AllyForAllFactions()
@@ -136,15 +146,14 @@ def _resolve(state: GameState, effect: Effect) -> GameState:
             | DrawIfBases()
             | DrawPerFactionCard()
             | NextShipOnTop()
-            | OpponentDiscards()
             | ScrapFromHand()
             | ScrapHandOrDiscard()
             | ScrapThenDraw()
             | ScrapTradeRow()
             | ShipsGainCombat()
         ):
-            # Only first-slice ships are dealt so far; later slices
-            # implement the rest (docs/star-realms.md).
+            # Only playable cards (`catalogue.IMPLEMENTED`) are dealt; later
+            # slices implement the rest (docs/star-realms.md).
             msg = f"{effect} is not implemented yet"
             raise NotImplementedError(msg)
         case _:
@@ -152,7 +161,8 @@ def _resolve(state: GameState, effect: Effect) -> GameState:
 
 
 def _implemented(effect: Effect) -> bool:
-    return isinstance(effect, Trade | Combat | Authority | Draw)
+    """Whether the rules implement `effect` (`catalogue.IMPLEMENTED`)."""
+    return type(effect) in IMPLEMENTED
 
 
 def _scrappable(card: Card) -> bool:
@@ -201,9 +211,15 @@ def legal_actions(state: GameState) -> tuple[Action, ...]:
     opponent's base whose defense the combat covers, only Outposts while the
     opponent has one; `AttackPlayer` while there is combat to spend and the
     opponent has no Outpost; and `EndTurn`. Empty once the game is over.
+
+    A decision the player must make before anything else replaces all of
+    those (`_forced`): while discards are pending at the start of their turn,
+    one `Discard` per distinct card in hand.
     """
     if winner(state) is not None:
         return ()
+    if (forced := _forced(state)) is not None:
+        return forced
     player = state.players[state.current]
     actions: list[Action] = list(_maybe_automatic(state))
     in_play = player.in_play + player.bases
@@ -223,6 +239,21 @@ def legal_actions(state: GameState) -> tuple[Action, ...]:
         actions.append(AttackPlayer())
     actions.append(EndTurn())
     return tuple(actions)
+
+
+def _forced(state: GameState) -> tuple[Action, ...] | None:
+    """The actions of a decision the current player must make before any
+    other, if one is pending, else `None`.
+
+    So far the only one is a pending discard (`PlayerState.to_discard`): one
+    `Discard` per distinct card in hand. `EndTurn` caps the count at the
+    hand's size, so while it is positive the hand isn't empty. Later effects
+    that interrupt the turn with a decision belong here too.
+    """
+    player = state.players[state.current]
+    if player.to_discard:
+        return tuple(Discard(card) for card in dict.fromkeys(player.hand))
+    return None
 
 
 def _maybe_automatic(state: GameState) -> Iterator[Action]:
@@ -249,8 +280,11 @@ def _maybe_automatic(state: GameState) -> Iterator[Action]:
 
 
 def _pure_gain(effects: tuple[Effect, ...]) -> bool:
-    """Whether `effects` only add trade, combat or Authority."""
-    return all(isinstance(e, Trade | Combat | Authority) for e in effects)
+    """Whether `effects` only add trade, combat or Authority, or make the
+    opponent discard."""
+    return all(
+        isinstance(e, Trade | Combat | Authority | OpponentDiscards) for e in effects
+    )
 
 
 def automatic(action: Action) -> bool:
@@ -260,9 +294,11 @@ def automatic(action: Action) -> bool:
     is automatic when taking it now can't make any later option worse.
 
     - `PlayCard` of a **ship** whose primary effects are pure gain (trade,
-      combat, Authority). A ship in hand and a ship in play both go to the
-      discard pile at the end of the turn; in play it only adds options
-      (ally abilities, scrapping).
+      combat, Authority, or making the opponent discard: that only adds to
+      the discards they make at the start of their next turn, so nothing
+      this turn depends on when it happens). A ship in hand and a ship in
+      play both go to the discard pile at the end of the turn; in play it
+      only adds options (ally abilities, scrapping).
     - `UseAlly` whose ally effects are pure gain, and `UseBase` whose primary
       effects are pure gain: the card stays where it is, and the gain can't
       be lost by taking it early.
@@ -272,11 +308,11 @@ def automatic(action: Action) -> bool:
     acquired card goes to the discard pile) changes the deck. Playing a base
     is a decision too: a base left in hand goes to the discard pile, so it
     changes what is reshuffled. `Scrap` loses the card, and `Acquire`,
-    attacks and `EndTurn` are the turn's real choices.
+    attacks and `EndTurn` are the turn's real choices. `Discard` is the
+    discarding player's choice of card.
 
     This is sound only for the effects the engine implements so far: every
-    new effect or action (opponent discards, scrapping from hand, ...) must
-    revisit it.
+    new effect or action (scrapping from hand, ...) must revisit it.
     """
     match action:
         case PlayCard(card):
@@ -285,7 +321,9 @@ def automatic(action: Action) -> bool:
             return _pure_gain(card.ally)
         case UseBase(card):
             return _pure_gain(card.primary)
-        case Scrap() | Acquire() | AttackPlayer() | AttackBase() | EndTurn():
+        case (
+            Scrap() | Acquire() | AttackPlayer() | AttackBase() | Discard() | EndTurn()
+        ):
             return False
         case _:
             assert_never(action)
@@ -313,7 +351,7 @@ def _next_automatic(state: GameState) -> Action | None:
     """The first automatic action in `legal_actions(state)`, if any. It scans
     only the kinds of action that can be automatic, which `legal_actions`
     lists first, instead of building the whole list."""
-    if winner(state) is not None:
+    if winner(state) is not None or _forced(state) is not None:
         return None
     return next((a for a in _maybe_automatic(state) if automatic(a)), None)
 
@@ -436,6 +474,13 @@ def _apply(state: GameState, action: Action) -> GameState:
                 players=_players(state, 1 - me, opponent),
                 combat=state.combat - (card.defense or 0),
             )
+        case Discard(card):
+            player = player.replace(
+                hand=_without(player.hand, card),
+                discard=(*player.discard, card),
+                to_discard=player.to_discard - 1,
+            )
+            return state.replace(players=_players(state, me, player))
         case EndTurn():
             player = player.replace(
                 hand=(),
@@ -443,8 +488,13 @@ def _apply(state: GameState, action: Action) -> GameState:
                 discard=player.discard + player.in_play + player.hand,
             )
             player, seed = _draw(player, HAND_SIZE, state.rng_seed)
+            # The next player discards no more cards than they hold.
+            opponent = state.players[1 - me]
+            if opponent.to_discard > len(opponent.hand):
+                opponent = opponent.replace(to_discard=len(opponent.hand))
+            players = (player, opponent) if me == 0 else (opponent, player)
             return state.replace(
-                players=_players(state, me, player),
+                players=players,
                 current=1 - me,
                 turn=state.turn + 1,
                 trade=0,

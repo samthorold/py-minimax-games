@@ -23,10 +23,11 @@ def test_seats_alternate_evenly():
 
 
 class Passive:
-    """Never attacks: two of them never finish a game."""
+    """Never attacks: two of them never finish a game. It ends every turn,
+    after a discard it must make."""
 
     def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
-        return EndTurn()
+        return EndTurn() if EndTurn() in actions else actions[0]
 
 
 def passive(seed: int) -> Passive:

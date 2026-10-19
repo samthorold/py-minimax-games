@@ -3,13 +3,7 @@
 from dataclasses import dataclass
 from enum import Enum
 
-from minimax_games.games.star_realms.effect import (
-    Authority,
-    Combat,
-    Draw,
-    Effect,
-    Trade,
-)
+from minimax_games.games.star_realms.effect import Effect
 
 
 class Faction(Enum):
@@ -53,10 +47,3 @@ class Card:
         the search's time (two fields are enums, hashed in Python); `str`
         caches its hash."""
         return hash(self.name)
-
-    @property
-    def in_slice_1(self) -> bool:
-        """Whether every effect, primary, ally or scrap, is trade, combat,
-        authority or draw: the cards the first slice plays with."""
-        effects = self.primary + self.ally + self.scrap
-        return all(isinstance(e, Trade | Combat | Authority | Draw) for e in effects)

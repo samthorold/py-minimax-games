@@ -6,6 +6,7 @@ from minimax_games.games.star_realms.action import (
     Action,
     AttackBase,
     AttackPlayer,
+    Discard,
     EndTurn,
     PlayCard,
     Scrap,
@@ -14,7 +15,7 @@ from minimax_games.games.star_realms.action import (
 )
 from minimax_games.games.star_realms.bots import GreedyBot, HeuristicBot, RandomBot
 from minimax_games.games.star_realms.card import Card
-from minimax_games.games.star_realms.catalogue import CATALOGUE, EXPLORER
+from minimax_games.games.star_realms.catalogue import CATALOGUE, EXPLORER, SCOUT, VIPER
 from minimax_games.games.star_realms.match import play_match
 from minimax_games.games.star_realms.view import View, observe
 
@@ -67,9 +68,16 @@ def test_greedy_keeps_its_cards_and_leaves_bases_that_dont_guard_the_player():
     assert greedy(Scrap(FRIGATE), AttackBase(WHEEL), EndTurn()) == EndTurn()
 
 
+def test_greedy_discards_its_cheapest_card_ties_by_name_whatever_the_order():
+    discards = (Discard(CUTTER), Discard(SCOUT), Discard(VIPER), Discard(EXPLORER))
+    for actions in (discards, discards[::-1]):
+        assert greedy(*actions) == Discard(SCOUT)
+
+
 def test_greedy_beats_random_in_the_large_majority_of_seeded_games():
-    """30 seeds, alternating seats. Measured: greedy wins all 30 (199 of
-    200 over seeds 0-199), in about 22 turns on average."""
+    """30 seeds, alternating seats. Measured: greedy wins all 30 (500 of
+    500 over seeds 0-499, with the Milestone 4 opponent-discards deck), in
+    about 22 turns on average."""
     wins = 0
     for seed in range(30):
         seat = seed % 2
@@ -190,6 +198,14 @@ def test_heuristic_prefers_economy_early_and_combat_late():
     assert heuristic(*buys, view=view_with(turn=30)) == Acquire(FIGHTER)
 
 
+def test_heuristic_discards_starting_cards_first_viper_early_and_scout_late():
+    """It keeps the card worth most to play: trade early, combat late."""
+    discards = (Discard(EXPLORER), Discard(SCOUT), Discard(VIPER), Discard(CUTTER))
+    for actions in (discards, discards[::-1]):
+        assert heuristic(*actions, view=view_with(turn=1)) == Discard(VIPER)
+        assert heuristic(*actions, view=view_with(turn=30)) == Discard(SCOUT)
+
+
 def test_heuristic_scraps_explorers_for_combat_once_it_has_bought():
     """An Explorer's trade only helps the turn it is played: once spent, its
     2 combat and a thinner deck are worth more than keeping it."""
@@ -212,8 +228,9 @@ def test_heuristic_values_a_base_for_the_turns_it_stays_in_play():
 
 
 def test_heuristic_beats_greedy_in_clearly_more_than_half_of_seeded_games():
-    """40 seeds, alternating seats. Measured: the heuristic wins 38 of 40
-    (427 of 500 over seeds 0-499; tuned on seeds from 1000)."""
+    """40 seeds, alternating seats. Measured: the heuristic wins 32 of 40
+    (405 of 500 over seeds 0-499) with the Milestone 4 opponent-discards
+    deck. Tuned on seeds from 1000 with the 30-card first slice."""
     wins = 0
     for seed in range(40):
         seat = seed % 2
