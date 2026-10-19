@@ -138,3 +138,17 @@ def test_tournament_plays_the_sampler_and_states_its_worlds_and_budget(capsys):
     ) in out
     sampler = next(line for line in out if line.split()[:2] == ["sampler", "0/0"])
     assert float(sampler.split()[-1]) > 0  # it made timed decisions
+
+
+def test_tournament_sets_the_search_bots_budget_and_the_samplers_worlds(capsys):
+    argv = ["tournament", "--bots", "cheat", "sampler", "--games", "2"]
+    tail = ["--max-turns", "2", "--budget", "60", "--worlds", "3"]
+    main([*argv, *tail])
+    out = capsys.readouterr().out.splitlines()
+    assert "cheat: 2-turn horizon, budget 60 nodes per decision" in out
+    assert (
+        "sampler: 3 worlds, 2-turn horizon, budget 60 nodes per decision (20 per world)"
+    ) in out
+    main([*argv, *tail, "--jobs", "2"])  # the configured bots reach the workers
+    parallel = capsys.readouterr().out.splitlines()
+    assert parallel[:4] == out[:4]  # the same settings and unfinished games
