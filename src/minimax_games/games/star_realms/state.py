@@ -47,9 +47,23 @@ before anything else, to draw as many (Recycling Station's
 current player has played this turn, whatever became of them since (Blob
 World draws a card per Blob card played); it empties at the end of the turn.
 
+`may_on_top` counts the ships the current player may still put on top of
+their deck as they acquire them this turn (`NextShipOnTop`), instead of in
+the discard pile, like `may_scrap`: optional, and lost at the end of the
+turn.
+
+`free_ships` counts the ships the current player must acquire right now,
+before anything else, for free from the Trade Row onto their deck (Blob
+Carrier's `AcquireShipFreeOnTop`).
+
 `PlayerState.to_discard` counts the discards an opponent's `OpponentDiscards`
 effects have left a player to make at the start of their next turn. It is
 public, and capped at the hand's size when their turn starts.
+
+`PlayerState.known_top` counts the cards on top of a player's deck that both
+players know (`deck[:known_top]`): ships put there when acquired
+(`NextShipOnTop`, `AcquireShipFreeOnTop`). They stay known until drawn; the
+deck is only shuffled once empty, so a shuffle never hides one.
 """
 
 from dataclasses import dataclass
@@ -72,6 +86,7 @@ class PlayerState:
     discard: tuple[Card, ...] = ()
     bases: tuple[Card, ...] = ()
     to_discard: int = 0
+    known_top: int = 0
 
     def replace(
         self,
@@ -83,6 +98,7 @@ class PlayerState:
         discard: tuple[Card, ...] | None = None,
         bases: tuple[Card, ...] | None = None,
         to_discard: int | None = None,
+        known_top: int | None = None,
     ) -> "PlayerState":
         """`dataclasses.replace(self, ...)`, without its introspection of the
         fields on every call (see `GameState.replace`)."""
@@ -94,6 +110,7 @@ class PlayerState:
             self.discard if discard is None else discard,
             self.bases if bases is None else bases,
             self.to_discard if to_discard is None else to_discard,
+            self.known_top if known_top is None else known_top,
         )
 
 
@@ -118,6 +135,8 @@ class GameState:
     choosing: tuple[Card, ...] = ()
     recycling: int = 0
     factions_played: tuple[int, ...] = NO_FACTIONS_PLAYED
+    may_on_top: int = 0
+    free_ships: int = 0
 
     def replace(
         self,
@@ -141,6 +160,8 @@ class GameState:
         choosing: tuple[Card, ...] | None = None,
         recycling: int | None = None,
         factions_played: tuple[int, ...] | None = None,
+        may_on_top: int | None = None,
+        free_ships: int | None = None,
     ) -> "GameState":
         """`dataclasses.replace(self, ...)`, without its introspection of the
         fields on every call: the search builds several states per node, so
@@ -166,4 +187,6 @@ class GameState:
             self.choosing if choosing is None else choosing,
             self.recycling if recycling is None else recycling,
             self.factions_played if factions_played is None else factions_played,
+            self.may_on_top if may_on_top is None else may_on_top,
+            self.free_ships if free_ships is None else free_ships,
         )

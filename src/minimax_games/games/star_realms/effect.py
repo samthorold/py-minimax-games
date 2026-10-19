@@ -47,7 +47,11 @@ class ScrapTradeRow(Variant):
 
 
 class NextShipOnTop(Variant):
-    """You may put the next ship you acquire this turn on top of your deck."""
+    """You may put the next ship you acquire this turn on top of your deck.
+
+    The engine lets the player put any one ship acquired later this turn
+    there (docs/star-realms.md).
+    """
 
 
 class Choice(Variant):
@@ -57,7 +61,8 @@ class Choice(Variant):
 
 
 class AcquireShipFreeOnTop(Variant):
-    """Acquire any ship for free and put it on top of your deck (Blob Carrier)."""
+    """Acquire any ship in the Trade Row for free and put it on top of your
+    deck (Blob Carrier)."""
 
 
 class DrawIfBases(Variant):

@@ -8,7 +8,9 @@ hashable) views.
 
 What is hidden:
 
-- the order of every deck, the observer's own included, and of the Trade Deck;
+- the order of every deck, the observer's own included, and of the Trade Deck,
+  except for cards known to be on top (`PlayerView.deck_top`): ships put
+  there when acquired, known to both players until drawn;
 - the opponent's hand. The observer knows every card the opponent owns, so
   the opponent's hand and deck together are known as one multiset
   (`PlayerView.unseen`) with known sizes, but not which card is where;
@@ -17,7 +19,8 @@ What is hidden:
 For the observer, `unseen` is just their deck's contents. A sampler can build
 a full world consistent with a view by dealing each player's `unseen` cards,
 `hand_size` of them to the hand (none for the observer, whose `hand` is
-known) and the rest to the deck, and shuffling `trade_deck`.
+known) and the rest to the deck under its known top cards, and shuffling
+`trade_deck`.
 """
 
 import random
@@ -39,7 +42,9 @@ class PlayerView:
     `hand` holds the cards the observer can see in this player's hand: all of
     them for the observer, none for the opponent. `unseen` holds the rest of
     the hand and the whole deck, as a multiset. `hand_size` and `deck_size`
-    are public, as are the discards the player has pending (`to_discard`).
+    are public, as are the discards the player has pending (`to_discard`)
+    and the cards known to be on top of the deck (`deck_top`, top first,
+    `PlayerState.known_top`), which `unseen` leaves out.
     """
 
     authority: int
@@ -51,15 +56,16 @@ class PlayerView:
     discard: tuple[Card, ...]
     bases: tuple[Card, ...]
     to_discard: int
+    deck_top: tuple[Card, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class View:
     """What `observer` knows about the game. `players` is indexed like
-        `GameState.players`; the turn state (whose turn, trade, combat, abilities
-        used, scraps left and owed, bases left to destroy, Trade Row scraps
-    left, the choices and recycling being made, the factions played) is all
-    public."""
+    `GameState.players`; the turn state (whose turn, trade, combat, abilities
+    used, scraps left and owed, bases left to destroy, Trade Row scraps
+    left, the choices and recycling being made, the factions played, ships
+    left to put on top of the deck and free ships owed) is all public."""
 
     observer: int
     players: tuple[PlayerView, PlayerView]
@@ -80,13 +86,16 @@ class View:
     choosing: tuple[Card, ...]
     recycling: int
     factions_played: tuple[int, ...]
+    may_on_top: int
+    free_ships: int
 
 
 def _player_view(player: PlayerState, *, hand_seen: bool) -> PlayerView:
+    deck_top, deck = player.deck[: player.known_top], player.deck[player.known_top :]
     if hand_seen:
-        hand, unseen = player.hand, player.deck
+        hand, unseen = player.hand, deck
     else:
-        hand, unseen = (), player.hand + player.deck
+        hand, unseen = (), player.hand + deck
     return PlayerView(
         authority=player.authority,
         hand_size=len(player.hand),
@@ -97,6 +106,7 @@ def _player_view(player: PlayerState, *, hand_seen: bool) -> PlayerView:
         discard=player.discard,
         bases=player.bases,
         to_discard=player.to_discard,
+        deck_top=deck_top,
     )
 
 
@@ -126,6 +136,8 @@ def observe(state: GameState, observer: int) -> View:
         choosing=state.choosing,
         recycling=state.recycling,
         factions_played=state.factions_played,
+        may_on_top=state.may_on_top,
+        free_ships=state.free_ships,
     )
 
 
@@ -138,12 +150,13 @@ def _sample_player(player: PlayerView, rng: random.Random) -> PlayerState:
     dealt = player.hand_size - len(player.hand)
     return PlayerState(
         authority=player.authority,
-        deck=unseen[dealt:],
+        deck=player.deck_top + unseen[dealt:],
         hand=player.hand + unseen[:dealt],
         in_play=player.in_play,
         discard=player.discard,
         bases=player.bases,
         to_discard=player.to_discard,
+        known_top=len(player.deck_top),
     )
 
 
@@ -177,4 +190,6 @@ def sample_world(view: View, rng: random.Random) -> GameState:
         choosing=view.choosing,
         recycling=view.recycling,
         factions_played=view.factions_played,
+        may_on_top=view.may_on_top,
+        free_ships=view.free_ships,
     )

@@ -11,6 +11,8 @@ from typing import Protocol, runtime_checkable
 
 from minimax_games.games.star_realms.action import (
     Acquire,
+    AcquireFreeShip,
+    AcquireOnTop,
     Action,
     AttackBase,
     AttackPlayer,
@@ -99,7 +101,9 @@ class GreedyBot:
        the option with the most trade plus combat, ties broken by the card's
        order (so the first option when neither has any): so it never
        draws with Blob World or recycles with Recycling Station, and if made
-       to recycle it gives up as few and as cheap cards as it can.
+       to recycle it gives up as few and as cheap cards as it can. When it
+       must take a free ship (Blob Carrier), it takes the most expensive,
+       ties broken by name.
     1. plays every card it can and uses every ally and base ability, in
        `actions` order. Bots are only offered the plays automatic play leaves
        (draws, bases, and ships that could be scrapped from hand instead),
@@ -107,7 +111,9 @@ class GreedyBot:
        makes the most trade. Drawing first may reshuffle the discard pile
        before this turn's buys reach it, which a baseline ignores.
     2. acquires the most expensive affordable card, ties broken by name
-       (Explorers are cost-2 options), and repeats while it can afford one.
+       (Explorers are cost-2 options), and repeats while it can afford one,
+       putting it on top of its deck when it may (Freighter, Central
+       Office): a ship drawn next turn rather than shuffled in later.
     3. attacks the opponent: the player whenever it is allowed, which spends
        all the combat; otherwise, while Outposts guard the player, destroys
        the one with the least defense (ties by name). Weakest first destroys
@@ -130,12 +136,15 @@ class GreedyBot:
             )
         if recycles := _recycles(actions):
             return min(recycles, key=_fewest_cheapest)
+        if frees := _free_ships(actions):
+            return min(frees, key=lambda a: (-a.card.cost, a.card.name))
         for action in actions:
             if isinstance(action, PlayCard | UseAlly | UseBase):
                 return action
         buys = [a for a in actions if isinstance(a, Acquire)]
         if buys:
-            return min(buys, key=lambda a: (-a.card.cost, a.card.name))
+            buy = min(buys, key=lambda a: (-a.card.cost, a.card.name))
+            return _on_top(buy, actions)
         if AttackPlayer() in actions:
             return AttackPlayer()
         outposts = [
@@ -174,6 +183,20 @@ def _recycles(actions: tuple[Action, ...]) -> list[Recycle]:
     """The sets of cards the bot may recycle, if it must choose one (they are
     then the only actions), else empty."""
     return [a for a in actions if isinstance(a, Recycle)]
+
+
+def _on_top(buy: Acquire, actions: tuple[Action, ...]) -> Acquire | AcquireOnTop:
+    """`buy`, putting the ship on top of the deck instead when the bot may
+    (Freighter, Central Office): it is drawn next turn rather than shuffled
+    in later."""
+    on_top = AcquireOnTop(buy.card)
+    return on_top if on_top in actions else buy
+
+
+def _free_ships(actions: tuple[Action, ...]) -> list[AcquireFreeShip]:
+    """The ships the bot may acquire for free (Blob Carrier), if it must
+    choose one (they are then the only actions), else empty."""
+    return [a for a in actions if isinstance(a, AcquireFreeShip)]
 
 
 def _fewest_cheapest(action: Recycle) -> tuple[int, int, tuple[str, ...]]:
@@ -317,6 +340,10 @@ class HeuristicBot:
        Authority, then the card's order: so trade early and combat late
        (Patrol Mech), combat over Authority (Defense Center), and trade over
        Authority (Trading Post, Barter World) unless its Authority is low.
+       When it must take a free ship (Blob Carrier), it takes the one worth
+       most, as it buys (4). Using Blob Carrier's ally ability is one of the
+       abilities it uses at once (2), so the free ship is the one it wants
+       most, whatever it costs, before it buys.
     1. while it may scrap from hand or discard pile (Trade Bot, Junkyard,
        ...), scraps a Viper or Scout, the one it least wants to play (as in
        0) first: from the discard pile while one is there, where it does
@@ -338,7 +365,9 @@ class HeuristicBot:
        `ECONOMY_TURNS` turns, `ECONOMY` per point of primary trade, and after
        them `AGGRESSION` per point of primary combat: economy early, combat
        late. Outposts get no bonus for their defense: tuning found it lost
-       games, as an Outpost's defense only delays the opponent.
+       games, as an Outpost's defense only delays the opponent. It puts the
+       ship on top of its deck when it may (Freighter, Central Office), as
+       greedy does: so the first ship it buys then goes there.
     5. while it may scrap from the Trade Row (Battle Pod, Blob Destroyer),
        scraps the row card the opponent would most want, by the worth in 4
        for the opponent's cards and their next turn, ties broken by name,
@@ -371,6 +400,8 @@ class HeuristicBot:
             return self._choose(view, options)
         if recycles := _recycles(actions):
             return self._recycle(view, recycles)
+        if frees := _free_ships(actions):
+            return self._most_wanted(view, frees)
         if (thin := self._thin(view, actions)) is not None:
             return thin
         for action in actions:
@@ -444,12 +475,18 @@ class HeuristicBot:
         return _least_wanted(scraps, view) if scraps else None
 
     def _buy(self, view: View, actions: tuple[Action, ...]) -> Action | None:
+        buys = [a for a in actions if isinstance(a, Acquire)]
+        return _on_top(self._most_wanted(view, buys), actions) if buys else None
+
+    def _most_wanted[A: Acquire | AcquireFreeShip](
+        self, view: View, acquires: list[A]
+    ) -> A:
+        """Of `acquires`, the card worth most (see 4), ties broken by name."""
         owned = _owned(view)
         own_turn = (view.turn + 1) // 2
-        buys = [a for a in actions if isinstance(a, Acquire)]
-        if not buys:
-            return None
-        return min(buys, key=lambda a: (-_worth(a.card, own_turn, owned), a.card.name))
+        return min(
+            acquires, key=lambda a: (-_worth(a.card, own_turn, owned), a.card.name)
+        )
 
     def _deny(self, view: View, actions: tuple[Action, ...]) -> Action | None:
         scraps = [a for a in actions if isinstance(a, ScrapTradeRowCard)]

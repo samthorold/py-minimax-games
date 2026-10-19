@@ -197,6 +197,26 @@ def test_ships_wait_in_hand_while_something_could_scrap_them_from_hand():
     assert rules.auto_play(state).players[0].hand == ()
 
 
+FREIGHTER = CATALOGUE["Freighter"]  # 4 trade; ally: next ship on top
+CENTRAL_OFFICE = CATALOGUE["Central Office"]  # base: 2 trade, next ship on top
+BLOB_CARRIER = CATALOGUE["Blob Carrier"]  # 7 combat; ally: a free ship on top
+
+
+def test_putting_a_ship_on_top_is_granted_automatically_but_the_free_ship_is_not():
+    state = with_bases(with_hand(rules.new_game(seed=1), FREIGHTER), CENTRAL_OFFICE)
+    after = rules.auto_play(state)
+    assert after.allies_used == (FREIGHTER,)
+    assert after.bases_used == (CENTRAL_OFFICE,)
+    assert after.may_on_top == 2
+    assert after.trade == 6
+    # Blob Carrier is played, but its ally ability waits: the row may change.
+    state = with_hand(rules.new_game(seed=1), BLOB_CARRIER, TRADE_POD)
+    after = rules.auto_play(state)
+    assert after.players[0].hand == ()
+    assert UseAlly(BLOB_CARRIER) in rules.legal_actions(after)
+    assert not any(rules.automatic(after, a) for a in rules.legal_actions(after))
+
+
 # Outcome preservation: on small hand-built states, brute-force every way to
 # play the turn with and without automatic play, and compare the outcomes.
 
@@ -368,6 +388,21 @@ SMALL_STATES = {
         hand=(PATROL_MECH, TRADING_POST, CORVETTE),
         deck=(SCOUT,),
         bases=(DEFENSE_CENTER,),
+    ),
+    # Ships on top of the deck: Freighter's ally ability and Central
+    # Office's, around buys from the row (before or after its refill), an
+    # Explorer and Central Office's ally draw (of a ship put on top).
+    "on top": small(
+        hand=(FREIGHTER, SHUTTLE),
+        deck=(SCOUT,),
+        bases=(CENTRAL_OFFICE,),
+        trade_row=(CUTTER, BLOB_FIGHTER),
+    ),
+    # Blob Carrier's free ship on top, beside its ally and a buy.
+    "free ship": small(
+        hand=(BLOB_CARRIER, TRADE_POD, SCOUT),
+        deck=(VIPER,),
+        trade_row=(CUTTER, BLOB_WHEEL),
     ),
 }
 

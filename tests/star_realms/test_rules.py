@@ -7,6 +7,8 @@ import pytest
 from minimax_games.games.star_realms import rules
 from minimax_games.games.star_realms.action import (
     Acquire,
+    AcquireFreeShip,
+    AcquireOnTop,
     AttackBase,
     AttackPlayer,
     Choose,
@@ -36,11 +38,11 @@ from minimax_games.games.star_realms.effect import (
     Authority,
     Choice,
     Combat,
+    CopyShip,
     DestroyBase,
     DiscardThenDraw,
     Draw,
     DrawPerFactionCard,
-    NextShipOnTop,
     OpponentDiscards,
     ScrapFromHand,
     ScrapHandOrDiscard,
@@ -233,8 +235,12 @@ def test_the_playable_deck_adds_the_trade_row_scrap_cards():
     assert len(deck) == 60
 
 
+SLICE_6_EFFECTS = SLICE_5_EFFECTS | {Choice, DrawPerFactionCard, DiscardThenDraw}
+
+
 def test_the_playable_deck_adds_the_or_choice_cards():
-    added = Counter(PLAYABLE_TRADE_DECK) - Counter(playable_deck(SLICE_5_EFFECTS))
+    deck = playable_deck(SLICE_6_EFFECTS)
+    added = Counter(deck) - Counter(playable_deck(SLICE_5_EFFECTS))
     assert {card.name: n for card, n in added.items()} == {
         "Blob World": 1,
         "Trading Post": 2,
@@ -243,7 +249,17 @@ def test_the_playable_deck_adds_the_or_choice_cards():
         "Recycling Station": 2,
         "Patrol Mech": 2,
     }
-    assert len(PLAYABLE_TRADE_DECK) == 70
+    assert len(deck) == 70
+
+
+def test_the_playable_deck_adds_the_next_ship_on_top_cards():
+    added = Counter(PLAYABLE_TRADE_DECK) - Counter(playable_deck(SLICE_6_EFFECTS))
+    assert {card.name: n for card, n in added.items()} == {
+        "Freighter": 2,
+        "Central Office": 1,
+        "Blob Carrier": 1,
+    }
+    assert len(PLAYABLE_TRADE_DECK) == 74
 
 
 def test_a_choice_is_playable_only_once_every_option_is():
@@ -391,7 +407,7 @@ def test_each_copy_in_play_can_be_scrapped_once():
 def test_scrap_abilities_with_effects_not_yet_implemented_are_unavailable():
     frigate = CATALOGUE["Imperial Frigate"]  # scrap: draw a card
     # Every base-set scrap ability is implemented now, so make one that isn't.
-    culler = dataclasses.replace(frigate, name="Culler", scrap=(NextShipOnTop(),))
+    culler = dataclasses.replace(frigate, name="Culler", scrap=(CopyShip(),))
     state = rules.new_game(seed=1)
     in_play = (frigate, culler)
     first = dataclasses.replace(state.players[0], hand=(), in_play=in_play)
@@ -484,7 +500,7 @@ def test_scrapping_one_of_two_copies_scraps_the_one_whose_ally_was_used():
 
 def test_ally_abilities_with_effects_not_yet_implemented_are_unavailable():
     # Every base-set Blob ally ability is implemented now, so make one that isn't.
-    destroyer = dataclasses.replace(RAM, name="Hoarder", ally=(NextShipOnTop(),))
+    destroyer = dataclasses.replace(RAM, name="Hoarder", ally=(CopyShip(),))
     frigate = CATALOGUE["Imperial Frigate"]  # ally: 2 combat
     corvette = CATALOGUE["Corvette"]  # ally: 2 combat
     state = rules.new_game(seed=1)
@@ -1045,4 +1061,88 @@ def test_recycling_with_an_empty_hand_does_nothing():
     state = rules.apply(state, PlayCard(RECYCLING_STATION))
     after = rules.apply(state, Choose(RECYCLING_STATION, (DiscardThenDraw(2),)))
     assert after.players[0].hand == ()
+    assert EndTurn() in rules.legal_actions(after)
+
+
+FREIGHTER = CATALOGUE["Freighter"]  # 4 trade; ally: next ship acquired on top
+
+
+def on_top(state: GameState) -> list[AcquireOnTop]:
+    return [a for a in rules.legal_actions(state) if isinstance(a, AcquireOnTop)]
+
+
+def test_freighters_ally_lets_the_player_put_a_ship_acquired_on_top_of_the_deck():
+    state = rules.new_game(seed=1, trade_deck=(CUTTER,) * 6)
+    state = with_hand(state, FREIGHTER, SHUTTLE)
+    deck = state.players[0].deck
+    state = rules.apply(state, PlayCard(FREIGHTER))
+    state = rules.apply(state, PlayCard(SHUTTLE))
+    assert on_top(state) == []
+    state = rules.apply(state, UseAlly(FREIGHTER))
+    assert on_top(state) == [AcquireOnTop(CUTTER), AcquireOnTop(EXPLORER)]
+    # Optional: a ship acquired as usual goes to the discard pile.
+    state = rules.apply(state, Acquire(CUTTER))
+    assert state.players[0].discard == (CUTTER,)
+    state = rules.apply(state, AcquireOnTop(CUTTER))
+    assert state.trade == 2
+    assert state.players[0].deck == (CUTTER, *deck)
+    assert state.players[0].discard == (CUTTER,)
+    assert state.trade_row == (CUTTER,) * 4
+    # Only one ship goes on top.
+    assert on_top(state) == []
+
+
+CENTRAL_OFFICE = CATALOGUE["Central Office"]  # base: 2 trade, next ship on top
+
+
+def test_only_ships_go_on_top_explorers_included_and_only_this_turn():
+    state = rules.new_game(seed=1, trade_deck=(TRADING_POST,) * 6)
+    state = with_hand(state, CENTRAL_OFFICE)
+    deck = state.players[0].deck
+    state = dataclasses.replace(rules.apply(state, PlayCard(CENTRAL_OFFICE)), trade=7)
+    assert on_top(state) == [AcquireOnTop(EXPLORER)]
+    after = rules.apply(state, AcquireOnTop(EXPLORER))
+    assert after.players[0].deck == (EXPLORER, *deck)
+    assert after.explorers == 9
+    # Unused, it is lost at the end of the turn.
+    later = dataclasses.replace(
+        rules.apply(rules.apply(state, EndTurn()), EndTurn()), trade=2
+    )
+    assert later.bases_used == ()
+    assert on_top(later) == []
+
+
+BLOB_CARRIER = CATALOGUE["Blob Carrier"]  # 7 combat; ally: a free ship on top
+
+
+def test_blob_carriers_ally_acquires_any_ship_in_the_row_free_onto_the_deck():
+    row = (BATTLE_BLOB, TRADING_POST, CUTTER, BATTLE_BLOB, BLOB_WORLD)
+    state = dataclasses.replace(
+        rules.new_game(seed=1), trade_row=row, trade_deck=(RAM,)
+    )
+    state = with_hand(state, BLOB_CARRIER, RAM)
+    deck = state.players[0].deck
+    state = rules.apply(state, PlayCard(BLOB_CARRIER))
+    state = rules.apply(state, PlayCard(RAM))
+    state = rules.apply(state, UseAlly(BLOB_CARRIER))
+    # One per distinct ship in the row (not bases, not Explorers), and
+    # nothing else first.
+    assert rules.legal_actions(state) == (
+        AcquireFreeShip(BATTLE_BLOB),
+        AcquireFreeShip(CUTTER),
+    )
+    after = rules.apply(state, AcquireFreeShip(BATTLE_BLOB))
+    assert after.players[0].deck == (BATTLE_BLOB, *deck)
+    assert after.trade == state.trade
+    assert after.trade_row == (RAM, TRADING_POST, CUTTER, BATTLE_BLOB, BLOB_WORLD)
+    assert EndTurn() in rules.legal_actions(after)
+
+
+def test_blob_carriers_ally_does_nothing_without_a_ship_in_the_row():
+    state = rules.new_game(seed=1, trade_deck=(TRADING_POST,) * 6)
+    state = with_hand(state, BLOB_CARRIER, RAM)
+    state = rules.apply(state, PlayCard(BLOB_CARRIER))
+    state = rules.apply(state, PlayCard(RAM))
+    after = rules.apply(state, UseAlly(BLOB_CARRIER))
+    assert after.players[0] == state.players[0]
     assert EndTurn() in rules.legal_actions(after)

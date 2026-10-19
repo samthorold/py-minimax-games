@@ -30,6 +30,31 @@ class Acquire(Variant):
     card: Card
 
 
+class AcquireOnTop(Variant):
+    """`Acquire` `card`, a ship (an Explorer among them), but put it on top
+    of the deck instead of in the discard pile, for a `NextShipOnTop`
+    ability (Freighter's ally ability, Central Office).
+
+    Offered beside `Acquire` for each affordable ship while the turn has
+    one left (`GameState.may_on_top`), using one.
+    """
+
+    card: Card
+
+
+class AcquireFreeShip(Variant):
+    """Acquire `card`, a ship in the Trade Row, without paying its cost, and
+    put it on top of the deck, for an `AcquireShipFreeOnTop` ability (Blob
+    Carrier's ally ability). The Trade Deck's top card takes its place.
+
+    Offered, as the only legal actions, once the player has used the ability
+    (`GameState.free_ships`): one per distinct ship in the row. Like
+    `Acquire`, the action names the card.
+    """
+
+    card: Card
+
+
 class Scrap(Variant):
     """Scrap a card in play for its scrap ability, removing it from the game.
 
@@ -180,6 +205,8 @@ type Action = (
     | UseBase
     | Scrap
     | Acquire
+    | AcquireOnTop
+    | AcquireFreeShip
     | AttackPlayer
     | AttackBase
     | DestroyTarget

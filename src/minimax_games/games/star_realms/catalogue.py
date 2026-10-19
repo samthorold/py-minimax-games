@@ -194,6 +194,8 @@ IMPLEMENTED: frozenset[type[Effect]] = frozenset(
         Choice,
         DrawPerFactionCard,
         DiscardThenDraw,
+        NextShipOnTop,
+        AcquireShipFreeOnTop,
     }
 )
 """The kinds of effect the rules implement. Each card slice adds its own

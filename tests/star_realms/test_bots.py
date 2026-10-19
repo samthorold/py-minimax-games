@@ -3,6 +3,8 @@ import dataclasses
 from minimax_games.games.star_realms import rules
 from minimax_games.games.star_realms.action import (
     Acquire,
+    AcquireFreeShip,
+    AcquireOnTop,
     Action,
     AttackBase,
     AttackPlayer,
@@ -150,10 +152,29 @@ def test_greedy_takes_trade_or_combat_over_drawing_and_recycles_little():
     assert greedy(*recycles) == Recycle((SCOUT,))
 
 
+def test_greedy_puts_the_ship_it_buys_on_top_when_it_may():
+    buys = (
+        Acquire(CUTTER),
+        Acquire(BATTLE_BLOB),
+        Acquire(WHEEL),
+        AcquireOnTop(CUTTER),
+        AcquireOnTop(BATTLE_BLOB),
+    )
+    assert greedy(*buys) == AcquireOnTop(BATTLE_BLOB)
+    assert greedy(Acquire(CUTTER), Acquire(BATTLE_BLOB), AcquireOnTop(CUTTER)) == (
+        Acquire(BATTLE_BLOB)
+    )
+
+
+def test_greedy_takes_the_most_expensive_free_ship():
+    frees = (AcquireFreeShip(CUTTER), AcquireFreeShip(BATTLE_BLOB))
+    assert greedy(*frees) == AcquireFreeShip(BATTLE_BLOB)
+
+
 def test_greedy_beats_random_in_the_large_majority_of_seeded_games():
     """30 seeds, alternating seats. Measured: greedy wins all 30 (500 of
-    500 over seeds 0-499, with the Milestone 4 "or" choices deck), in
-    about 23 turns on average."""
+    500 over seeds 0-499, with the Milestone 4 next-ship-on-top deck), in
+    about 22 turns on average."""
     wins = 0
     for seed in range(30):
         seat = seed % 2
@@ -324,6 +345,22 @@ def test_heuristic_prefers_economy_early_and_combat_late():
     assert heuristic(*buys, view=view_with(turn=30)) == Acquire(FIGHTER)
 
 
+def test_heuristic_puts_the_ship_it_buys_on_top_when_it_may():
+    buys = (
+        Acquire(SHUTTLE),
+        Acquire(FIGHTER),
+        AcquireOnTop(SHUTTLE),
+        AcquireOnTop(FIGHTER),
+    )
+    assert heuristic(*buys, view=view_with(turn=30)) == AcquireOnTop(FIGHTER)
+
+
+def test_heuristic_takes_the_free_ship_it_would_most_want_to_buy():
+    frees = (AcquireFreeShip(SHUTTLE), AcquireFreeShip(FIGHTER))
+    assert heuristic(*frees, view=view_with(turn=1)) == AcquireFreeShip(SHUTTLE)
+    assert heuristic(*frees, view=view_with(turn=30)) == AcquireFreeShip(FIGHTER)
+
+
 def test_heuristic_chooses_trade_early_combat_late_and_authority_when_low():
     early, late = view_with(turn=1), view_with(turn=30)
     low = view_with(turn=30, authority=LOW_AUTHORITY)
@@ -429,8 +466,9 @@ def test_heuristic_values_a_base_for_the_turns_it_stays_in_play():
 
 
 def test_heuristic_beats_greedy_in_clearly_more_than_half_of_seeded_games():
-    """40 seeds, alternating seats. Measured: the heuristic wins 32 of 40
-    (448 of 500 over seeds 0-499) with the Milestone 4 "or" choices deck.
+    """40 seeds, alternating seats. Measured: the heuristic wins 36 of 40
+    (451 of 500 over seeds 0-499) with the Milestone 4 next-ship-on-top
+    deck.
     Tuned on seeds from 1000 with the 30-card first slice."""
     wins = 0
     for seed in range(40):

@@ -9,6 +9,8 @@ import pytest
 from minimax_games.games.star_realms import rules, transcript
 from minimax_games.games.star_realms.action import (
     Acquire,
+    AcquireFreeShip,
+    AcquireOnTop,
     Action,
     AttackBase,
     AttackPlayer,
@@ -219,21 +221,24 @@ def test_random_games_neither_create_nor_lose_cards_and_use_every_action():
         ScrapDiscardCard,
         DestroyTarget,
         ScrapTradeRowCard,
+        AcquireOnTop,
+        AcquireFreeShip,
     )
     for kind in kinds:
         assert taken[kind.__name__] > 0, kind
 
 
 class Buyer:
-    """Makes any discard it must, takes the first option of any choice,
-    plays its whole hand, acquires whatever it can, attacks bases then the
-    player, scraps from hand whenever it may or must (it has played its hand
-    by then), ends the turn."""
+    """Makes any discard it must, takes the first option of any choice and
+    the first free ship, plays its whole hand, acquires whatever it can,
+    attacks bases then the player, scraps from hand whenever it may or must
+    (it has played its hand by then), ends the turn."""
 
     def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
         for kind in (
             Discard,
             Choose,
+            AcquireFreeShip,
             PlayCard,
             Acquire,
             AttackBase,
@@ -471,4 +476,25 @@ def test_the_log_shows_or_choices_offered_and_made():
     )
     assert transcript.describe(Recycle((VIPER,)), state) == (
         "Player 1 discards Viper and draws 1 card"
+    )
+
+
+def test_the_log_shows_ships_put_on_top_of_the_deck_given_and_acquired():
+    state = rules.new_game(seed=1)
+    freighter, office = CATALOGUE["Freighter"], CATALOGUE["Central Office"]
+    carrier, cutter = CATALOGUE["Blob Carrier"], CATALOGUE["Cutter"]
+    assert transcript.describe(UseAlly(freighter), state) == (
+        "Player 1 uses Freighter's ally ability for 1 ship acquired on top of the deck"
+    )
+    assert transcript.describe(UseBase(office), state) == (
+        "Player 1 uses Central Office for 2 trade, 1 ship acquired on top of the deck"
+    )
+    assert transcript.describe(UseAlly(carrier), state) == (
+        "Player 1 uses Blob Carrier's ally ability for 1 free ship on top of the deck"
+    )
+    assert transcript.describe(AcquireOnTop(cutter), state) == (
+        "Player 1 acquires Cutter (cost 2) on top of the deck"
+    )
+    assert transcript.describe(AcquireFreeShip(cutter), state) == (
+        "Player 1 acquires Cutter for free on top of the deck"
     )
