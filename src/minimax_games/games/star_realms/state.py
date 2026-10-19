@@ -41,6 +41,27 @@ class PlayerState:
     discard: tuple[Card, ...] = ()
     bases: tuple[Card, ...] = ()
 
+    def replace(
+        self,
+        *,
+        authority: int | None = None,
+        deck: tuple[Card, ...] | None = None,
+        hand: tuple[Card, ...] | None = None,
+        in_play: tuple[Card, ...] | None = None,
+        discard: tuple[Card, ...] | None = None,
+        bases: tuple[Card, ...] | None = None,
+    ) -> "PlayerState":
+        """`dataclasses.replace(self, ...)`, without its introspection of the
+        fields on every call (see `GameState.replace`)."""
+        return PlayerState(
+            self.authority if authority is None else authority,
+            self.deck if deck is None else deck,
+            self.hand if hand is None else hand,
+            self.in_play if in_play is None else in_play,
+            self.discard if discard is None else discard,
+            self.bases if bases is None else bases,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class GameState:
@@ -56,3 +77,38 @@ class GameState:
     combat: int = 0
     allies_used: tuple[Card, ...] = ()
     bases_used: tuple[Card, ...] = ()
+
+    def replace(
+        self,
+        *,
+        players: tuple[PlayerState, PlayerState] | None = None,
+        rng_seed: int | None = None,
+        trade_deck: tuple[Card, ...] | None = None,
+        trade_row: tuple[Card, ...] | None = None,
+        explorers: int | None = None,
+        scrap_heap: tuple[Card, ...] | None = None,
+        current: int | None = None,
+        turn: int | None = None,
+        trade: int | None = None,
+        combat: int | None = None,
+        allies_used: tuple[Card, ...] | None = None,
+        bases_used: tuple[Card, ...] | None = None,
+    ) -> "GameState":
+        """`dataclasses.replace(self, ...)`, without its introspection of the
+        fields on every call: the search builds several states per node, so
+        `rules` builds them with this. Every field is a tuple or an int, so
+        `None` means "unchanged"."""
+        return GameState(
+            self.players if players is None else players,
+            self.rng_seed if rng_seed is None else rng_seed,
+            self.trade_deck if trade_deck is None else trade_deck,
+            self.trade_row if trade_row is None else trade_row,
+            self.explorers if explorers is None else explorers,
+            self.scrap_heap if scrap_heap is None else scrap_heap,
+            self.current if current is None else current,
+            self.turn if turn is None else turn,
+            self.trade if trade is None else trade,
+            self.combat if combat is None else combat,
+            self.allies_used if allies_used is None else allies_used,
+            self.bases_used if bases_used is None else bases_used,
+        )

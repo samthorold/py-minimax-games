@@ -524,3 +524,19 @@ def test_advance_legal_matches_advance_for_every_legal_action():
                     state, action
                 )
             state = rules.advance(state, rng.choice(actions))
+
+
+def test_the_rules_build_states_without_dataclasses_replace(monkeypatch):
+    # It introspects the fields on every call: too slow for the search.
+    def refuse(*args, **kwargs):
+        raise AssertionError("dataclasses.replace called")
+
+    monkeypatch.setattr(dataclasses, "replace", refuse)
+    rng = random.Random(0)
+    for seed in range(5):
+        state = rules.auto_play(rules.new_game(seed))
+        for _ in range(200):
+            actions = rules.legal_actions(state)
+            if not actions:
+                break
+            state = rules.advance(state, rng.choice(actions))

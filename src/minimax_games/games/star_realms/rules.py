@@ -1,6 +1,5 @@
 """The rules: dealing, legal actions and applying them."""
 
-import dataclasses
 import random
 from collections.abc import Callable, Iterator
 from typing import assert_never
@@ -72,7 +71,7 @@ def _draw(player: PlayerState, n: int, seed: int) -> tuple[PlayerState, int]:
             deck, seed = _shuffle(discard, seed)
             discard = ()
         hand, deck = (*hand, deck[0]), deck[1:]
-    return dataclasses.replace(player, deck=deck, hand=hand, discard=discard), seed
+    return player.replace(deck=deck, hand=hand, discard=discard), seed
 
 
 def new_game(seed: int, trade_deck: tuple[Card, ...] = SLICE_1_TRADE_DECK) -> GameState:
@@ -105,27 +104,28 @@ def _without(cards: tuple[Card, ...], card: Card) -> tuple[Card, ...]:
     return cards[:i] + cards[i + 1 :]
 
 
-def _with_player(state: GameState, index: int, player: PlayerState) -> GameState:
-    players = list(state.players)
-    players[index] = player
-    first, second = players
-    return dataclasses.replace(state, players=(first, second))
+def _players(
+    state: GameState, index: int, player: PlayerState
+) -> tuple[PlayerState, PlayerState]:
+    """`state.players` with `player` in place of player `index`."""
+    first, second = state.players
+    return (player, second) if index == 0 else (first, player)
 
 
 def _resolve(state: GameState, effect: Effect) -> GameState:
     match effect:
         case Trade(amount):
-            return dataclasses.replace(state, trade=state.trade + amount)
+            return state.replace(trade=state.trade + amount)
         case Combat(amount):
-            return dataclasses.replace(state, combat=state.combat + amount)
+            return state.replace(combat=state.combat + amount)
         case Authority(amount):
             player = state.players[state.current]
-            player = dataclasses.replace(player, authority=player.authority + amount)
-            return _with_player(state, state.current, player)
+            player = player.replace(authority=player.authority + amount)
+            return state.replace(players=_players(state, state.current, player))
         case Draw(cards):
             player, seed = _draw(state.players[state.current], cards, state.rng_seed)
-            state = _with_player(state, state.current, player)
-            return dataclasses.replace(state, rng_seed=seed)
+            players = _players(state, state.current, player)
+            return state.replace(players=players, rng_seed=seed)
         case (
             AcquireShipFreeOnTop()
             | AllyForAllFactions()
@@ -351,97 +351,101 @@ def apply(state: GameState, action: Action) -> GameState:
 
 def _apply(state: GameState, action: Action) -> GameState:
     """`apply` for an action already known to be legal."""
-    player = state.players[state.current]
+    me = state.current
+    player = state.players[me]
     match action:
         case PlayCard(card):
-            player = dataclasses.replace(player, hand=_without(player.hand, card))
+            hand = _without(player.hand, card)
             if card.type is CardType.SHIP:
-                player = dataclasses.replace(player, in_play=(*player.in_play, card))
-                state = _with_player(state, state.current, player)
+                player = player.replace(hand=hand, in_play=(*player.in_play, card))
+                state = state.replace(players=_players(state, me, player))
             else:
                 # Playing a base uses its primary ability for this turn.
-                player = dataclasses.replace(player, bases=(*player.bases, card))
-                state = _with_player(state, state.current, player)
-                state = dataclasses.replace(state, bases_used=(*state.bases_used, card))
+                player = player.replace(hand=hand, bases=(*player.bases, card))
+                state = state.replace(
+                    players=_players(state, me, player),
+                    bases_used=(*state.bases_used, card),
+                )
             for effect in card.primary:
                 state = _resolve(state, effect)
             return state
         case UseAlly(card):
-            state = dataclasses.replace(state, allies_used=(*state.allies_used, card))
+            state = state.replace(allies_used=(*state.allies_used, card))
             for effect in card.ally:
                 state = _resolve(state, effect)
             return state
         case UseBase(card):
-            state = dataclasses.replace(state, bases_used=(*state.bases_used, card))
+            state = state.replace(bases_used=(*state.bases_used, card))
             for effect in card.primary:
                 state = _resolve(state, effect)
             return state
         case Scrap(card):
             if card.type is CardType.SHIP:
-                player = dataclasses.replace(
-                    player, in_play=_without(player.in_play, card)
-                )
+                player = player.replace(in_play=_without(player.in_play, card))
             else:
-                player = dataclasses.replace(player, bases=_without(player.bases, card))
-            state = _with_player(state, state.current, player)
+                player = player.replace(bases=_without(player.bases, card))
             # Of identical copies, scrap one whose primary (for a base) and
             # ally abilities were used, so an unused one keeps its abilities.
-            if card in state.bases_used:
-                used = _without(state.bases_used, card)
-                state = dataclasses.replace(state, bases_used=used)
-            if card in state.allies_used:
-                used = _without(state.allies_used, card)
-                state = dataclasses.replace(state, allies_used=used)
+            bases_used, allies_used = state.bases_used, state.allies_used
+            if card in bases_used:
+                bases_used = _without(bases_used, card)
+            if card in allies_used:
+                allies_used = _without(allies_used, card)
+            explorers, scrap_heap = state.explorers, state.scrap_heap
             if card == EXPLORER:
-                state = dataclasses.replace(state, explorers=state.explorers + 1)
+                explorers += 1
             else:
-                state = dataclasses.replace(state, scrap_heap=(*state.scrap_heap, card))
+                scrap_heap = (*scrap_heap, card)
+            state = state.replace(
+                players=_players(state, me, player),
+                bases_used=bases_used,
+                allies_used=allies_used,
+                explorers=explorers,
+                scrap_heap=scrap_heap,
+            )
             for effect in card.scrap:
                 state = _resolve(state, effect)
             return state
         case Acquire(card):
+            player = player.replace(discard=(*player.discard, card))
+            players = _players(state, me, player)
+            trade = state.trade - card.cost
             if card == EXPLORER:
-                state = dataclasses.replace(state, explorers=state.explorers - 1)
-            else:
-                i = state.trade_row.index(card)
-                refill = state.trade_deck[:1]
-                state = dataclasses.replace(
-                    state,
-                    trade_row=state.trade_row[:i] + refill + state.trade_row[i + 1 :],
-                    trade_deck=state.trade_deck[1:],
+                return state.replace(
+                    players=players, explorers=state.explorers - 1, trade=trade
                 )
-            player = dataclasses.replace(player, discard=(*player.discard, card))
-            state = _with_player(state, state.current, player)
-            return dataclasses.replace(state, trade=state.trade - card.cost)
+            i = state.trade_row.index(card)
+            refill = state.trade_deck[:1]
+            return state.replace(
+                players=players,
+                trade_row=state.trade_row[:i] + refill + state.trade_row[i + 1 :],
+                trade_deck=state.trade_deck[1:],
+                trade=trade,
+            )
         case AttackPlayer():
-            opponent = state.players[1 - state.current]
-            opponent = dataclasses.replace(
-                opponent, authority=opponent.authority - state.combat
-            )
-            return dataclasses.replace(
-                _with_player(state, 1 - state.current, opponent), combat=0
-            )
+            opponent = state.players[1 - me]
+            opponent = opponent.replace(authority=opponent.authority - state.combat)
+            return state.replace(players=_players(state, 1 - me, opponent), combat=0)
         case AttackBase(card):
-            opponent = state.players[1 - state.current]
-            opponent = dataclasses.replace(
-                opponent,
+            opponent = state.players[1 - me]
+            opponent = opponent.replace(
                 bases=_without(opponent.bases, card),
                 discard=(*opponent.discard, card),
             )
-            state = _with_player(state, 1 - state.current, opponent)
-            return dataclasses.replace(state, combat=state.combat - (card.defense or 0))
+            return state.replace(
+                players=_players(state, 1 - me, opponent),
+                combat=state.combat - (card.defense or 0),
+            )
         case EndTurn():
-            player = dataclasses.replace(
-                player,
+            player = player.replace(
                 hand=(),
                 in_play=(),
                 discard=player.discard + player.in_play + player.hand,
             )
             player, seed = _draw(player, HAND_SIZE, state.rng_seed)
-            state = _with_player(state, state.current, player)
-            return dataclasses.replace(
-                state,
-                current=1 - state.current,
+            return state.replace(
+                players=_players(state, me, player),
+                current=1 - me,
                 turn=state.turn + 1,
                 trade=0,
                 combat=0,
