@@ -46,6 +46,16 @@ class BenchmarkBot(Protocol):
         ...
 
 
+@runtime_checkable
+class Budgeted(Protocol):
+    """A search bot: one that states its search settings (horizon, budget and
+    so on), which the tournament command prints."""
+
+    def settings(self) -> str:
+        """The bot's search settings, as a phrase."""
+        ...
+
+
 type AnyBot = Bot | BenchmarkBot
 """A bot the match runner accepts: a `Bot`, or a `BenchmarkBot`."""
 

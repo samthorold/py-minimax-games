@@ -3,12 +3,14 @@
 `python -m minimax_games.games.star_realms --seed 7 --log` prints the game's
 transcript; without `--log` it prints only who won. `--bots greedy random`
 picks the bots, first player first (both random by default): `random`,
-`greedy` or `heuristic`. `cheat` is a benchmark, not a legitimate player: it
-searches the true state.
+`greedy`, `heuristic` or `sampler` (search over worlds sampled from its
+view). `cheat` is a benchmark, not a legitimate player: it searches the true
+state.
 
 `python -m minimax_games.games.star_realms tournament --bots greedy random
 --games 500` plays seeded games with alternating seats (`--base-seed`,
-`--max-turns`) and prints the cheat's horizon and node budget if it plays,
+`--max-turns`) and prints each search bot's settings (the cheat's horizon
+and node budget, the sampler's worlds too) if it plays,
 win rates overall and by seat, unfinished games and each bot's mean time per
 move. `--jobs N` spreads the games over N processes, with the same results.
 Game `seed` replays on its own with `--seed` and its bots in seat order,
@@ -37,12 +39,14 @@ from pathlib import Path
 from minimax_games.games.star_realms import bench, cheat, profiling
 from minimax_games.games.star_realms.bots import (
     AnyBot,
+    Budgeted,
     GreedyBot,
     HeuristicBot,
     RandomBot,
 )
 from minimax_games.games.star_realms.cheat import CheatBot
 from minimax_games.games.star_realms.match import play_match
+from minimax_games.games.star_realms.sampler import SamplerBot
 from minimax_games.games.star_realms.tournament import (
     MAX_TURNS,
     Tournament,
@@ -62,13 +66,19 @@ def _cheat(seed: int) -> CheatBot:
     return CheatBot()
 
 
+def _sampler(seed: int) -> SamplerBot:
+    return SamplerBot(seed)
+
+
 BOTS: dict[str, Callable[[int], AnyBot]] = {
     "random": RandomBot,
     "greedy": _greedy,
     "heuristic": _heuristic,
     "cheat": _cheat,
+    "sampler": _sampler,
 }
-"""Each bot by name, built from a seed (which only `random` uses). Module
+"""Each bot by name, built from a seed (which only `random` and `sampler`
+use). Module
 functions, not lambdas, so `tournament --jobs` can send them to workers."""
 
 BENCHMARK_ONLY = {"cheat"}
@@ -155,11 +165,8 @@ def tournament(argv: list[str]) -> None:
     )
     for name in dict.fromkeys(args.bots):
         bot = BOTS[name](args.base_seed)
-        if isinstance(bot, CheatBot):
-            print(
-                f"{name}: {bot.turns}-turn horizon,"
-                f" budget {bot.budget} nodes per decision"
-            )
+        if isinstance(bot, Budgeted):
+            print(f"{name}: {bot.settings()}")
     for line in report(played, (a, b) if a != b else (f"{a}-A", f"{b}-B")):
         print(line)
 

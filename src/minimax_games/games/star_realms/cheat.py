@@ -172,6 +172,9 @@ class CheatBot:
         self.turns = turns
         self.budget = budget
 
+    def settings(self) -> str:
+        return f"{self.turns}-turn horizon, budget {self.budget} nodes per decision"
+
     def choose_from_state(
         self, state: GameState, actions: tuple[Action, ...]
     ) -> Action:
