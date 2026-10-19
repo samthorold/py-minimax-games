@@ -10,6 +10,8 @@ from minimax_games.games.star_realms.action import (
     EndTurn,
     PlayCard,
     Scrap,
+    ScrapDiscardCard,
+    ScrapHandCard,
     UseAlly,
     UseBase,
 )
@@ -74,10 +76,23 @@ def test_greedy_discards_its_cheapest_card_ties_by_name_whatever_the_order():
         assert greedy(*actions) == Discard(SCOUT)
 
 
+def test_greedy_makes_an_owed_scrap_from_hand_of_its_cheapest_card():
+    view = dataclasses.replace(VIEW, must_scrap=1)
+    scraps = (ScrapHandCard(CUTTER), ScrapHandCard(VIPER), ScrapHandCard(SCOUT))
+    for actions in (scraps, scraps[::-1]):
+        assert GreedyBot().choose(view, actions) == ScrapHandCard(SCOUT)
+
+
+def test_greedy_never_scraps_when_it_may():
+    view = dataclasses.replace(VIEW, may_scrap=1)
+    actions = (ScrapHandCard(VIPER), ScrapDiscardCard(SCOUT), EndTurn())
+    assert GreedyBot().choose(view, actions) == EndTurn()
+
+
 def test_greedy_beats_random_in_the_large_majority_of_seeded_games():
     """30 seeds, alternating seats. Measured: greedy wins all 30 (500 of
-    500 over seeds 0-499, with the Milestone 4 opponent-discards deck), in
-    about 22 turns on average."""
+    500 over seeds 0-499, with the Milestone 4 scrap-from-hand-or-discard
+    deck), in about 23 turns on average."""
     wins = 0
     for seed in range(30):
         seat = seed % 2
@@ -216,6 +231,32 @@ def test_heuristic_scraps_explorers_for_combat_once_it_has_bought():
     assert heuristic(*bought, view=view) == Scrap(EXPLORER)
 
 
+def test_heuristic_makes_an_owed_scrap_from_hand_of_the_card_it_least_wants():
+    scraps = (ScrapHandCard(SCOUT), ScrapHandCard(VIPER), ScrapHandCard(CUTTER))
+    for turn, least in ((1, VIPER), (30, SCOUT)):
+        view = dataclasses.replace(view_with(turn=turn), must_scrap=1)
+        for actions in (scraps, scraps[::-1]):
+            assert heuristic(*actions, view=view) == ScrapHandCard(least)
+
+
+def test_heuristic_scraps_vipers_and_scouts_it_may_before_anything_else():
+    """From the discard pile first, where the card does nothing this turn;
+    the one it least wants to play first: a Viper early, a Scout late."""
+    rest = (PlayCard(SCOUT), Acquire(CUTTER), AttackPlayer(), EndTurn())
+    both = (ScrapDiscardCard(SCOUT), ScrapDiscardCard(VIPER), ScrapDiscardCard(CUTTER))
+    for turn, least in ((1, VIPER), (30, SCOUT)):
+        view = dataclasses.replace(view_with(turn=turn), may_scrap=1)
+        for scraps in (both, both[::-1]):
+            actions = (ScrapHandCard(VIPER), *scraps, *rest)
+            assert heuristic(*actions, view=view) == ScrapDiscardCard(least)
+    view = dataclasses.replace(view_with(), may_scrap=1)
+    in_hand = (ScrapHandCard(CUTTER), ScrapHandCard(SCOUT), ScrapDiscardCard(CUTTER))
+    assert heuristic(*in_hand, *rest, view=view) == ScrapHandCard(SCOUT)
+    # Other cards are kept.
+    others = (ScrapHandCard(CUTTER), ScrapDiscardCard(EXPLORER))
+    assert heuristic(*others, *rest, view=view) == PlayCard(SCOUT)
+
+
 ESCORT = CATALOGUE["Trade Escort"]  # ship, cost 5, 4 combat
 
 
@@ -228,9 +269,10 @@ def test_heuristic_values_a_base_for_the_turns_it_stays_in_play():
 
 
 def test_heuristic_beats_greedy_in_clearly_more_than_half_of_seeded_games():
-    """40 seeds, alternating seats. Measured: the heuristic wins 32 of 40
-    (405 of 500 over seeds 0-499) with the Milestone 4 opponent-discards
-    deck. Tuned on seeds from 1000 with the 30-card first slice."""
+    """40 seeds, alternating seats. Measured: the heuristic wins 31 of 40
+    (428 of 500 over seeds 0-499) with the Milestone 4
+    scrap-from-hand-or-discard deck. Tuned on seeds from 1000 with the
+    30-card first slice."""
     wins = 0
     for seed in range(40):
         seat = seed % 2

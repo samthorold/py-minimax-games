@@ -1,4 +1,5 @@
 import dataclasses
+import random
 import re
 from collections import Counter
 from collections.abc import Iterator
@@ -15,6 +16,8 @@ from minimax_games.games.star_realms.action import (
     EndTurn,
     PlayCard,
     Scrap,
+    ScrapDiscardCard,
+    ScrapHandCard,
     UseAlly,
     UseBase,
 )
@@ -29,7 +32,7 @@ from minimax_games.games.star_realms.effect import Authority, Draw
 from minimax_games.games.star_realms.match import MatchTooLong, play_match
 from minimax_games.games.star_realms.sampler import SamplerBot
 from minimax_games.games.star_realms.state import GameState
-from minimax_games.games.star_realms.view import View, observe
+from minimax_games.games.star_realms.view import View, observe, sample_world
 
 SEEDS = range(50)
 
@@ -208,6 +211,8 @@ def test_random_games_neither_create_nor_lose_cards_and_use_every_action():
         AttackPlayer,
         PlayCard,
         Discard,
+        ScrapHandCard,
+        ScrapDiscardCard,
     )
     for kind in kinds:
         assert taken[kind.__name__] > 0, kind
@@ -215,10 +220,18 @@ def test_random_games_neither_create_nor_lose_cards_and_use_every_action():
 
 class Buyer:
     """Makes any discard it must, plays its whole hand, acquires whatever it
-    can, attacks bases then the player, ends the turn."""
+    can, attacks bases then the player, scraps from hand whenever it may or
+    must (it has played its hand by then), ends the turn."""
 
     def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
-        for kind in (Discard, PlayCard, Acquire, AttackBase, AttackPlayer):
+        for kind in (
+            Discard,
+            PlayCard,
+            Acquire,
+            AttackBase,
+            AttackPlayer,
+            ScrapHandCard,
+        ):
             for action in actions:
                 if isinstance(action, kind):
                     return action
@@ -292,6 +305,23 @@ def test_the_log_shows_opponent_discards_given_and_made():
     ) == ("Player 2 discards Viper")
 
 
+def test_the_log_shows_scraps_from_hand_or_discard_pile_given_and_made():
+    state = rules.new_game(seed=1)
+    junkyard, machine = CATALOGUE["Junkyard"], CATALOGUE["Machine Base"]
+    assert transcript.describe(UseBase(junkyard), state) == (
+        "Player 1 uses Junkyard for 1 scrap from hand or discard pile"
+    )
+    assert transcript.describe(UseBase(machine), state) == (
+        "Player 1 uses Machine Base for 1 card, 1 scrap from hand"
+    )
+    assert transcript.describe(ScrapHandCard(VIPER), state) == (
+        "Player 1 scraps Viper from hand"
+    )
+    assert transcript.describe(
+        ScrapDiscardCard(EXPLORER), dataclasses.replace(state, current=1)
+    ) == ("Player 2 scraps Explorer from the discard pile")
+
+
 class OnlyViews:
     """Wraps a bot: checks every observation it is given is its own view."""
 
@@ -309,13 +339,17 @@ class OnlyViews:
 
 
 class NoAutomatic:
-    """Wraps a bot: checks it is never offered an automatic action."""
+    """Wraps a bot: checks it is never offered an automatic action. Whether an
+    action is automatic depends only on what the mover sees, so a world
+    sampled from their view decides it as the true state would."""
 
     def __init__(self, bot: Bot) -> None:
         self.bot = bot
+        self.rng = random.Random(0)
 
     def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
-        assert not any(rules.automatic(a) for a in actions), actions
+        world = sample_world(view, self.rng)
+        assert not any(rules.automatic(world, a) for a in actions), actions
         return self.bot.choose(view, actions)
 
 

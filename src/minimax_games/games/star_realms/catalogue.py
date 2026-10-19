@@ -181,7 +181,15 @@ TRADE_DECK: tuple[Card, ...] = tuple(
 """The 80 faction cards, each repeated `copies` times, in catalogue order."""
 
 IMPLEMENTED: frozenset[type[Effect]] = frozenset(
-    {Trade, Combat, Authority, Draw, OpponentDiscards}
+    {
+        Trade,
+        Combat,
+        Authority,
+        Draw,
+        OpponentDiscards,
+        ScrapHandOrDiscard,
+        ScrapFromHand,
+    }
 )
 """The kinds of effect the rules implement. Each card slice adds its own
 (docs/star-realms.md): the playable Trade Deck and which abilities `rules`

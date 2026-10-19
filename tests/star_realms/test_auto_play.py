@@ -12,6 +12,7 @@ from minimax_games.games.star_realms.action import (
     Action,
     EndTurn,
     PlayCard,
+    ScrapHandCard,
     UseAlly,
 )
 from minimax_games.games.star_realms.card import Card
@@ -35,7 +36,7 @@ def test_auto_play_plays_pure_gain_ships_and_leaves_no_automatic_action():
     ]
     assert after.trade == 2
     assert after.combat == 1
-    assert not any(rules.automatic(a) for a in rules.legal_actions(after))
+    assert not any(rules.automatic(after, a) for a in rules.legal_actions(after))
     assert PlayCard(SCOUT) not in rules.legal_actions(after)
 
 
@@ -56,7 +57,7 @@ def test_pure_gain_ally_abilities_are_used_automatically_but_draws_are_not():
         "Trade Pod",
     ]
     assert rules.legal_actions(after)[0] == UseAlly(BLOB_FIGHTER)
-    assert not any(rules.automatic(a) for a in rules.legal_actions(after))
+    assert not any(rules.automatic(after, a) for a in rules.legal_actions(after))
 
 
 def test_a_ship_that_draws_is_left_to_the_player():
@@ -64,7 +65,7 @@ def test_a_ship_that_draws_is_left_to_the_player():
     after = rules.auto_play(state)
     assert after.players[0].hand == (CORVETTE,)
     assert PlayCard(CORVETTE) in rules.legal_actions(after)
-    assert not rules.automatic(PlayCard(CORVETTE))
+    assert not rules.automatic(after, PlayCard(CORVETTE))
 
 
 IMPERIAL_FIGHTER = CATALOGUE["Imperial Fighter"]  # 2 combat, opponent discards 1
@@ -99,7 +100,43 @@ def test_bases_in_play_are_used_automatically_but_playing_a_base_is_a_decision()
     assert after.allies_used == (WAR_WORLD, WAR_WORLD)
     assert after.combat == 3 + 3 + 4 + 4
     assert after.players[0].hand == (BLOB_WHEEL,)
-    assert not rules.automatic(PlayCard(BLOB_WHEEL))
+    assert not rules.automatic(after, PlayCard(BLOB_WHEEL))
+
+
+TRADE_BOT = CATALOGUE["Trade Bot"]  # Machine Cult: 1 trade, may scrap hand/discard
+BATTLE_MECH = CATALOGUE["Battle Mech"]  # 4 combat, may scrap; ally: draw
+JUNKYARD = CATALOGUE["Junkyard"]  # outpost: may scrap from hand or discard pile
+MACHINE_BASE = CATALOGUE["Machine Base"]  # outpost: draw, then scrap from hand
+
+
+def test_scrap_abilities_are_granted_automatically_but_the_scraps_are_decisions():
+    state = with_hand(rules.new_game(seed=1), BATTLE_MECH, CORVETTE)
+    after = rules.auto_play(state)
+    assert after.players[0].hand == (CORVETTE,)
+    assert after.may_scrap == 1
+    assert after.combat == 4
+    state = with_bases(with_hand(rules.new_game(seed=1), CORVETTE), JUNKYARD)
+    after = rules.auto_play(state)
+    assert after.bases_used == (JUNKYARD,)
+    assert after.may_scrap == 1
+    assert not any(rules.automatic(after, a) for a in rules.legal_actions(after))
+
+
+def test_ships_wait_in_hand_while_something_could_scrap_them_from_hand():
+    state = with_bases(with_hand(rules.new_game(seed=1), SCOUT, VIPER), JUNKYARD)
+    after = rules.auto_play(state)
+    assert after.may_scrap == 1
+    assert after.players[0].hand == (SCOUT, VIPER)
+    after = rules.advance(after, ScrapHandCard(VIPER))
+    assert after.players[0].hand == ()
+    assert after.trade == 1
+    # So do they while another card in hand, played, could scrap them.
+    for scrapper in (TRADE_BOT, MACHINE_BASE):
+        state = with_hand(rules.new_game(seed=1), SCOUT, scrapper)
+        assert SCOUT in rules.auto_play(state).players[0].hand
+    # A card that scraps from hand doesn't keep itself waiting.
+    state = with_hand(rules.new_game(seed=1), TRADE_BOT)
+    assert rules.auto_play(state).players[0].hand == ()
 
 
 # Outcome preservation: on small hand-built states, brute-force every way to
@@ -208,9 +245,12 @@ def small(
     discard: tuple[Card, ...] = (),
     bases: tuple[Card, ...] = (),
     trade_row: tuple[Card, ...] = (CUTTER,),
+    in_play: tuple[Card, ...] = (),
 ) -> GameState:
     state = rules.new_game(seed=1)
-    first = PlayerState(50, deck=deck, hand=hand, discard=discard, bases=bases)
+    first = PlayerState(
+        50, deck=deck, hand=hand, discard=discard, bases=bases, in_play=in_play
+    )
     second = dataclasses.replace(state.players[1], bases=(BLOB_WHEEL,))
     return dataclasses.replace(
         state,
@@ -234,6 +274,22 @@ SMALL_STATES = {
         deck=(VIPER,),
         bases=(ROYAL_REDOUBT,),
     ),
+    # Scrapping from hand or discard pile: a ship's optional scrap, of a ship
+    # in hand or a card in the discard pile, around a buy and a draw, beside
+    # allies in play giving Authority.
+    "scraps": small(
+        hand=(TRADE_BOT, SCOUT, CORVETTE),
+        deck=(VIPER,),
+        discard=(VIPER,),
+        in_play=(SHUTTLE, CUTTER),
+    ),
+    # Machine Base's draw then forced scrap from hand, beside the allies.
+    "machine base": small(
+        hand=(SCOUT, VIPER),
+        deck=(VIPER, SCOUT),
+        bases=(MACHINE_BASE,),
+        in_play=(SHUTTLE, CUTTER),
+    ),
 }
 
 
@@ -252,8 +308,21 @@ def test_the_outcome_check_catches_automating_a_draw(monkeypatch: pytest.MonkeyP
     manual = outcomes(state, rules.apply)
     automatic = rules.automatic
     monkeypatch.setattr(
-        rules, "automatic", lambda a: a == PlayCard(CORVETTE) or automatic(a)
+        rules,
+        "automatic",
+        lambda s, a: a == PlayCard(CORVETTE) or automatic(s, a),
     )
+    auto = outcomes(rules.auto_play(state), automated)
+    assert not dominated(manual, auto)
+
+
+@pytest.mark.parametrize("name", ["scraps", "machine base"])
+def test_the_outcome_check_catches_playing_ships_that_could_be_scrapped_from_hand(
+    name: str, monkeypatch: pytest.MonkeyPatch
+):
+    state = SMALL_STATES[name]
+    manual = outcomes(state, rules.apply)
+    monkeypatch.setattr(rules, "_hand_scrap_ahead", lambda state, card: False)
     auto = outcomes(rules.auto_play(state), automated)
     assert not dominated(manual, auto)
 
@@ -266,7 +335,7 @@ def test_the_outcome_check_catches_automating_a_draw(monkeypatch: pytest.MonkeyP
 def old_auto_play(state: GameState) -> list[Action]:
     taken = []
     while action := next(
-        (a for a in rules.legal_actions(state) if rules.automatic(a)), None
+        (a for a in rules.legal_actions(state) if rules.automatic(state, a)), None
     ):
         taken.append(action)
         state = rules.apply(state, action)
