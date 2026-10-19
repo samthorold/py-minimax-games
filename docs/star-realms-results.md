@@ -501,3 +501,75 @@ Six processes gain little over three on this machine (four performance cores). T
 **Sampler worlds: K = 4** (`sampler.WORLDS`, was 5). At 5,000 nodes it was the sampler's best (50.0% against 46.0% for K=1 and 47.0% for K=8, all within noise), the cheapest of the multi-world settings, and with 1,250 nodes per world 92% of its worlds' searches finish at least 1 turn in games (89% at K=8). Fewer worlds sample hidden information less; more worlds leave each world too few nodes: at 5,000 nodes, K=8 and 16 finish not even 1 turn at most turn starts. K=4 is the measured compromise.
 
 **Re-tune when the search changes.** If the evaluation or move ordering improves (so depth starts paying), rerun this grid: the tables above say how much time each step of budget or K costs.
+
+## Milestone 3: the ladder (sampler against heuristic, greedy and cheat)
+
+- Date: 2026-10-19
+- Commit: `969d417` (#92), no code changes.
+- Budgets: the defaults, a **2-turn horizon** and a shared total of **5,000 nodes per decision** (`cheat.BUDGET`) for both search bots, the sampler splitting it over **K = 4 worlds** (`sampler.WORLDS`, 1,250 nodes each). The K sweep keeps the 5,000-node total and changes only K. Greedy and heuristic don't search.
+- Machine: Apple M1 MacBook, 8 GB (4 performance and 4 efficiency cores), macOS (Darwin 25.2), CPython 3.14.0.
+
+500 games per pairing, seeds 0-499, alternating seats, max 300 turns, `--jobs 3`. Each pairing ran as five runs of 100 consecutive seeds (0-99, ..., 400-499), one after another in the foreground with nothing else running, combined with `tournament.combine` (each run equals `tournament ... --games 100 --base-seed <first seed> --jobs 3`; results are per seed, so the split doesn't change wins, seats or turns, and the seeds 0-99 run of sampler vs heuristic reproduced #88's 50/100 exactly). Wall times are the five runs' sum. ms/move is contended by the three processes, as in the Milestone 3 budget tournaments: the sampler measured 101 ms/decision alone in real games (Milestone 3, Decisions in real games) and 125-158 ms here. No game in any pairing was unfinished.
+
+Intervals are 95% **Wilson** score intervals on the win rate of the finished games. With 500 games a win rate has an interval of about ±4.4 points, and one seat's 250 games about ±6.2.
+
+### sampler vs heuristic
+
+`python -m minimax_games.games.star_realms tournament --bots sampler heuristic --games 500 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| sampler | 263/500 | 52.6% | 145/250 | 118/250 | 137 |
+| heuristic | 237/500 | 47.4% | 132/250 | 105/250 | 0.0070 |
+
+500 games, 0 unfinished, mean 25.5 turns, 32,492 sampler decisions (65 per game), 1.2 hours of sampler thinking time, 25.6 minutes of wall time. The first player won 277/500 (55.4%). The sampler's win rate: 52.6%, 95% interval **48.2-56.9%**.
+
+### sampler vs greedy
+
+`python -m minimax_games.games.star_realms tournament --bots sampler greedy --games 500 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| sampler | 407/500 | 81.4% | 213/250 | 194/250 | 143 |
+| greedy | 93/500 | 18.6% | 56/250 | 37/250 | 0.0038 |
+
+500 games, 0 unfinished, mean 27.9 turns, 37,688 sampler decisions (75 per game), 1.5 hours of sampler thinking time, 31.2 minutes of wall time. The first player won 269/500 (53.8%). The sampler's win rate: 81.4%, 95% interval 77.8-84.6%.
+
+### sampler vs cheat
+
+`python -m minimax_games.games.star_realms tournament --bots sampler cheat --games 500 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| sampler | 224/500 | 44.8% | 123/250 | 101/250 | 125 |
+| cheat | 276/500 | 55.2% | 149/250 | 127/250 | 86.5 |
+
+500 games, 0 unfinished, mean 23.2 turns, 28,039 sampler decisions (56 per game) and 27,602 cheat decisions (55 per game), 0.97 and 0.66 hours of thinking time, 33.8 minutes of wall time. The first player won 272/500 (54.4%). The sampler's win rate: 44.8%, 95% interval **40.5-49.2%**.
+
+### K sweep against the heuristic
+
+The same 5,000-node total, split over K worlds: `python -m minimax_games.games.star_realms tournament --bots sampler heuristic --games 500 --jobs 3 --worlds K`. K = 4 is the main ladder's pairing above. All three ran the full 500 games (no departure).
+
+| K | Nodes per world | Wins | Win% | 95% interval | As 1st | As 2nd | ms/move | Mean turns | Wall time |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 5,000 | 237/500 | 47.4% | 43.1-51.8% | 131/250 | 106/250 | 108 | 25.2 | 20.2 min |
+| **4** | 1,250 | 263/500 | 52.6% | 48.2-56.9% | 145/250 | 118/250 | 137 | 25.5 | 25.6 min |
+| 8 | 625 | 250/500 | 50.0% | 45.6-54.4% | 136/250 | 114/250 | 158 | 25.4 | 29.6 min |
+
+No game was unfinished; the first player won 275/500 (K=1) and 272/500 (K=8). Raw outputs (not committed): `sampler-heuristic-500.txt`, `sampler-greedy-500.txt`, `sampler-cheat-500.txt`, `sampler-k1-heuristic-500.txt`, `sampler-k8-heuristic-500.txt`, and the per-run `*-<first seed>.txt`.
+
+### Reading the ladder
+
+**cheat ≈ sampler ≈ heuristic > greedy, and the cheat beats the sampler head to head.**
+
+- **The sampler is a legitimate bot, but it does not clearly beat the heuristic.** 52.6% (263/500), interval 48.2-56.9%, includes 50% (two-sided p ≈ 0.24, normal approximation): not significant at 5%. It is where the cheat was against the heuristic in Milestone 2 (268/500, 53.6%, interval 49.2-57.9%, also not significant), so seeing only its view costs the sampler nothing measurable against the heuristic.
+- **Against greedy** the sampler wins 81.4%, level with the cheat (82.2%) and a little under the heuristic (85.4%): all three intervals overlap.
+- **Head to head the cheat is better**: the sampler wins 44.8%, interval 40.5-49.2%, which excludes 50% (p ≈ 0.02). Hidden information costs the sampler about 5 points against its upper bound at equal compute, and it loses in both seats (49.2% first, 40.4% second). These games are the shortest of the ladder (23.2 turns), the two searchers attacking each other harder than the baselines do.
+- **K barely matters at 5,000 nodes.** K = 1 (the cheat's search on one sampled world) wins 47.4%, K = 4 52.6% and K = 8 50.0%; every interval overlaps the others and includes 50%. K = 4's 5.2-point lead over K = 1 is suggestive (z ≈ 1.6 for two independent 500-game rates) but not significant. Each world costs time: 108, 137 and 158 ms per decision at K = 1, 4, 8. K = 4 stays the default.
+
+**What holds the search back is the evaluation, not the search or the sampling.** The cheat, which sees everything, beats the heuristic by only 53.6%; doubling or quadrupling its budget did not help (Milestone 3, Tournaments against the heuristic); and the sampler reaches the same result from views alone. A search that looks 2 turns ahead with `evaluate` plays about as well as the heuristic's hand-written buying policy and no better, so a stronger bot needs a better `evaluate` before it needs more nodes, more worlds or a different search.
+
+**What milestones 4 and 5 should compare against.**
+
+- **Milestone 4 (card slices)**: the regression check for each slice is this ladder at these settings and seeds: sampler vs heuristic (52.6%), sampler vs greedy (81.4%), heuristic vs greedy (85.4%, Milestone 2). The new cards change the game, so the numbers will move; a slice regresses if a search bot falls clearly below the heuristic, not if it fails to beat it.
+- **Milestone 5 (ISMCTS, rollout `evaluate`)**: the bar for a legitimate bot stays the **heuristic**, and the result to beat is the **sampler** at K = 4, 5,000 nodes (both at equal budgets, as the design says). Try the rollout-based `evaluate` (and tuned `Weights`) in the **cheat** first, against the heuristic: the cheat is the upper bound, so an evaluation that doesn't lift the cheat clearly above 53.6% won't lift the sampler or ISMCTS either. If it does, rerun the sampler and the K sweep with it, since deeper and better-informed searches may finally make depth and more worlds pay.
