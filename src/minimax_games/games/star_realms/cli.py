@@ -13,6 +13,8 @@ state.
 and node budget, the sampler's worlds too) if it plays,
 win rates overall and by seat, unfinished games and each bot's mean time per
 move. `--jobs N` spreads the games over N processes, with the same results.
+`--budget N` sets the search bots' nodes per decision and `--worlds K` the
+sampler's worlds (both default to the bots' own defaults).
 Game `seed` replays on its own with `--seed` and its bots in seat order,
 first player first: bot A moves first in games `base_seed`,
 `base_seed + 2`, ...
@@ -23,6 +25,9 @@ decision at each horizon, each search stopped past `--max-nodes`. `--states`
 also counts distinct states, to measure transpositions. `--budget N` times
 the cheat's budgeted decisions instead (`cheat.decide`, deepening up to the
 largest horizon within N nodes): how deep each got, its nodes and time.
+With `--worlds K` too, it times the sampler's decisions (`sampler.vote`, K
+worlds from the mover's view sharing the N nodes): how deep each world's
+search got, the nodes and time.
 
 `python -m minimax_games.games.star_realms profile` profiles the cheat's
 budgeted decisions (see `profiling`) at the same positions and in the first
@@ -34,6 +39,7 @@ budgeted decisions (see `profiling`) at the same positions and in the first
 import argparse
 import sys
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 
 from minimax_games.games.star_realms import bench, cheat, profiling
@@ -46,7 +52,7 @@ from minimax_games.games.star_realms.bots import (
 )
 from minimax_games.games.star_realms.cheat import CheatBot
 from minimax_games.games.star_realms.match import play_match
-from minimax_games.games.star_realms.sampler import SamplerBot
+from minimax_games.games.star_realms.sampler import WORLDS, SamplerBot
 from minimax_games.games.star_realms.tournament import (
     MAX_TURNS,
     Tournament,
@@ -62,12 +68,12 @@ def _heuristic(seed: int) -> HeuristicBot:
     return HeuristicBot()
 
 
-def _cheat(seed: int) -> CheatBot:
-    return CheatBot()
+def _cheat(seed: int, budget: int = cheat.BUDGET) -> CheatBot:
+    return CheatBot(budget=budget)
 
 
-def _sampler(seed: int) -> SamplerBot:
-    return SamplerBot(seed)
+def _sampler(seed: int, budget: int = cheat.BUDGET, worlds: int = WORLDS) -> SamplerBot:
+    return SamplerBot(seed, worlds=worlds, budget=budget)
 
 
 BOTS: dict[str, Callable[[int], AnyBot]] = {
@@ -80,6 +86,25 @@ BOTS: dict[str, Callable[[int], AnyBot]] = {
 """Each bot by name, built from a seed (which only `random` and `sampler`
 use). Module
 functions, not lambdas, so `tournament --jobs` can send them to workers."""
+
+
+def configured(
+    name: str, budget: int | None = None, worlds: int | None = None
+) -> Callable[[int], AnyBot]:
+    """`BOTS[name]`, with `budget` nodes per decision if it is a search bot
+    and `worlds` worlds if it is the sampler (each left at its default if
+    None). A `partial` of a module function, so `--jobs` can still send it
+    to workers."""
+    if name == "cheat" and budget is not None:
+        return partial(_cheat, budget=budget)
+    if name == "sampler" and (budget is not None or worlds is not None):
+        return partial(
+            _sampler,
+            budget=cheat.BUDGET if budget is None else budget,
+            worlds=WORLDS if worlds is None else worlds,
+        )
+    return BOTS[name]
+
 
 BENCHMARK_ONLY = {"cheat"}
 """Bots that see the true state: benchmarks, not legitimate players."""
@@ -152,19 +177,38 @@ def tournament(argv: list[str]) -> None:
         default=1,
         help="play the games in this many processes (same results)",
     )
+    parser.add_argument(
+        "--budget",
+        type=int,
+        help="the search bots' nodes per decision, shared by the sampler's"
+        f" worlds (default: {cheat.BUDGET})",
+    )
+    parser.add_argument(
+        "--worlds",
+        type=int,
+        help=f"the sampler's worlds per decision (default: {WORLDS})",
+    )
     args = parser.parse_args(argv)
 
     a, b = args.bots
+    factories = {
+        name: configured(name, args.budget, args.worlds)
+        for name in dict.fromkeys(args.bots)
+    }
     played = play_tournament(
-        (BOTS[a], BOTS[b]), args.games, args.base_seed, args.max_turns, args.jobs
+        (factories[a], factories[b]),
+        args.games,
+        args.base_seed,
+        args.max_turns,
+        args.jobs,
     )
     last = args.base_seed + args.games - 1
     print(
         f"{a} vs {b}: {args.games} games, seeds {args.base_seed}-{last},"
         f" max {args.max_turns} turns"
     )
-    for name in dict.fromkeys(args.bots):
-        bot = BOTS[name](args.base_seed)
+    for name, factory in factories.items():
+        bot = factory(args.base_seed)
         if isinstance(bot, Budgeted):
             print(f"{name}: {bot.settings()}")
     for line in report(played, (a, b) if a != b else (f"{a}-A", f"{b}-B")):
@@ -215,8 +259,29 @@ def benchmark(argv: list[str]) -> None:
         help="also count distinct states, in each search and in each"
         " position's whole first turn (slows the search: time without)",
     )
+    parser.add_argument(
+        "--worlds",
+        type=int,
+        help="with --budget, time the sampler's decisions instead, sampling"
+        " WORLDS worlds from the mover's view and sharing the budget",
+    )
     args = parser.parse_args(argv)
 
+    if args.worlds is not None and args.budget is None:
+        parser.error("--worlds needs --budget")
+    if args.worlds is not None:
+        turns = max(args.horizons)
+        print(
+            f"Sampler decision benchmark: {args.worlds} worlds,"
+            f" horizon {turns} turns, budget {args.budget} nodes per decision"
+            f" ({args.budget // args.worlds} per world)"
+        )
+        voted = bench.sampler_decisions(
+            tuple(args.positions), args.worlds, turns, args.budget
+        )
+        for line in bench.vote_report(voted, turns):
+            print(line)
+        return
     if args.budget is not None:
         turns = max(args.horizons)
         print(

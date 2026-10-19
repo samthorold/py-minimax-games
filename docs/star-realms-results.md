@@ -421,3 +421,83 @@ In `task profile` (shares of the profiled search, which falls from 4.53 s to 3.0
 - **Applying actions falls from 2.15 s (47.4%) to 0.70 s (22.6%)**, 56.7 to 18.4 us per node. The `dataclasses.replace` row (1.81 s, 40.0%) is gone; building states with the new methods takes 0.39 s (12.6%), of which the generated frozen `__init__`'s self time is 0.19 s (6.2%).
 - The frozen `__init__` sets each field with `object.__setattr__`: in a micro-benchmark, constructing a 12-field frozen, slotted dataclass takes about 0.67 us against 0.13 us for a plain slotted class assigning its fields. Any frozen class pays that, and the states are already `slots=True`, so there is no cheap, readable win left there without giving up immutability; not pursued.
 - **The automatic-play scan (`rules._next_automatic`) is now the biggest hotspot**, 0.79 s (25.6%), unchanged in time. Then applying actions (22.6%) and `evaluate` (0.63 s, 20.6%, of which `builtins.sum` 0.16 s self time); hashing and equality is 11.4%, move generation 10.2%.
+
+## Milestone 3: budget
+
+- Date: 2026-10-19
+- Commit: `709074d` plus #88 (`bench --budget N --worlds K`, `tournament --budget N --worlds K`, `sampler.Vote.depths`).
+- Machine: Apple M1 MacBook, 8 GB (4 performance and 4 efficiency cores), macOS (Darwin 25.2), CPython 3.14.0.
+- Horizon: 2 turns throughout, deepening 1 then 2 (`cheat.decide`). The sampler's K worlds share the total budget (`budget // K` nodes each).
+
+The optimisation pass (Milestones 2f-2h) made the search 2.6-2.9x faster, so the 5,000-node default, chosen in Milestone 2c when a cheat game took 11 s, was re-measured: how deep the cheat and the sampler search at 5k, 10k, 20k and 40k nodes per decision, how long that takes, and whether it wins more. The single-process timings ran in the foreground, one at a time; the tournaments ran with `--jobs 3`, so their ms/move is inflated by contention.
+
+### Budgeted decisions at the benchmark positions
+
+`bench --budget N` (cheat) and `bench --budget N --worlds K` (sampler, from the mover's view, worlds seeded with the position's seed) at the eight benchmark positions, turn starts, the hardest decisions of a turn. Each cell: ms per decision, then how many searches finished 2 turns and at least 1 turn (the cheat's 8 decisions; the sampler's 8 × K worlds). Raw outputs: `bench-cheat-<N>.txt`, `bench-sampler-<N>-<K>.txt`.
+
+| Budget | cheat | sampler K=1 | K=4 | K=8 | K=16 |
+|---|---|---|---|---|---|
+| **5,000** | 111 ms, 1/8, 6/8 | 101 ms, 2/8, 6/8 | 118 ms, 4/32, 12/32 | 126 ms, 8/64, 19/64 | 135 ms, 11/128, 32/128 |
+| 10,000 | 228 ms, 1/8, 7/8 | 188 ms, 3/8, 6/8 | 222 ms, 5/32, 22/32 | 239 ms, 8/64, 23/64 | 254 ms, 16/128, 35/128 |
+| 20,000 | 388 ms, 3/8, 7/8 | 336 ms, 4/8, 7/8 | 437 ms, 6/32, 22/32 | 450 ms, 9/64, 44/64 | 478 ms, 16/128, 50/128 |
+| 40,000 | 632 ms, 6/8, 7/8 | 552 ms, 5/8, 7/8 | 833 ms, 8/32, 24/32 | 869 ms, 11/64, 46/64 | 909 ms, 17/128, 87/128 |
+
+About 40,000 nodes/s everywhere (36-40k with many worlds: each world pays for its own root and 1-turn search). The sampler with K=1 is the cheat on one sampled world. At turn starts, splitting the budget starves each world: at 5,000 nodes with K=8, 45 of 64 worlds finish not even the 1-turn search, and with 4 or more worlds at most a quarter of them finish 2 turns at any budget measured.
+
+### Decisions in real games
+
+Every decision of seeded games against the heuristic, the search bot moving first in even seeds (a probe around `cheat.decide` and `sampler.vote`, single process; `games-*.txt`). Most decisions come later in a turn, with fewer options, so they finish far deeper than the turn starts above. Depth: the share of searches (the sampler's: of its worlds' searches) that finished 2 turns, then at least 1.
+
+| Bot | Budget | K | Games (seeds) | Decisions | ms/decision | 2 turns | ≥1 turn |
+|---|---|---|---|---|---|---|---|
+| cheat | **5,000** | - | 4 (0-3) | 254 | 70 | 63% | 99% |
+| cheat | 10,000 | - | 4 (0-3) | 252 | 129 | 67% | 100% |
+| cheat | 20,000 | - | 4 (0-3) | 258 | 217 | 72% | 99% |
+| cheat | 40,000 | - | 4 (0-3) | 259 | 351 | 79% | 100% |
+| sampler | **5,000** | **4** | 2 (0-1) | 121 | 101 | 40% | 92% |
+| sampler | 5,000 | 8 | 2 (0-1) | 119 | 107 | 37% | 89% |
+| sampler | 10,000 | 4 | 2 (0-1) | 123 | 177 | 50% | 95% |
+| sampler | 10,000 | 8 | 2 (0-1) | 118 | 190 | 46% | 92% |
+| sampler | 20,000 | 1 | 2 (0-1) | 116 | 213 | 75% | 97% |
+| sampler | 20,000 | 4 | 2 (0-1) | 118 | 303 | 59% | 96% |
+| sampler | 20,000 | 8 | 2 (0-1) | 115 | 350 | 52% | 95% |
+| sampler | 20,000 | 16 | 2 (0-1) | 121 | 409 | 40% | 91% |
+| sampler | 40,000 | 4 | 2 (0-1) | 123 | 512 | 67% | 97% |
+| sampler | 40,000 | 8 | 2 (0-1) | 114 | 635 | 59% | 97% |
+
+Doubling the budget roughly doubles the time but adds only 4-7 points of 2-turn finishes for the cheat (63% at 5,000 to 79% at 40,000, 8x the time). For the sampler, each doubling of K costs about as much depth as halving the budget.
+
+### Tournaments against the heuristic
+
+100 games, seeds 0-99, alternating seats, `tournament --bots <bot> heuristic --games 100 --jobs 3 --budget N [--worlds K]` (20,000 and the sampler's 10,000 as two runs of 50, seeds 0-49 and 50-99). No game was unfinished. A 100-game win rate has a 95% interval of about ±10 points.
+
+| Bot | Budget | K | Win% | As 1st | As 2nd | ms/move (contended) | Wall time |
+|---|---|---|---|---|---|---|---|
+| cheat | **5,000** | - | 54.0% | 33/50 | 21/50 | 98 | 218 s |
+| cheat | 10,000 | - | 55.0% | 33/50 | 22/50 | 170 | 357 s |
+| cheat | 20,000 | - | 50.0% | 32/50 | 18/50 | 277 | 610 s |
+| sampler | 5,000 | 1 | 46.0% | 24/50 | 22/50 | 103 | 227 s |
+| sampler | **5,000** | **4** | 50.0% | 25/50 | 25/50 | 132 | 292 s |
+| sampler | 5,000 | 8 | 47.0% | 21/50 | 26/50 | 148 | 331 s |
+| sampler | 10,000 | 4 | 45.0% | 20/50 | 25/50 | 227 | 569 s |
+
+**No budget or K beats the heuristic measurably better than another.** Every result is within 46-55%, inside each other's intervals, and more budget does not trend upward: the cheat wins 54%, 55% and 50% at 5k, 10k and 20k (the 500-game ladder's 53.6% at 5k agrees). Budget is not what holds the search bots back against the heuristic now; the evaluation is (Milestone 2, Reading the ladder). 40,000 nodes and 20,000 for the sampler were not run as tournaments: they would take 20-40 minutes each, and nothing from 5k to 20k suggests a gain.
+
+### A search-bot tournament at the default
+
+`tournament --bots sampler cheat --games 30 --budget 5000 --worlds 4`, seeds 0-29 (`t-sampler-cheat-5000-4*.txt`): the cheat won 19/30, 22.7 turns per game on average.
+
+| Jobs | sampler ms/move | cheat ms/move | Wall time | Per game | 500 games |
+|---|---|---|---|---|---|
+| 3 | 109 | 76 | 108.0 s | 3.6 s | **about 30 minutes** |
+| 6 | 137 | 94 | 96.5 s | 3.2 s | about 27 minutes |
+
+Six processes gain little over three on this machine (four performance cores). Time scales with the budget, so 10,000 nodes would take about an hour for 500 games and 20,000 nearly two. **The design's 10-minute target is about 3x away even at 5,000 nodes**; reaching it would mean about 1,500-2,000 nodes, where (Milestone 2c) most turn-start decisions finish not even 1 turn.
+
+### Choosing the defaults
+
+**Total budget: 5,000 nodes, shared** (`cheat.BUDGET`, which `SamplerBot` defaults to). It is the cheapest budget measured, and more did not win more: 10k and 20k cost 2x and 4x the time for a few more 2-turn finishes and no measurable gain against the heuristic. Keeping it lets the milestone-3 ladder (#89) run a 500-game search-bot pairing in about 30 minutes with `--jobs 3`, and a search bot against a baseline in about 18 minutes (cheat vs heuristic: 218 s per 100 games). Going below 5,000 to approach 10 minutes would give up depth that is already thin at turn starts, so it is not proposed until move ordering or a better evaluation makes the search cheaper or more valuable.
+
+**Sampler worlds: K = 4** (`sampler.WORLDS`, was 5). At 5,000 nodes it was the sampler's best (50.0% against 46.0% for K=1 and 47.0% for K=8, all within noise), the cheapest of the multi-world settings, and with 1,250 nodes per world 92% of its worlds' searches finish at least 1 turn in games (89% at K=8). Fewer worlds sample hidden information less; more worlds leave each world too few nodes: at 5,000 nodes, K=8 and 16 finish not even 1 turn at most turn starts. K=4 is the measured compromise.
+
+**Re-tune when the search changes.** If the evaluation or move ordering improves (so depth starts paying), rerun this grid: the tables above say how much time each step of budget or K costs.

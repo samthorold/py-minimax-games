@@ -96,6 +96,17 @@ def test_a_decision_never_passes_its_budget_and_is_deterministic(budget):
         assert sum(votes[0].votes.values()) == 3
 
 
+def test_a_vote_reports_the_depth_each_worlds_search_finished():
+    state = position(*POSITIONS[0])
+    view, actions = observe(state, state.current), rules.legal_actions(state)
+    found = vote(view, actions, random.Random(0), worlds=3, turns=2, budget=900)
+    rng = random.Random(0)
+    worlds = [sample_world(view, rng) for _ in range(3)]
+    assert found.depths == tuple(decide(world, 2, 300).depth for world in worlds)
+    starved = vote(view, actions, random.Random(0), worlds=3, turns=2, budget=3)
+    assert starved.depths == (0, 0, 0)
+
+
 def test_it_needs_a_world_a_turn_and_a_node_per_world():
     with pytest.raises(ValueError, match="at least 1 world"):
         SamplerBot(0, worlds=0)
@@ -108,3 +119,8 @@ def test_it_needs_a_world_a_turn_and_a_node_per_world():
 def test_the_defaults_match_the_cheats_horizon_and_budget():
     bot, cheat_bot = SamplerBot(0), CheatBot()
     assert (bot.turns, bot.budget) == (cheat_bot.turns, cheat_bot.budget)
+
+
+def test_by_default_four_worlds_share_the_budget():
+    # The default chosen in docs/star-realms-results.md, Milestone 3.
+    assert SamplerBot(0).worlds == 4

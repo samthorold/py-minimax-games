@@ -19,8 +19,9 @@ from minimax_games.games.star_realms.view import View, sample_world
 
 logger = logging.getLogger(__name__)
 
-WORLDS = 5
-"""The sampler's default number of worlds per decision."""
+WORLDS = 4
+"""The sampler's default number of worlds per decision
+(docs/star-realms-results.md, Milestone 3)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +34,9 @@ class Vote:
     """How many worlds chose each move."""
     nodes: int
     """Nodes generated over every world: at most the budget."""
+    depths: tuple[int, ...]
+    """Each world's `cheat.Decision.depth`, in the order sampled: the
+    deepest search, in turns, that finished within its share."""
 
 
 def vote(
@@ -53,13 +57,15 @@ def vote(
     per_world = budget // worlds
     votes: Counter[Action] = Counter()
     nodes = 0
+    depths = []
     for _ in range(worlds):
         decision = cheat.decide(sample_world(view, rng), turns, per_world)
         assert decision.move in actions, (decision.move, actions)
         votes[decision.move] += 1
         nodes += decision.nodes
+        depths.append(decision.depth)
     move = max(actions, key=lambda action: votes[action])
-    return Vote(move, votes, nodes)
+    return Vote(move, votes, nodes, tuple(depths))
 
 
 class SamplerBot:

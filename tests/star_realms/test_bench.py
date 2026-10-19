@@ -1,13 +1,18 @@
+import random
+
 from minimax_games.games.star_realms import rules
 from minimax_games.games.star_realms.bench import (
     POSITIONS,
     decision,
     position,
+    sampler_decision,
     search,
     turn_tree,
 )
 from minimax_games.games.star_realms.cheat import CheatBot, decide
 from minimax_games.games.star_realms.cli import main
+from minimax_games.games.star_realms.sampler import vote
+from minimax_games.games.star_realms.view import observe
 
 
 def test_a_position_is_the_start_of_a_seeded_greedy_game_turn():
@@ -113,3 +118,41 @@ def test_the_bench_command_with_a_budget_times_the_cheats_decisions(capsys):
     assert rows[0][3] == "124"
     assert int(rows[1][3]) <= 1000
     assert "Depth finished: 2 turns 1/2, 1 turn 1/2, none 0/2" in lines
+
+
+def test_a_sampler_decision_votes_from_the_movers_view_seeded_by_the_game():
+    state = position(seed=2, turn=7)
+    timed = sampler_decision(state, seed=2, worlds=3, turns=2, budget=900)
+    view, actions = observe(state, state.current), rules.legal_actions(state)
+    assert timed.vote == vote(view, actions, random.Random(2), 3, 2, 900)
+    assert timed.seconds > 0
+
+
+def test_the_bench_command_with_worlds_times_the_samplers_decisions(capsys):
+    argv = ["bench", "--positions", "0:1", "2:7", "--horizons", "2"]
+    main([*argv, "--budget", "900", "--worlds", "3"])
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == (
+        "Sampler decision benchmark: 3 worlds, horizon 2 turns,"
+        " budget 900 nodes per decision (300 per world)"
+    )
+    header = lines[lines.index("") + 1].split()
+    assert header == ["Seed", "Turn", "Depths", "Nodes", "nodes/s", "ms"]
+    start = lines.index("") + 2
+    rows = [line.split() for line in lines[start : start + 2]]
+    expected = [
+        sampler_decision(position(seed, turn), seed, 3, 2, 900).vote
+        for seed, turn in ((0, 1), (2, 7))
+    ]
+    assert [row[:2] for row in rows] == [["0", "1"], ["2", "7"]]
+    assert [row[2] for row in rows] == [
+        ",".join(map(str, found.depths)) for found in expected
+    ]
+    assert [int(row[3]) for row in rows] == [found.nodes for found in expected]
+    depths = [d for found in expected for d in found.depths]
+    assert (
+        "Worlds' depth finished:"
+        f" 2 turns {depths.count(2)}/6, 1 turn {depths.count(1)}/6,"
+        f" none {depths.count(0)}/6"
+    ) in lines
+    assert any(line.endswith("ms per decision") for line in lines)

@@ -147,8 +147,10 @@ def _search_root(root: StarRealmsNode, turns: int) -> tuple[Action | None, bool]
 
 
 BUDGET = 5_000
-"""The cheat's default node budget per decision (see `decide`): a 2-turn game
-takes about 11 s (docs/star-realms-results.md, Milestone 2c)."""
+"""The default node budget per decision (see `decide`), shared by the cheat
+and the sampler: about 70 ms per cheat decision in a game, and a 500-game
+search-bot tournament in about half an hour with `--jobs 3`
+(docs/star-realms-results.md, Milestone 3)."""
 
 
 class CheatBot:

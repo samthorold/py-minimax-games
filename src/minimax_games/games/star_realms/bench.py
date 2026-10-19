@@ -9,12 +9,13 @@ finishes, and reports the nodes per second it measured up to then.
 positions instead: how deep each got within the budget, and how long it took.
 """
 
+import random
 import time
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Self
 
-from minimax_games.games.star_realms import cheat, rules
+from minimax_games.games.star_realms import cheat, rules, sampler
 from minimax_games.games.star_realms.action import Action, EndTurn
 from minimax_games.games.star_realms.bots import GreedyBot
 from minimax_games.games.star_realms.node import StarRealmsNode
@@ -253,6 +254,16 @@ def report(entries: list[Entry]) -> list[str]:
     ]
 
 
+def _finished(depths: Sequence[int], turns: int) -> str:
+    """How many of `depths` are each depth from `turns` down to 0 (none)."""
+    return ", ".join(
+        f"{depth} turn{'s' if depth > 1 else ''} {depths.count(depth)}/{len(depths)}"
+        if depth
+        else f"none {depths.count(0)}/{len(depths)}"
+        for depth in range(turns, -1, -1)
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class TimedDecision:
     """One budgeted decision: its result is reproducible, its time measured."""
@@ -299,13 +310,7 @@ def decision_report(
                 f"{1000 * found.seconds:.1f}",
             )
         )
-    depths = [found.decision.depth for _, _, found in timed]
-    finished = ", ".join(
-        f"{depth} turn{'s' if depth > 1 else ''} {depths.count(depth)}/{len(timed)}"
-        if depth
-        else f"none {depths.count(0)}/{len(timed)}"
-        for depth in range(turns, -1, -1)
-    )
+    finished = _finished([found.decision.depth for _, _, found in timed], turns)
     nodes = sum(found.decision.nodes for _, _, found in timed)
     seconds = sum(found.seconds for _, _, found in timed)
     rate = nodes / seconds if seconds else 0.0
@@ -316,6 +321,74 @@ def decision_report(
         *table(rows),
         "",
         f"Depth finished: {finished}",
+        f"{nodes} nodes in {seconds:.1f}s ({rate:.0f} nodes/s),"
+        f" {ms:.1f} ms per decision",
+    ]
+
+
+@dataclass(frozen=True, slots=True)
+class TimedVote:
+    """One sampler decision: its result is reproducible, its time measured."""
+
+    vote: sampler.Vote
+    seconds: float
+
+
+def sampler_decision(
+    state: GameState, seed: int, worlds: int, turns: int, budget: int
+) -> TimedVote:
+    """Time the sampler's decision in `state`, from the mover's view, its
+    worlds drawn from an rng seeded with `seed`: `worlds` worlds, `turns`
+    deep, `budget` nodes in all."""
+    view, actions = observe(state, state.current), rules.legal_actions(state)
+    start = time.perf_counter()
+    voted = sampler.vote(view, actions, random.Random(seed), worlds, turns, budget)
+    return TimedVote(voted, time.perf_counter() - start)
+
+
+def sampler_decisions(
+    positions: tuple[tuple[int, int], ...], worlds: int, turns: int, budget: int
+) -> list[tuple[int, int, TimedVote]]:
+    """Time the sampler's decision at each (seed, turn) position, in order,
+    its worlds drawn from an rng seeded with the position's seed."""
+    return [
+        (
+            seed,
+            turn,
+            sampler_decision(position(seed, turn), seed, worlds, turns, budget),
+        )
+        for seed, turn in positions
+    ]
+
+
+def vote_report(timed: list[tuple[int, int, TimedVote]], turns: int) -> list[str]:
+    """The sampler benchmark as plain-text lines: a row per decision (each
+    world's finished depth, in the order sampled), then how often each depth
+    finished over every world and the totals."""
+    rows = [("Seed", "Turn", "Depths", "Nodes", "nodes/s", "ms")]
+    for seed, turn, found in timed:
+        rate = found.vote.nodes / found.seconds if found.seconds else 0.0
+        rows.append(
+            (
+                str(seed),
+                str(turn),
+                ",".join(map(str, found.vote.depths)),
+                str(found.vote.nodes),
+                f"{rate:.0f}",
+                f"{1000 * found.seconds:.1f}",
+            )
+        )
+    depths = [depth for _, _, found in timed for depth in found.vote.depths]
+    nodes = sum(found.vote.nodes for _, _, found in timed)
+    seconds = sum(found.seconds for _, _, found in timed)
+    rate = nodes / seconds if seconds else 0.0
+    ms = 1000 * seconds / len(timed) if timed else 0.0
+    return [
+        "Rows: one decision each; Depths are each world's deepest finished search.",
+        "",
+        *table(rows),
+        "",
+        f"Worlds' depth finished: {_finished(depths, turns)}",
         f"{nodes} nodes in {seconds:.1f}s ({rate:.0f} nodes/s),"
         f" {ms:.1f} ms per decision",
     ]
