@@ -11,6 +11,7 @@ from minimax_games.games.star_realms.action import (
     Action,
     AttackBase,
     AttackPlayer,
+    Discard,
     EndTurn,
     PlayCard,
     Scrap,
@@ -61,8 +62,9 @@ def result(state: GameState, winner: int) -> str:
     return f"{_player(winner)} wins on turn {state.turn}. {_authorities(state)}"
 
 
-def _gain(effect: Effect) -> str:
-    """What `effect` gives, e.g. "3 trade" or "1 card"."""
+def _gain(effect: Effect, state: GameState) -> str:
+    """What `effect` gives the current player of `state`, e.g. "3 trade",
+    "1 card" or "1 discard by Player 2"."""
     match effect:
         case Trade(amount):
             return f"{amount} trade"
@@ -72,6 +74,9 @@ def _gain(effect: Effect) -> str:
             return f"{amount} Authority"
         case Draw(cards):
             return f"{cards} card{'s' if cards != 1 else ''}"
+        case OpponentDiscards(cards):
+            plural = "s" if cards != 1 else ""
+            return f"{cards} discard{plural} by {_player(1 - state.current)}"
         case (
             AcquireShipFreeOnTop()
             | AllyForAllFactions()
@@ -82,7 +87,6 @@ def _gain(effect: Effect) -> str:
             | DrawIfBases()
             | DrawPerFactionCard()
             | NextShipOnTop()
-            | OpponentDiscards()
             | ScrapFromHand()
             | ScrapHandOrDiscard()
             | ScrapThenDraw()
@@ -102,13 +106,13 @@ def describe(action: Action, state: GameState) -> str:
         case PlayCard(card):
             return f"{player} plays {card.name}"
         case UseAlly(card):
-            gains = ", ".join(_gain(effect) for effect in card.ally)
+            gains = ", ".join(_gain(effect, state) for effect in card.ally)
             return f"{player} uses {card.name}'s ally ability for {gains}"
         case UseBase(card):
-            gains = ", ".join(_gain(effect) for effect in card.primary)
+            gains = ", ".join(_gain(effect, state) for effect in card.primary)
             return f"{player} uses {card.name} for {gains}"
         case Scrap(card):
-            gains = ", ".join(_gain(effect) for effect in card.scrap)
+            gains = ", ".join(_gain(effect, state) for effect in card.scrap)
             return f"{player} scraps {card.name} for {gains}"
         case Acquire(card):
             return f"{player} acquires {card.name} (cost {card.cost})"
@@ -123,6 +127,8 @@ def describe(action: Action, state: GameState) -> str:
         case AttackBase(card):
             opponent = _player(1 - state.current)
             return f"{player} destroys {opponent}'s {card.name} ({card.defense} combat)"
+        case Discard(card):
+            return f"{player} discards {card.name}"
         case EndTurn():
             return f"{player} ends the turn"
         case _:

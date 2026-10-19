@@ -3,6 +3,7 @@ import random
 from collections import Counter
 
 from minimax_games.games.star_realms import rules
+from minimax_games.games.star_realms.action import EndTurn, PlayCard
 from minimax_games.games.star_realms.bots import RandomBot
 from minimax_games.games.star_realms.catalogue import CATALOGUE, EXPLORER
 from minimax_games.games.star_realms.state import GameState, PlayerState
@@ -101,6 +102,7 @@ def public_changes(state: GameState, observer: int) -> list[GameState]:
                 ("in_play", (*player.in_play, card)),
                 ("discard", (*player.discard, card)),
                 ("bases", (*player.bases, card)),
+                ("to_discard", player.to_discard + 1),
             )
         ]
     # the opponent's hand size, with the same cards unseen
@@ -131,6 +133,32 @@ def test_a_sampled_world_looks_the_same_to_the_observer():
             for observer in (0, 1):
                 view = observe(state, observer)
                 assert observe(sample_world(view, rng), observer) == view
+
+
+def test_a_sampled_world_keeps_pending_discards_and_so_the_legal_actions():
+    fighter = CATALOGUE["Imperial Fighter"]
+    rng = random.Random(5)
+    for seed in range(10):
+        state = midgame(seed)
+        if rules.winner(state) is not None:
+            continue
+        # The player to move made the opponent discard, then ended the turn.
+        me = state.players[state.current]
+        state = with_player(
+            state, state.current, dataclasses.replace(me, hand=(fighter,))
+        )
+        state = rules.apply(rules.apply(state, PlayCard(fighter)), EndTurn())
+        pending = state.players[state.current].to_discard
+        assert pending >= 1
+        for observer in (0, 1):
+            view = observe(state, observer)
+            world = sample_world(view, rng)
+            assert observe(world, observer) == view
+            assert world.players[state.current].to_discard == pending
+            if observer == state.current:
+                assert set(rules.legal_actions(world)) == set(
+                    rules.legal_actions(state)
+                )
 
 
 def test_the_same_rng_state_samples_the_same_world():

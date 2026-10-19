@@ -39,7 +39,7 @@ class PlayerView:
     `hand` holds the cards the observer can see in this player's hand: all of
     them for the observer, none for the opponent. `unseen` holds the rest of
     the hand and the whole deck, as a multiset. `hand_size` and `deck_size`
-    are public.
+    are public, as are the discards the player has pending (`to_discard`).
     """
 
     authority: int
@@ -50,6 +50,7 @@ class PlayerView:
     in_play: tuple[Card, ...]
     discard: tuple[Card, ...]
     bases: tuple[Card, ...]
+    to_discard: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +87,7 @@ def _player_view(player: PlayerState, *, hand_seen: bool) -> PlayerView:
         in_play=player.in_play,
         discard=player.discard,
         bases=player.bases,
+        to_discard=player.to_discard,
     )
 
 
@@ -125,6 +127,7 @@ def _sample_player(player: PlayerView, rng: random.Random) -> PlayerState:
         in_play=player.in_play,
         discard=player.discard,
         bases=player.bases,
+        to_discard=player.to_discard,
     )
 
 

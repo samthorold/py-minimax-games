@@ -573,3 +573,56 @@ No game was unfinished; the first player won 275/500 (K=1) and 272/500 (K=8). Ra
 
 - **Milestone 4 (card slices)**: the regression check for each slice is this ladder at these settings and seeds: sampler vs heuristic (52.6%), sampler vs greedy (81.4%), heuristic vs greedy (85.4%, Milestone 2). The new cards change the game, so the numbers will move; a slice regresses if a search bot falls clearly below the heuristic, not if it fails to beat it.
 - **Milestone 5 (ISMCTS, rollout `evaluate`)**: the bar for a legitimate bot stays the **heuristic**, and the result to beat is the **sampler** at K = 4, 5,000 nodes (both at equal budgets, as the design says). Try the rollout-based `evaluate` (and tuned `Weights`) in the **cheat** first, against the heuristic: the cheat is the upper bound, so an evaluation that doesn't lift the cheat clearly above 53.6% won't lift the sampler or ISMCTS either. If it does, rerun the sampler and the K sweep with it, since deeper and better-informed searches may finally make depth and more worlds pay.
+
+## Milestone 4: opponent discards
+
+- Date: 2026-10-19
+- Commit: the `issue-95-discard` branch (#95).
+- **The deck changed.** The playable Trade Deck is now every card whose effects the rules all implement (`catalogue.PLAYABLE_TRADE_DECK`): the 30-card first slice plus the opponent-discard cards, **40 cards**: 3 Imperial Fighter, 3 Imperial Frigate, 3 Survey Ship and 1 Royal Redoubt (Battlecruiser waits for destroy-base). Every earlier result in this file was measured on the 30-card first slice, so they don't compare one to one with these.
+- Budgets: the cheat at its defaults, a **2-turn horizon** and **5,000 nodes per decision**. Greedy and heuristic don't search.
+- Machine: Apple M1 MacBook, 8 GB (4 performance and 4 efficiency cores), macOS (Darwin 25.2), CPython 3.14.0.
+
+The regression check for a card slice: 500 games each of heuristic vs greedy and greedy vs random, and 100 games of cheat vs greedy, seeds from 0, alternating seats, max 300 turns, `--jobs 3`, each run alone in the foreground. Pass bar: no crashes, no unfinished games, and the ladder order holds. Intervals are 95% Wilson score intervals.
+
+### heuristic vs greedy
+
+`python -m minimax_games.games.star_realms tournament --bots heuristic greedy --games 500 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| heuristic | 405/500 | 81.0% | 216/250 | 189/250 | 0.0054 |
+| greedy | 95/500 | 19.0% | 61/250 | 34/250 | 0.0029 |
+
+500 games, 0 unfinished, mean 23.1 turns, 0.9 s wall time. The first player won 277/500 (55.4%). The heuristic's win rate: 81.0%, interval 77.3-84.2% (Milestone 2, first slice: 85.4%, 82.0-88.2%).
+
+### greedy vs random
+
+`python -m minimax_games.games.star_realms tournament --bots greedy random --games 500 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| greedy | 500/500 | 100.0% | 250/250 | 250/250 | 0.0033 |
+| random | 0/500 | 0.0% | 0/250 | 0/250 | 0.0004 |
+
+500 games, 0 unfinished, mean 21.8 turns, 0.7 s wall time.
+
+### cheat vs greedy
+
+`python -m minimax_games.games.star_realms tournament --bots cheat greedy --games 100 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| cheat | 80/100 | 80.0% | 38/50 | 42/50 | 86.4 |
+| greedy | 20/100 | 20.0% | 8/50 | 12/50 | 0.0041 |
+
+100 games, 0 unfinished, mean 25.5 turns, 190 s wall time. The cheat's win rate: 80.0%, interval 71.1-86.7% (Milestone 2, first slice, 500 games: 82.2%).
+
+### Search speed
+
+The new rules add one check per `legal_actions` and automatic-play scan (is a discard pending?) and a field to `PlayerState`. On the 30-card deck (`new_game`'s default patched back to it), `bench` searches the identical trees as before the change (the same node counts at every position) at the same speed within noise: 32,400-32,700 nodes/s at horizon 1 and 36,500-36,800 at horizon 2 before, 32,600-34,500 and 33,600-37,100 after, over two or three runs each. With the 40-card deck the default `bench` positions are different games (horizon 1: 8,470 nodes, 35,700 nodes/s; horizon 2: 171,501 nodes, 30,600 nodes/s, all 8 searches finished).
+
+### Verdict
+
+**Passes.** No crashes, no unfinished games, and the ladder order holds: heuristic beats greedy (81.0%), greedy beats random (100%), cheat beats greedy (80.0%). The heuristic's lead over greedy is 4.4 points lower than on the first slice, with overlapping intervals; its weights were tuned on the 30-card deck, and its buying policy doesn't value making the opponent discard beyond a card's cost. Random bots no longer stall: seed 13, which stalled on the first slice, finishes, as do seeds 0-299.
+
+Raw outputs (not committed): `heuristic-greedy-500.txt`, `greedy-random-500.txt`, `cheat-greedy-100.txt`, `bench-*.txt`.

@@ -67,6 +67,21 @@ def test_a_ship_that_draws_is_left_to_the_player():
     assert not rules.automatic(PlayCard(CORVETTE))
 
 
+IMPERIAL_FIGHTER = CATALOGUE["Imperial Fighter"]  # 2 combat, opponent discards 1
+ROYAL_REDOUBT = CATALOGUE["Royal Redoubt"]  # Star Empire outpost; ally: discards 1
+
+
+def test_making_the_opponent_discard_is_a_gain_played_automatically():
+    state = with_hand(rules.new_game(seed=1), IMPERIAL_FIGHTER, CORVETTE)
+    state = with_bases(state, ROYAL_REDOUBT)
+    after = rules.auto_play(state)
+    assert after.players[0].hand == (CORVETTE,)
+    assert set(after.allies_used) == {IMPERIAL_FIGHTER, ROYAL_REDOUBT}
+    assert after.players[1].to_discard == 2
+    # The Fighter's 2 and its ally ability's 2, and the Redoubt's 3.
+    assert after.combat == 2 + 2 + 3
+
+
 WAR_WORLD = CATALOGUE["War World"]  # Star Empire outpost: 3 combat; ally 4 combat
 BLOB_WHEEL = CATALOGUE["Blob Wheel"]  # Blob base: 1 combat
 
@@ -91,30 +106,30 @@ def test_bases_in_play_are_used_automatically_but_playing_a_base_is_a_decision()
 # play the turn with and without automatic play, and compare the outcomes.
 
 type Step = Callable[[GameState, Action], GameState]
-type Outcome = tuple[tuple[object, ...], int, int]
+type Outcome = tuple[tuple[object, ...], int, int, int]
 
 
 def outcome(state: GameState) -> Outcome:
     """What a turn leaves behind, as the turn is about to end, and both
-    players' Authority (the player's, then the opponent's), kept apart for
-    `dominated`. Left out: the trade and combat (lost at the end of the turn),
-    the abilities used, and the order of the hand, ships in play and discard
-    pile, which all go to the discard pile and are shuffled before they are
-    drawn from."""
+    players' Authority (the player's, then the opponent's) and the discards
+    the opponent has pending, kept apart for `dominated`. Left out: the trade
+    and combat (lost at the end of the turn), the abilities used, and the
+    order of the hand, ships in play and discard pile, which all go to the
+    discard pile and are shuffled before they are drawn from."""
     me = state.players[state.current]
     opponent = state.players[1 - state.current]
     rest = (
         me.deck,
         names(me.hand + me.in_play + me.discard),
         names(me.bases),
-        dataclasses.replace(opponent, authority=0),
+        dataclasses.replace(opponent, authority=0, to_discard=0),
         state.trade_row,
         state.trade_deck,
         state.explorers,
         names(state.scrap_heap),
         state.rng_seed,
     )
-    return rest, me.authority, opponent.authority
+    return rest, me.authority, opponent.authority, opponent.to_discard
 
 
 def names(cards: tuple[Card, ...]) -> tuple[str, ...]:
@@ -164,13 +179,17 @@ def outcomes(state: GameState, step: Step) -> set[Outcome]:
 def dominated(manual: set[Outcome], auto: set[Outcome]) -> bool:
     """Whether automatic play reaches only outcomes manual play reaches, and,
     for every manual outcome, one that is the same but leaves the player at
-    least as much Authority and the opponent at most as much."""
+    least as much Authority, the opponent at most as much and at least as
+    many discards to make."""
     return auto <= manual and all(
         any(
-            rest == other and mine >= my_authority and theirs <= their_authority
-            for other, mine, theirs in auto
+            rest == other
+            and mine >= my_authority
+            and theirs <= their_authority
+            and discards >= their_discards
+            for other, mine, theirs, discards in auto
         )
-        for rest, my_authority, their_authority in manual
+        for rest, my_authority, their_authority, their_discards in manual
     )
 
 
@@ -180,6 +199,7 @@ def automated(state: GameState, action: Action) -> GameState:
 
 RAM = CATALOGUE["Ram"]  # Blob; ally 2 combat; scrap 3 trade
 SPACE_STATION = CATALOGUE["Space Station"]  # Star Empire; scrap 4 trade
+SURVEY_SHIP = CATALOGUE["Survey Ship"]  # Star Empire; draw; scrap: discards 1
 
 
 def small(
@@ -208,6 +228,12 @@ SMALL_STATES = {
     "allies": small(hand=(RAM, TRADE_POD, BLOB_FIGHTER), deck=(SCOUT,)),
     # A base, with a reshuffling draw, an ally and scrapping the base.
     "bases": small(hand=(CORVETTE,), discard=(SCOUT,), bases=(SPACE_STATION,)),
+    # Opponent discards: a ship's, a base's ally ability and a scrap ability's.
+    "discards": small(
+        hand=(IMPERIAL_FIGHTER, SURVEY_SHIP, SCOUT),
+        deck=(VIPER,),
+        bases=(ROYAL_REDOUBT,),
+    ),
 }
 
 

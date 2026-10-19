@@ -180,11 +180,31 @@ TRADE_DECK: tuple[Card, ...] = tuple(
 )
 """The 80 faction cards, each repeated `copies` times, in catalogue order."""
 
-SLICE_1_TRADE_DECK: tuple[Card, ...] = tuple(
-    card for card in TRADE_DECK if card.in_slice_1
+IMPLEMENTED: frozenset[type[Effect]] = frozenset(
+    {Trade, Combat, Authority, Draw, OpponentDiscards}
 )
-"""The Trade Deck games use for now: every copy of the first-slice cards,
-ships, bases and outposts."""
+"""The kinds of effect the rules implement. Each card slice adds its own
+(docs/star-realms.md): the playable Trade Deck and which abilities `rules`
+offers both follow from this one set."""
+
+
+def playable(card: Card, implemented: frozenset[type[Effect]] = IMPLEMENTED) -> bool:
+    """Whether every effect of `card`, primary, ally or scrap, is of a kind in
+    `implemented`."""
+    return all(type(e) in implemented for e in card.primary + card.ally + card.scrap)
+
+
+def playable_deck(
+    implemented: frozenset[type[Effect]] = IMPLEMENTED,
+) -> tuple[Card, ...]:
+    """Every copy of the Trade Deck cards whose effects are all of a kind in
+    `implemented` (ships, bases and outposts), in catalogue order."""
+    return tuple(card for card in TRADE_DECK if playable(card, implemented))
+
+
+PLAYABLE_TRADE_DECK: tuple[Card, ...] = playable_deck()
+"""The Trade Deck games use: every copy of the cards whose effects the rules
+all implement."""
 
 EXPLORER_PILE = 10
 """How many Explorers the game starts with."""

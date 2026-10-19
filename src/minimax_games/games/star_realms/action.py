@@ -1,6 +1,6 @@
 """What a player can do: the `Action` enum.
 
-Only the variants the first slice's cards need exist so far; a later slice
+Only the variants the implemented cards need exist so far; a later slice
 adds `Choose` (docs/star-realms.md).
 """
 
@@ -81,11 +81,30 @@ class AttackBase(Variant):
     card: Card
 
 
+class Discard(Variant):
+    """Discard `card` from hand, for an opponent's `OpponentDiscards` effect.
+
+    A player with discards pending (`PlayerState.to_discard`) makes them at
+    the start of their turn, before anything else, one `Discard` each.
+    Like `PlayCard`, the action names the card, not a position in the hand.
+    """
+
+    card: Card
+
+
 class EndTurn(Variant):
     """Discard the hand and ships in play (bases stay), lose unspent trade and
     combat, draw 5."""
 
 
 type Action = (
-    PlayCard | UseAlly | UseBase | Scrap | Acquire | AttackPlayer | AttackBase | EndTurn
+    PlayCard
+    | UseAlly
+    | UseBase
+    | Scrap
+    | Acquire
+    | AttackPlayer
+    | AttackBase
+    | Discard
+    | EndTurn
 )

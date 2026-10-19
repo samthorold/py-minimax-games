@@ -1,5 +1,6 @@
 import dataclasses
 import random
+from collections import Counter
 
 import pytest
 
@@ -8,6 +9,7 @@ from minimax_games.games.star_realms.action import (
     Acquire,
     AttackBase,
     AttackPlayer,
+    Discard,
     EndTurn,
     PlayCard,
     Scrap,
@@ -18,11 +20,13 @@ from minimax_games.games.star_realms.card import Card, CardType
 from minimax_games.games.star_realms.catalogue import (
     CATALOGUE,
     EXPLORER,
+    PLAYABLE_TRADE_DECK,
     SCOUT,
-    SLICE_1_TRADE_DECK,
     TRADE_DECK,
     VIPER,
+    playable_deck,
 )
+from minimax_games.games.star_realms.effect import Authority, Combat, Draw, Trade
 from minimax_games.games.star_realms.state import GameState
 
 
@@ -111,18 +115,29 @@ def names(cards: tuple[Card, ...]) -> list[str]:
 def test_a_new_game_reveals_five_trade_row_cards_from_the_shuffled_trade_deck():
     state = rules.new_game(seed=1)
     assert len(state.trade_row) == 5
-    assert names(state.trade_row + state.trade_deck) == names(SLICE_1_TRADE_DECK)
+    assert names(state.trade_row + state.trade_deck) == names(PLAYABLE_TRADE_DECK)
     assert state.explorers == 10
     other = rules.new_game(seed=2)
     assert state.trade_row + state.trade_deck != other.trade_row + other.trade_deck
 
 
-def test_the_slice_1_trade_deck_is_every_copy_of_the_slice_1_cards():
-    assert names(SLICE_1_TRADE_DECK) == names(
-        tuple(card for card in TRADE_DECK if card.in_slice_1)
+SLICE_1_EFFECTS = frozenset({Trade, Combat, Authority, Draw})
+
+
+def test_with_only_the_first_slice_effects_the_playable_deck_is_the_first_slice():
+    deck = playable_deck(SLICE_1_EFFECTS)
+    assert names(deck) == names(
+        tuple(
+            card
+            for card in TRADE_DECK
+            if all(
+                isinstance(e, Trade | Combat | Authority | Draw)
+                for e in card.primary + card.ally + card.scrap
+            )
+        )
     )
-    assert len(SLICE_1_TRADE_DECK) == 21 + 9
-    bases = {c.name for c in SLICE_1_TRADE_DECK if c.type is not CardType.SHIP}
+    assert len(deck) == 21 + 9
+    bases = {c.name for c in deck if c.type is not CardType.SHIP}
     assert bases == {
         "Blob Wheel",
         "The Hive",
@@ -130,6 +145,19 @@ def test_the_slice_1_trade_deck_is_every_copy_of_the_slice_1_cards():
         "War World",
         "Battle Station",
     }
+
+
+def test_the_playable_deck_adds_the_opponent_discard_cards_to_the_first_slice():
+    added = Counter(PLAYABLE_TRADE_DECK) - Counter(playable_deck(SLICE_1_EFFECTS))
+    assert {card.name: n for card, n in added.items()} == {
+        "Imperial Fighter": 3,
+        "Imperial Frigate": 3,
+        "Survey Ship": 3,
+        "Royal Redoubt": 1,
+    }
+    # Battlecruiser's scrap ability also destroys a base, not implemented yet.
+    assert CATALOGUE["Battlecruiser"] not in PLAYABLE_TRADE_DECK
+    assert len(PLAYABLE_TRADE_DECK) == 40
 
 
 CUTTER = CATALOGUE["Cutter"]
@@ -269,9 +297,10 @@ def test_each_copy_in_play_can_be_scrapped_once():
 
 def test_scrap_abilities_with_effects_not_yet_implemented_are_unavailable():
     frigate = CATALOGUE["Imperial Frigate"]  # scrap: draw a card
-    survey = CATALOGUE["Survey Ship"]  # scrap: target opponent discards a card
+    battlecruiser = CATALOGUE["Battlecruiser"]  # scrap: draw, destroy target base
     state = rules.new_game(seed=1)
-    first = dataclasses.replace(state.players[0], hand=(), in_play=(frigate, survey))
+    in_play = (frigate, battlecruiser)
+    first = dataclasses.replace(state.players[0], hand=(), in_play=in_play)
     state = dataclasses.replace(state, players=(first, state.players[1]))
     assert scraps(state) == [Scrap(frigate)]
 
@@ -540,3 +569,63 @@ def test_the_rules_build_states_without_dataclasses_replace(monkeypatch):
             if not actions:
                 break
             state = rules.advance(state, rng.choice(actions))
+
+
+IMPERIAL_FIGHTER = CATALOGUE["Imperial Fighter"]  # 2 combat, opponent discards 1
+IMPERIAL_FRIGATE = CATALOGUE["Imperial Frigate"]  # 4 combat, opponent discards 1
+
+
+def discards(state: GameState) -> list[Discard]:
+    return [a for a in rules.legal_actions(state) if isinstance(a, Discard)]
+
+
+def test_the_opponent_discards_a_card_of_their_choice_at_the_start_of_their_turn():
+    state = with_hand(rules.new_game(seed=1), IMPERIAL_FIGHTER)
+    state = rules.apply(state, PlayCard(IMPERIAL_FIGHTER))
+    assert state.combat == 2
+    assert state.players[1].to_discard == 1
+    state = rules.apply(state, EndTurn())
+    hand = state.players[1].hand
+    assert len(hand) == 5
+    # Discarding comes first: it is the only thing they can do.
+    assert rules.legal_actions(state) == tuple(Discard(c) for c in dict.fromkeys(hand))
+    card = hand[0]
+    after = rules.apply(state, Discard(card))
+    second = after.players[1]
+    assert second.to_discard == 0
+    assert names(second.hand) == names(hand[1:])
+    assert second.discard == (*state.players[1].discard, card)
+    assert discards(after) == []
+    assert EndTurn() in rules.legal_actions(after)
+
+
+def with_opponent_hand(state: GameState, *hand: Card) -> GameState:
+    second = dataclasses.replace(state.players[1], hand=hand)
+    return dataclasses.replace(state, players=(state.players[0], second))
+
+
+def test_discards_stack_one_per_effect():
+    state = with_hand(rules.new_game(seed=1), IMPERIAL_FIGHTER, IMPERIAL_FRIGATE)
+    for card in (IMPERIAL_FIGHTER, IMPERIAL_FRIGATE):
+        state = rules.apply(state, PlayCard(card))
+    state = rules.apply(state, EndTurn())
+    assert state.players[1].to_discard == 2
+    state = rules.apply(state, discards(state)[0])
+    assert len(discards(state)) > 0
+    state = rules.apply(state, discards(state)[0])
+    assert len(state.players[1].hand) == 3
+    assert discards(state) == []
+
+
+def test_a_player_discards_no_more_cards_than_they_hold():
+    for hand, made in (((), 0), ((SCOUT,), 1)):
+        state = with_hand(rules.new_game(seed=1), IMPERIAL_FIGHTER, IMPERIAL_FRIGATE)
+        state = with_opponent_hand(state, *hand)
+        for card in (IMPERIAL_FIGHTER, IMPERIAL_FRIGATE):
+            state = rules.apply(state, PlayCard(card))
+        state = rules.apply(state, EndTurn())
+        assert state.players[1].to_discard == made
+        for _ in range(made):
+            state = rules.apply(state, discards(state)[0])
+        assert state.players[1].hand == ()
+        assert EndTurn() in rules.legal_actions(state)
