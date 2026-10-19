@@ -1,11 +1,12 @@
 import dataclasses
 import random
+from collections import Counter
 
 from minimax_games.games.star_realms import rules
 from minimax_games.games.star_realms.bots import RandomBot
-from minimax_games.games.star_realms.catalogue import CATALOGUE
+from minimax_games.games.star_realms.catalogue import CATALOGUE, EXPLORER
 from minimax_games.games.star_realms.state import GameState, PlayerState
-from minimax_games.games.star_realms.view import observe
+from minimax_games.games.star_realms.view import observe, sample_world
 
 
 def midgame(seed: int, moves: int = 60) -> GameState:
@@ -121,3 +122,96 @@ def test_a_view_shows_everything_public():
             view = observe(state, observer)
             for changed in public_changes(state, observer):
                 assert observe(changed, observer) != view
+
+
+def test_a_sampled_world_looks_the_same_to_the_observer():
+    rng = random.Random(2)
+    for seed in range(20):
+        for state in (rules.new_game(seed), midgame(seed, moves=rng.randrange(300))):
+            for observer in (0, 1):
+                view = observe(state, observer)
+                assert observe(sample_world(view, rng), observer) == view
+
+
+def test_the_same_rng_state_samples_the_same_world():
+    view = observe(midgame(4), 0)
+    assert sample_world(view, random.Random(7)) == sample_world(view, random.Random(7))
+
+
+def small_game() -> GameState:
+    """Player 0 has a two-card deck; player 1 has three distinct cards, one in
+    hand and two in the deck; the Trade Deck has two cards."""
+    blob, scout, viper = (CATALOGUE[n] for n in ("Blob Fighter", "Scout", "Viper"))
+    return GameState(
+        players=(
+            PlayerState(50, deck=(scout, viper), hand=(blob,)),
+            PlayerState(50, deck=(scout, viper), hand=(blob,)),
+        ),
+        rng_seed=0,
+        trade_deck=(blob, scout),
+    )
+
+
+def test_sampling_reaches_every_hidden_arrangement():
+    view = observe(small_game(), 0)
+    rng = random.Random(3)
+    worlds = [sample_world(view, rng) for _ in range(200)]
+    assert {w.players[0].deck for w in worlds} == {
+        tuple(CATALOGUE[n] for n in names)
+        for names in (("Scout", "Viper"), ("Viper", "Scout"))
+    }
+    assert {w.players[1].hand[0].name for w in worlds} == {
+        "Blob Fighter",
+        "Scout",
+        "Viper",
+    }
+    assert len({w.players[1].deck for w in worlds}) == 6
+    assert len({w.trade_deck for w in worlds}) == 2
+    assert len({w.rng_seed for w in worlds}) == 200
+
+
+def test_sampling_never_mutates_the_view():
+    view = observe(midgame(5), 1)
+    copy = dataclasses.replace(view)
+    sample_world(view, random.Random(0))
+    assert view == copy
+
+
+def all_cards(state: GameState) -> Counter[str]:
+    """Every card in the game, by name, wherever it is."""
+    piles = [
+        state.trade_deck,
+        state.trade_row,
+        (EXPLORER,) * state.explorers,
+        state.scrap_heap,
+    ]
+    for player in state.players:
+        piles += [
+            player.deck,
+            player.hand,
+            player.in_play,
+            player.discard,
+            player.bases,
+        ]
+    return Counter(card.name for pile in piles for card in pile)
+
+
+def test_random_games_from_sampled_worlds_finish_and_conserve_cards():
+    rng = random.Random(4)
+    for seed in range(10):
+        state = rules.auto_play(midgame(seed, moves=rng.randrange(120)))
+        if rules.winner(state) is not None:
+            continue
+        world = sample_world(observe(state, state.current), rng)
+        cards = all_cards(state)
+        assert all_cards(world) == cards
+        bot = RandomBot(seed)
+        for _ in range(5000):
+            if rules.winner(world) is not None:
+                break
+            actions = rules.legal_actions(world)
+            world = rules.advance(
+                world, bot.choose(observe(world, world.current), actions)
+            )
+            assert all_cards(world) == cards
+        assert rules.winner(world) is not None
