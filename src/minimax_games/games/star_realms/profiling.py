@@ -16,7 +16,6 @@ them together with `pstats`'s own tables.
 """
 
 import cProfile
-import dataclasses
 import io
 import pstats
 import time
@@ -149,6 +148,7 @@ def breakdown(stats: pstats.Stats) -> list[Area]:
         (sum(s for s, _ in tt_parts), tt_parts[1][1]),
     )
     scores = area(1, "evaluate", total(_key(evaluate.evaluate)))
+    game, player = total(_key(GameState.replace)), total(_key(PlayerState.replace))
     rest = search.seconds - children.seconds - scores.seconds - tt.seconds
     return [
         search,
@@ -165,7 +165,11 @@ def breakdown(stats: pstats.Stats) -> list[Area]:
             total(_key(rules._next_automatic)),
         ),
         area(3, "applying actions (rules._apply)", total(_key(rules._apply))),
-        area(4, "dataclasses.replace", total(_key(dataclasses.replace))),
+        area(
+            4,
+            "building states (GameState/PlayerState.replace)",
+            (game[0] + player[0], game[1] + player[1]),
+        ),
         scores,
         tt,
         Area(1, "search overhead (the rest)", rest, search.calls),

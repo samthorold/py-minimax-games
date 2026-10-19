@@ -395,3 +395,29 @@ In `task profile` (shares of the profiled search, which falls from 6.17 s to 4.4
 
 - **The automatic-play scan falls from 2.37 s (38.4%) to 0.79 s (17.5%)**, 62.6 to 20.8 us per node, for the same 100,304 scans. `legal_actions` calls fall from 114,964 to 14,660 (only the search's move generation is left).
 - Applying actions (`rules._apply`) is now the hotspot: 2.13 s, 47.4%, of which `dataclasses.replace` 40.1%, the target of #81. `evaluate` is 14.0%.
+
+## Milestone 2h: build states without `dataclasses.replace`
+
+- Date: 2026-10-19
+- Commit: `f5cdba2` plus #81.
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0. Each run in the foreground, alone, one at a time; "before" is `f5cdba2`, "after" this change.
+
+`dataclasses.replace` looks up the class's fields on every call, about 10 calls per node. `GameState` and `PlayerState` now each have a `replace` method with one keyword per field (`None` keeps it: no field can be `None`) that calls the constructor directly, and `rules` uses it. Each action in `rules._apply` now builds its new player and state once, with all their changes, instead of one copy per changed field: 392,316 `replace` calls in the profiled workload become 280,438, and dataclass constructions 220,034 become 168,331. The states are still frozen, slotted and hashable dataclasses; a test checks each `replace` agrees with `dataclasses.replace` field by field, and another plays seeded games with `dataclasses.replace` patched to fail.
+
+**Same results.** Every `bench` search visits the same nodes, every budgeted decision finishes the same depth with the same nodes, the profiled workload generates the same 37,838 nodes, and the 20-game tournament gives the same wins, seats and mean turns (cheat 14/20, 8/10 first and 6/10 second, 27.7 turns).
+
+| Workload | Before | After | Change |
+|---|---|---|---|
+| `bench`, horizon 1 | 5.6 s, 22,494 nodes/s | 3.9 s, 32,582 nodes/s | 1.45x |
+| `bench`, horizon 2 | 20.8 s, 24,260 nodes/s | 13.5 s, 37,340 nodes/s | 1.54x |
+| `bench --budget 5000` | 24,836 nodes/s, 178.3 ms/decision | 39,720 nodes/s, 111.5 ms/decision | 1.60x |
+| `tournament --bots cheat greedy --games 20` | 127 ms/decision, 180.9 s | 82.8 ms/decision, 117.5 s | 1.54x |
+| `task profile`, unprofiled | 24,498 nodes/s | 39,122 nodes/s | 1.60x |
+
+**Since Milestone 2f's "before" (#79 to #81):** 2.8x on `bench` horizon 1 (11,667 to 32,582 nodes/s), 2.6x on horizon 2, 2.9x on `bench --budget 5000` (319.7 to 111.5 ms/decision) and 2.7x on the tournament (221 to 82.8 ms/decision, 313.8 s to 117.5 s), with every result unchanged.
+
+In `task profile` (shares of the profiled search, which falls from 4.53 s to 3.07 s):
+
+- **Applying actions falls from 2.15 s (47.4%) to 0.70 s (22.6%)**, 56.7 to 18.4 us per node. The `dataclasses.replace` row (1.81 s, 40.0%) is gone; building states with the new methods takes 0.39 s (12.6%), of which the generated frozen `__init__`'s self time is 0.19 s (6.2%).
+- The frozen `__init__` sets each field with `object.__setattr__`: in a micro-benchmark, constructing a 12-field frozen, slotted dataclass takes about 0.67 us against 0.13 us for a plain slotted class assigning its fields. Any frozen class pays that, and the states are already `slots=True`, so there is no cheap, readable win left there without giving up immutability; not pursued.
+- **The automatic-play scan (`rules._next_automatic`) is now the biggest hotspot**, 0.79 s (25.6%), unchanged in time. Then applying actions (22.6%) and `evaluate` (0.63 s, 20.6%, of which `builtins.sum` 0.16 s self time); hashing and equality is 11.4%, move generation 10.2%.

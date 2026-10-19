@@ -41,6 +41,7 @@ def test_the_breakdown_splits_the_search_time_into_nested_areas():
         "rules.advance_legal",
         "automatic-play scan (rules._next_automatic)",
         "applying actions (rules._apply)",
+        "building states (GameState/PlayerState.replace)",
         "evaluate",
         "transposition table",
         "search overhead (the rest)",
