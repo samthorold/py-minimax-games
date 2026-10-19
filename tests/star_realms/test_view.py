@@ -3,7 +3,11 @@ import random
 from collections import Counter
 
 from minimax_games.games.star_realms import rules
-from minimax_games.games.star_realms.action import EndTurn, PlayCard
+from minimax_games.games.star_realms.action import (
+    EndTurn,
+    PlayCard,
+    ScrapTradeRowCard,
+)
 from minimax_games.games.star_realms.bots import RandomBot
 from minimax_games.games.star_realms.catalogue import CATALOGUE, EXPLORER
 from minimax_games.games.star_realms.state import GameState, PlayerState
@@ -93,6 +97,7 @@ def public_changes(state: GameState, observer: int) -> list[GameState]:
         dataclasses.replace(state, may_scrap=state.may_scrap + 1),
         dataclasses.replace(state, must_scrap=state.must_scrap + 1),
         dataclasses.replace(state, may_destroy=state.may_destroy + 1),
+        dataclasses.replace(state, may_scrap_row=state.may_scrap_row + 1),
         # the observer's own hand, even with the same size and unseen cards
         with_player(state, observer, dataclasses.replace(mine, hand=(card,))),
     ]
@@ -168,11 +173,38 @@ def test_a_sampled_world_keeps_pending_scraps_and_destroys():
     rng = random.Random(6)
     for seed in range(5):
         state = dataclasses.replace(
-            midgame(seed), may_scrap=2, must_scrap=1, may_destroy=3
+            midgame(seed), may_scrap=2, must_scrap=1, may_destroy=3, may_scrap_row=4
         )
         for observer in (0, 1):
             world = sample_world(observe(state, observer), rng)
-            assert (world.may_scrap, world.must_scrap, world.may_destroy) == (2, 1, 3)
+            assert (
+                world.may_scrap,
+                world.must_scrap,
+                world.may_destroy,
+                world.may_scrap_row,
+            ) == (2, 1, 3, 4)
+
+
+def test_sampled_worlds_stay_consistent_when_the_trade_row_refills():
+    pod = CATALOGUE["Battle Pod"]  # may scrap a card in the Trade Row
+    rng = random.Random(8)
+    for seed in range(10):
+        state = midgame(seed)
+        if rules.winner(state) is not None:
+            continue
+        me = state.players[state.current]
+        state = with_player(state, state.current, dataclasses.replace(me, hand=(pod,)))
+        state = rules.apply(state, PlayCard(pod))
+        state = dataclasses.replace(state, may_scrap_row=2)
+        state = rules.apply(state, ScrapTradeRowCard(state.trade_row[0]))
+        for observer in (0, 1):
+            view = observe(state, observer)
+            world = sample_world(view, rng)
+            assert observe(world, observer) == view
+            assert world.may_scrap_row == 1
+            # The next refill reveals one of the cards the view says are left.
+            after = rules.apply(world, ScrapTradeRowCard(world.trade_row[0]))
+            assert after.trade_row[0] in view.trade_deck
 
 
 def test_the_same_rng_state_samples_the_same_world():

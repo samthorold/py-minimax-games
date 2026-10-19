@@ -732,3 +732,56 @@ With the 56-card deck the default `bench` positions are different games: horizon
 **Passes.** No crashes, no unfinished games, and the ladder order holds: heuristic beats greedy (88.6%), greedy beats random (100%), cheat beats greedy (85.0%).
 
 Raw outputs (not committed): `destroy/heuristic-greedy-500.txt`, `destroy/greedy-random-500.txt`, `destroy/cheat-greedy-100.txt`, `destroy/bench-new-deck.txt`, `destroy/bench-budget-new-deck.txt`.
+
+## Milestone 4: scrap from the Trade Row
+
+- Date: 2026-10-19
+- Commit: the `issue-98-trade-row` branch (#98).
+- **The deck changed.** `ScrapTradeRow` joins `catalogue.IMPLEMENTED`, so the playable Trade Deck grows from 56 to **60 cards**: 2 Battle Pods and 2 Blob Destroyers. These results compare with the previous slice's ("Milestone 4: destroy target base") only loosely.
+- The heuristic now scraps from the Trade Row, after buying, the card the opponent would most want (its buying worth, for the opponent's cards and their next turn), unless the average card left in the Trade Deck is worth more to them (step 5 of `HeuristicBot`'s docstring); greedy never uses the ability.
+- Budgets, machine and the check itself as in the previous slices: 500 games each of heuristic vs greedy and greedy vs random, 100 of cheat vs greedy at its defaults (2-turn horizon, 5,000 nodes per decision), seeds from 0, alternating seats, max 300 turns, `--jobs 3`, each run alone in the foreground.
+
+### heuristic vs greedy
+
+`python -m minimax_games.games.star_realms tournament --bots heuristic greedy --games 500 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| heuristic | 418/500 | 83.6% | 215/250 | 203/250 | 0.0073 |
+| greedy | 82/500 | 16.4% | 47/250 | 35/250 | 0.0033 |
+
+500 games, 0 unfinished, mean 21.8 turns, 1.0 s wall time. The heuristic's win rate: 83.6%, interval 80.1-86.6% (destroy-base slice: 88.6%, 85.5-91.1%). The drop comes with the deck, not the new policy: with the Trade Row denial switched off the heuristic wins 420/500 (84.0%) on the same seeds, and on seeds 1000-2999 it wins 1,690/2,000 (84.5%) with it and 1,698/2,000 (84.9%) without. Greedy buys Battle Pods and Blob Destroyers, cheap-for-their-combat Blob ships, without scrapping from the row. Scrapping before buying (never a card it could afford) made no difference either (1,695/2,000), so the simpler policy stays.
+
+### greedy vs random
+
+`python -m minimax_games.games.star_realms tournament --bots greedy random --games 500 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| greedy | 500/500 | 100.0% | 250/250 | 250/250 | 0.0035 |
+| random | 0/500 | 0.0% | 0/250 | 0/250 | 0.0004 |
+
+500 games, 0 unfinished, mean 22.7 turns, 0.8 s wall time.
+
+### cheat vs greedy
+
+`python -m minimax_games.games.star_realms tournament --bots cheat greedy --games 100 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| cheat | 80/100 | 80.0% | 39/50 | 41/50 | 97.8 |
+| greedy | 20/100 | 20.0% | 9/50 | 11/50 | 0.0046 |
+
+100 games, 0 unfinished, mean 23.5 turns, 237 s wall time. The cheat's win rate: 80.0%, interval 71.1-86.7% (destroy-base slice: 85.0%, 76.7-90.7%).
+
+### Search speed
+
+The rules add one check per `legal_actions` (may the player scrap from the row?) and a field to `GameState`, and `ScrapTradeRow` joins the pure-gain effects; `Acquire` and the new action share the refill (`rules._take_from_row`). On the 56-card deck (`new_game`'s default patched back to it), `bench` searches the identical trees as before the change (381,301 nodes at horizon 1 and 648,781 at horizon 2) at much the same speed: 50,500-50,800 and 43,500-43,700 nodes/s after, 51,100-52,000 and 44,500-44,900 before, over two runs each (about 1-2% slower, the extra state field).
+
+With the 60-card deck the default `bench` positions are different games: horizon 1 6/8 searches finished within 200,000 nodes, 446,773 nodes at 36,700 nodes/s; horizon 2 3/8, 1,016,157 nodes at 40,400 nodes/s. `bench --budget 5000`: the cheat's decisions finished 2 turns at 2/8 positions, 1 turn at 1/8 and none at 5/8 (destroy-base deck: 3/8, 3/8 and 2/8), 113.8 ms per decision. The loss is the new positions, not the new branching: with Trade Row scraps never granted (`_resolve` patched to ignore `ScrapTradeRow`; greedy, which sets the positions up, never uses them) the same positions give the same table, 2/8, 1/8 and 5/8, and only seed 2 turn 5 needs more nodes with them (4,670 instead of 1,159, still finishing 2 turns). A row scrap adds at most one branch per distinct row card, and only while one may be made.
+
+### Verdict
+
+**Passes.** No crashes, no unfinished games, and the ladder order holds: heuristic beats greedy (83.6%), greedy beats random (100%), cheat beats greedy (80.0%).
+
+Raw outputs (not committed): `rowscrap/heuristic-greedy-500.txt`, `rowscrap/greedy-random-500.txt`, `rowscrap/cheat-greedy-100.txt`, `rowscrap/bench-before-{1,2}.txt`, `rowscrap/bench-after-{1,2}.txt`, `rowscrap/bench-new-deck.txt`, `rowscrap/bench-budget-new-deck.txt`.

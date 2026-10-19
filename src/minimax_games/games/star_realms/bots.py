@@ -21,6 +21,7 @@ from minimax_games.games.star_realms.action import (
     Scrap,
     ScrapDiscardCard,
     ScrapHandCard,
+    ScrapTradeRowCard,
     UseAlly,
     UseBase,
 )
@@ -100,7 +101,8 @@ class GreedyBot:
     4. ends the turn. It never scraps when it may: greedy keeps every card.
        Nor does it use destroy-base abilities (Missile Mech, Command Ship,
        ...): it leaves the targeting to the heuristic, as it leaves bases
-       that don't guard the player.
+       that don't guard the player. Nor does it scrap from the Trade Row
+       (Battle Pod, Blob Destroyer).
     """
 
     def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
@@ -178,14 +180,15 @@ def _guard(player: PlayerView) -> int:
     return sum(c.defense or 0 for c in player.bases if c.type is CardType.OUTPOST)
 
 
-def _worth(card: Card, view: View, owned: tuple[Card, ...]) -> float:
-    """How much the heuristic bot wants to acquire `card` (see its docstring)."""
+def _worth(card: Card, own_turn: int, owned: tuple[Card, ...]) -> float:
+    """How much the heuristic bot wants to acquire `card` in its `own_turn`th
+    turn, owning `owned` (see its docstring). It values the opponent's buys
+    the same way."""
     worth = card.cost
     if card.faction is not None:
         worth += SYNERGY * sum(c.faction is card.faction for c in owned)
     if card.type is CardType.BASE:
         worth += BASE_DEFENSE * (card.defense or 0)
-    own_turn = (view.turn + 1) // 2
     if own_turn <= ECONOMY_TURNS:
         worth += ECONOMY * _trade(card.primary)
     else:
@@ -263,7 +266,14 @@ class HeuristicBot:
        them `AGGRESSION` per point of primary combat: economy early, combat
        late. Outposts get no bonus for their defense: tuning found it lost
        games, as an Outpost's defense only delays the opponent.
-    5. scraps cards for combat (after buying, so their trade is spent):
+    5. while it may scrap from the Trade Row (Battle Pod, Blob Destroyer),
+       scraps the row card the opponent would most want, by the worth in 4
+       for the opponent's cards and their next turn, ties broken by name,
+       unless it is worth less to them than the average card left in the
+       Trade Deck (the view shows its contents), which the refill would
+       likely hand them instead. After buying, so it never scraps a card it
+       would buy, and it then buys the refill if it wants and can afford it.
+    6. scraps cards for combat (after buying, so their trade is spent):
        every card with a combat scrap ability when the combat in hand and in
        those abilities reaches the opponent's Authority plus the defense of
        their Outposts, so this turn wins; otherwise only Explorers, whose
@@ -271,14 +281,14 @@ class HeuristicBot:
        deck are worth more than keeping them. Other cards are kept. (Scrap
        abilities without combat, such as trade or a draw and a base to
        destroy, aren't used.)
-    6. attacks: while Outposts guard the opponent, destroys the weakest one
+    7. attacks: while Outposts guard the opponent, destroys the weakest one
        first if the combat clears them all (the order doesn't matter then),
        otherwise the dearest one it can (ties by name), as it can't reach the
        player this turn anyway. With no Outposts, it hits the player if that
        wins; otherwise it destroys the dearest base it can first (ties by
        name), since a base works every turn and the damage to the player
        can wait, then hits the player with the rest.
-    7. ends the turn.
+    8. ends the turn.
     """
 
     def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
@@ -294,6 +304,8 @@ class HeuristicBot:
             return min(destroys, key=_toughest)
         if (buy := self._buy(view, actions)) is not None:
             return buy
+        if (deny := self._deny(view, actions)) is not None:
+            return deny
         if (scrap := self._scrap(view, actions)) is not None:
             return scrap
         if (attack := self._attack(view, actions)) is not None:
@@ -313,10 +325,30 @@ class HeuristicBot:
 
     def _buy(self, view: View, actions: tuple[Action, ...]) -> Action | None:
         owned = _owned(view)
+        own_turn = (view.turn + 1) // 2
         buys = [a for a in actions if isinstance(a, Acquire)]
         if not buys:
             return None
-        return min(buys, key=lambda a: (-_worth(a.card, view, owned), a.card.name))
+        return min(buys, key=lambda a: (-_worth(a.card, own_turn, owned), a.card.name))
+
+    def _deny(self, view: View, actions: tuple[Action, ...]) -> Action | None:
+        scraps = [a for a in actions if isinstance(a, ScrapTradeRowCard)]
+        if not scraps:
+            return None
+        opponent = view.players[1 - view.observer]
+        owned = opponent.unseen + opponent.in_play + opponent.discard + opponent.bases
+        # The opponent's next turn is the game's next.
+        their_turn = (view.turn + 2) // 2
+
+        def worth(card: Card) -> float:
+            return _worth(card, their_turn, owned)
+
+        best = min(scraps, key=lambda a: (-worth(a.card), a.card.name))
+        if view.trade_deck:
+            refill = sum(map(worth, view.trade_deck)) / len(view.trade_deck)
+            if worth(best.card) < refill:
+                return None
+        return best
 
     def _scrap(self, view: View, actions: tuple[Action, ...]) -> Action | None:
         scraps = [

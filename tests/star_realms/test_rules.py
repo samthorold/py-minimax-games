@@ -16,6 +16,7 @@ from minimax_games.games.star_realms.action import (
     Scrap,
     ScrapDiscardCard,
     ScrapHandCard,
+    ScrapTradeRowCard,
     UseAlly,
     UseBase,
 )
@@ -32,11 +33,12 @@ from minimax_games.games.star_realms.catalogue import (
 from minimax_games.games.star_realms.effect import (
     Authority,
     Combat,
+    DestroyBase,
     Draw,
+    NextShipOnTop,
     OpponentDiscards,
     ScrapFromHand,
     ScrapHandOrDiscard,
-    ScrapTradeRow,
     Trade,
 )
 from minimax_games.games.star_realms.state import GameState
@@ -195,8 +197,12 @@ def test_the_playable_deck_adds_the_scrap_from_hand_or_discard_cards():
     assert len(deck) == 52
 
 
+SLICE_4_EFFECTS = SLICE_3_EFFECTS | {DestroyBase}
+
+
 def test_the_playable_deck_adds_the_destroy_base_cards():
-    added = Counter(PLAYABLE_TRADE_DECK) - Counter(playable_deck(SLICE_3_EFFECTS))
+    deck = playable_deck(SLICE_4_EFFECTS)
+    added = Counter(deck) - Counter(playable_deck(SLICE_3_EFFECTS))
     assert {card.name: n for card, n in added.items()} == {
         "Command Ship": 1,
         "Port of Call": 1,
@@ -204,8 +210,17 @@ def test_the_playable_deck_adds_the_destroy_base_cards():
         "Missile Mech": 1,
     }
     # Blob Destroyer's ally ability also scraps from the Trade Row.
-    assert CATALOGUE["Blob Destroyer"] not in PLAYABLE_TRADE_DECK
-    assert len(PLAYABLE_TRADE_DECK) == 56
+    assert CATALOGUE["Blob Destroyer"] not in deck
+    assert len(deck) == 56
+
+
+def test_the_playable_deck_adds_the_trade_row_scrap_cards():
+    added = Counter(PLAYABLE_TRADE_DECK) - Counter(playable_deck(SLICE_4_EFFECTS))
+    assert {card.name: n for card, n in added.items()} == {
+        "Battle Pod": 2,
+        "Blob Destroyer": 2,
+    }
+    assert len(PLAYABLE_TRADE_DECK) == 60
 
 
 CUTTER = CATALOGUE["Cutter"]
@@ -346,7 +361,7 @@ def test_each_copy_in_play_can_be_scrapped_once():
 def test_scrap_abilities_with_effects_not_yet_implemented_are_unavailable():
     frigate = CATALOGUE["Imperial Frigate"]  # scrap: draw a card
     # Every base-set scrap ability is implemented now, so make one that isn't.
-    culler = dataclasses.replace(frigate, name="Culler", scrap=(ScrapTradeRow(1),))
+    culler = dataclasses.replace(frigate, name="Culler", scrap=(NextShipOnTop(),))
     state = rules.new_game(seed=1)
     in_play = (frigate, culler)
     first = dataclasses.replace(state.players[0], hand=(), in_play=in_play)
@@ -438,7 +453,8 @@ def test_scrapping_one_of_two_copies_scraps_the_one_whose_ally_was_used():
 
 
 def test_ally_abilities_with_effects_not_yet_implemented_are_unavailable():
-    destroyer = CATALOGUE["Blob Destroyer"]  # ally: destroy base, scrap Trade Row
+    # Every base-set Blob ally ability is implemented now, so make one that isn't.
+    destroyer = dataclasses.replace(RAM, name="Hoarder", ally=(NextShipOnTop(),))
     frigate = CATALOGUE["Imperial Frigate"]  # ally: 2 combat
     corvette = CATALOGUE["Corvette"]  # ally: 2 combat
     state = rules.new_game(seed=1)
@@ -853,3 +869,59 @@ def test_abilities_left_over_once_the_opponent_has_no_bases_are_dropped():
     assert state.may_destroy == 2
     state = rules.apply(state, DestroyTarget(THE_HIVE))
     assert state.may_destroy == 0
+
+
+BATTLE_POD = CATALOGUE["Battle Pod"]  # Blob: 4 combat, may scrap from Trade Row
+BLOB_DESTROYER = CATALOGUE["Blob Destroyer"]  # ally: destroy base, scrap row
+
+
+def row_scraps(state: GameState) -> list[ScrapTradeRowCard]:
+    return [a for a in rules.legal_actions(state) if isinstance(a, ScrapTradeRowCard)]
+
+
+def test_a_card_scrapped_from_the_trade_row_is_replaced_from_the_trade_deck():
+    state = with_hand(rules.new_game(seed=1), BATTLE_POD)
+    row, deck = state.trade_row, state.trade_deck
+    assert row_scraps(state) == []
+    state = rules.apply(state, PlayCard(BATTLE_POD))
+    assert row_scraps(state) == [ScrapTradeRowCard(c) for c in dict.fromkeys(row)]
+    after = rules.apply(state, ScrapTradeRowCard(row[2]))
+    assert after.trade_row == (*row[:2], deck[0], *row[3:])
+    assert after.trade_deck == deck[1:]
+    assert after.scrap_heap == (row[2],)
+    assert after.combat == 4
+    assert row_scraps(after) == []
+
+
+def test_blob_destroyers_ally_ability_destroys_a_base_and_scraps_from_the_row():
+    state = rules.new_game(seed=1)
+    first = dataclasses.replace(
+        state.players[0], hand=(), in_play=(BLOB_DESTROYER, BATTLE_POD)
+    )
+    state = dataclasses.replace(state, players=(first, state.players[1]))
+    state = with_opponent_bases(state, THE_HIVE, combat=0)
+    state = rules.apply(state, UseAlly(BLOB_DESTROYER))
+    assert (state.may_destroy, state.may_scrap_row) == (1, 1)
+
+
+def test_scrapping_from_the_row_is_optional_and_lost_at_the_end_of_the_turn():
+    state = with_hand(rules.new_game(seed=1), BATTLE_POD)
+    row = state.trade_row
+    state = rules.apply(state, PlayCard(BATTLE_POD))
+    assert EndTurn() in rules.legal_actions(state)
+    state = rules.apply(state, EndTurn())
+    assert state.may_scrap_row == 0
+    assert state.trade_row == row
+
+
+def test_nothing_is_scrapped_from_the_row_once_the_trade_deck_has_run_out():
+    state = with_hand(rules.new_game(seed=1), BATTLE_POD, BATTLE_POD)
+    state = dataclasses.replace(state, trade_row=(CUTTER,), trade_deck=())
+    state = rules.apply(state, PlayCard(BATTLE_POD))
+    state = rules.apply(state, PlayCard(BATTLE_POD))
+    assert state.may_scrap_row == 2
+    state = rules.apply(state, ScrapTradeRowCard(CUTTER))
+    assert state.trade_row == ()
+    assert state.may_scrap_row == 0
+    empty = with_hand(state, BATTLE_POD)
+    assert rules.apply(empty, PlayCard(BATTLE_POD)).may_scrap_row == 0

@@ -114,6 +114,18 @@ class ScrapDiscardCard(Variant):
     card: Card
 
 
+class ScrapTradeRowCard(Variant):
+    """Scrap `card` from the Trade Row, for a `ScrapTradeRow` ability: it goes
+    to the scrap heap, and the Trade Deck's top card takes its place.
+
+    Offered while the turn has Trade Row scraps left
+    (`GameState.may_scrap_row`). Like `PlayCard`, the action names the card,
+    not a position in the row.
+    """
+
+    card: Card
+
+
 class DestroyTarget(Variant):
     """Destroy `card`, one of the opponent's bases, for a `DestroyBase`
     ability: it goes to its owner's discard pile, with no combat spent.
@@ -144,5 +156,6 @@ type Action = (
     | Discard
     | ScrapHandCard
     | ScrapDiscardCard
+    | ScrapTradeRowCard
     | EndTurn
 )

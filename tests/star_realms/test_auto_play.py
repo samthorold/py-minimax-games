@@ -142,6 +142,20 @@ def test_destroy_abilities_are_granted_automatically_but_the_target_is_a_decisio
     assert after.may_destroy == 2
 
 
+BATTLE_POD = CATALOGUE["Battle Pod"]  # Blob: 4 combat, may scrap from Trade Row
+BLOB_DESTROYER = CATALOGUE["Blob Destroyer"]  # ally: destroy base, scrap row
+
+
+def test_row_scraps_are_granted_automatically_but_the_card_is_a_decision():
+    state = with_hand(rules.new_game(seed=1), BATTLE_POD, BLOB_DESTROYER)
+    after = rules.auto_play(state)
+    assert after.players[0].hand == ()
+    assert BLOB_DESTROYER in after.allies_used
+    assert after.may_scrap_row == 2
+    assert after.combat == 12  # with Battle Pod's ally ability
+    assert not any(rules.automatic(after, a) for a in rules.legal_actions(after))
+
+
 def test_ships_wait_in_hand_while_something_could_scrap_them_from_hand():
     state = with_bases(with_hand(rules.new_game(seed=1), SCOUT, VIPER), JUNKYARD)
     after = rules.auto_play(state)
@@ -316,6 +330,13 @@ SMALL_STATES = {
         hand=(MISSILE_MECH, CORVETTE),
         deck=(SCOUT,),
         in_play=(COMMAND_SHIP, CUTTER),
+    ),
+    # Scrapping from the Trade Row: a ship's ability, beside its ally, around
+    # buys from the row (before or after its refill) and a draw.
+    "trade row": small(
+        hand=(BATTLE_POD, TRADE_POD, CORVETTE),
+        deck=(SCOUT,),
+        trade_row=(CUTTER, BLOB_FIGHTER),
     ),
 }
 
