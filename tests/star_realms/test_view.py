@@ -90,6 +90,8 @@ def public_changes(state: GameState, observer: int) -> list[GameState]:
         dataclasses.replace(state, scrap_heap=(*state.scrap_heap, card)),
         dataclasses.replace(state, allies_used=(*state.allies_used, card)),
         dataclasses.replace(state, bases_used=(*state.bases_used, card)),
+        dataclasses.replace(state, may_scrap=state.may_scrap + 1),
+        dataclasses.replace(state, must_scrap=state.must_scrap + 1),
         # the observer's own hand, even with the same size and unseen cards
         with_player(state, observer, dataclasses.replace(mine, hand=(card,))),
     ]
@@ -159,6 +161,15 @@ def test_a_sampled_world_keeps_pending_discards_and_so_the_legal_actions():
                 assert set(rules.legal_actions(world)) == set(
                     rules.legal_actions(state)
                 )
+
+
+def test_a_sampled_world_keeps_pending_scraps():
+    rng = random.Random(6)
+    for seed in range(5):
+        state = dataclasses.replace(midgame(seed), may_scrap=2, must_scrap=1)
+        for observer in (0, 1):
+            world = sample_world(observe(state, observer), rng)
+            assert (world.may_scrap, world.must_scrap) == (2, 1)
 
 
 def test_the_same_rng_state_samples_the_same_world():
@@ -242,4 +253,7 @@ def test_random_games_from_sampled_worlds_finish_and_conserve_cards():
                 world, bot.choose(observe(world, world.current), actions)
             )
             assert all_cards(world) == cards
-        assert rules.winner(world) is not None
+        # Random players may scrap every card they own: then nobody can win.
+        assert rules.winner(world) is not None or all(
+            not (p.deck or p.hand or p.in_play or p.discard) for p in world.players
+        )

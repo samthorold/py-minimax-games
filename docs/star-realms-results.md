@@ -626,3 +626,56 @@ The new rules add one check per `legal_actions` and automatic-play scan (is a di
 **Passes.** No crashes, no unfinished games, and the ladder order holds: heuristic beats greedy (81.0%), greedy beats random (100%), cheat beats greedy (80.0%). The heuristic's lead over greedy is 4.4 points lower than on the first slice, with overlapping intervals; its weights were tuned on the 30-card deck, and its buying policy doesn't value making the opponent discard beyond a card's cost. Random bots no longer stall: seed 13, which stalled on the first slice, finishes, as do seeds 0-299.
 
 Raw outputs (not committed): `heuristic-greedy-500.txt`, `greedy-random-500.txt`, `cheat-greedy-100.txt`, `bench-*.txt`.
+
+## Milestone 4: scrap from hand or discard pile
+
+- Date: 2026-10-19
+- Commit: the `issue-96-scrap` branch (#96).
+- **The deck changed.** `ScrapHandOrDiscard` and `ScrapFromHand` join `catalogue.IMPLEMENTED`, so the playable Trade Deck grows from 40 to **52 cards**: 3 Trade Bot, 3 Missile Bot, 3 Supply Bot, 1 Battle Mech, 1 Junkyard and 1 Machine Base (Patrol Mech waits for "or" choices). These results compare with the previous slice's ("Milestone 4: opponent discards") only loosely.
+- The heuristic now scraps Vipers and Scouts whenever a card lets it (step 1 of `HeuristicBot`'s docstring); greedy never scraps when it may, and makes Machine Base's forced scrap of its cheapest card.
+- Budgets, machine and the check itself as in the previous slice: 500 games each of heuristic vs greedy and greedy vs random, 100 of cheat vs greedy at its defaults (2-turn horizon, 5,000 nodes per decision), seeds from 0, alternating seats, max 300 turns, `--jobs 3`, each run alone in the foreground.
+
+### heuristic vs greedy
+
+`python -m minimax_games.games.star_realms tournament --bots heuristic greedy --games 500 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| heuristic | 428/500 | 85.6% | 221/250 | 207/250 | 0.0060 |
+| greedy | 72/500 | 14.4% | 43/250 | 29/250 | 0.0033 |
+
+500 games, 0 unfinished, mean 23.0 turns, 1.0 s wall time. The first player won 264/500 (52.8%). The heuristic's win rate: 85.6%, interval 82.3-88.4% (opponent-discards slice: 81.0%, 77.3-84.2%). Scrapping Vipers and Scouts helps it, and greedy buys the Machine Cult cards without using their scraps.
+
+### greedy vs random
+
+`python -m minimax_games.games.star_realms tournament --bots greedy random --games 500 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| greedy | 500/500 | 100.0% | 250/250 | 250/250 | 0.0034 |
+| random | 0/500 | 0.0% | 0/250 | 0/250 | 0.0004 |
+
+500 games, 0 unfinished, mean 22.9 turns, 0.9 s wall time.
+
+### cheat vs greedy
+
+`python -m minimax_games.games.star_realms tournament --bots cheat greedy --games 100 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| cheat | 84/100 | 84.0% | 39/50 | 45/50 | 109 |
+| greedy | 16/100 | 16.0% | 5/50 | 11/50 | 0.0051 |
+
+100 games, 0 unfinished, mean 25.4 turns, 295 s wall time. The cheat's win rate: 84.0%, interval 75.6-89.9% (opponent-discards slice: 80.0%). Its time per decision rose from 86 to 109 ms: see below.
+
+### Search speed
+
+The rules now check, before playing a pure-gain ship automatically, whether something could scrap it from hand (`rules._hand_scrap_ahead`), and `GameState` has two more fields. The card-level parts of `automatic` are cached per card (a card hashes by its name), which more than pays for the check. On the 40-card deck (`new_game`'s default patched back to it), `bench` searches the identical trees as before the change (8,470 nodes at horizon 1 and 171,501 at horizon 2, the same at every position) at horizon 2 30,100 nodes/s after against 30,400-30,600 before, over two runs each: the same within noise. Without the caching it was 26,200.
+
+With the 52-card deck the trees are bigger: while a scrap may be made, every decision also offers scrapping each distinct card in hand and in the discard pile. `bench` (horizons 1 and 2, default positions): horizon 1 7/8 searches finished within 200,000 nodes (seed 2 turn 21's one-turn tree passes it), 224,313 nodes at 55,500 nodes/s; horizon 2 7/8, 342,851 nodes at 47,100 nodes/s. `bench --budget 5000`: the cheat's decisions finished 2 turns at 2/8 positions, 1 turn at 3/8 and none at 3/8 (opponent-discards deck: 4/8, 4/8 and 0/8), 90.6 ms per decision. Scrapping a card from the discard pile commutes with every action but a draw and a buy, so canonicalising when it happens would shrink these trees, if search depth turns out to limit strength.
+
+### Verdict
+
+**Passes.** No crashes, no unfinished games, and the ladder order holds: heuristic beats greedy (85.6%), greedy beats random (100%), cheat beats greedy (84.0%). Random players can now scrap every card they own, which can deadlock a random-vs-random game (neither can deal damage); a sampled-world test met one and now accepts that dead position. Greedy never scraps when it may, so the tournaments above can't deadlock.
+
+Raw outputs (not committed): `scrap/heuristic-greedy-500.txt`, `scrap/greedy-random-500.txt`, `scrap/cheat-greedy-100.txt`, `scrap/bench-new-deck.txt`.

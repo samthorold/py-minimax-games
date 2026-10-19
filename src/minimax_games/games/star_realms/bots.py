@@ -18,11 +18,13 @@ from minimax_games.games.star_realms.action import (
     EndTurn,
     PlayCard,
     Scrap,
+    ScrapDiscardCard,
+    ScrapHandCard,
     UseAlly,
     UseBase,
 )
 from minimax_games.games.star_realms.card import Card, CardType
-from minimax_games.games.star_realms.catalogue import EXPLORER
+from minimax_games.games.star_realms.catalogue import EXPLORER, SCOUT, VIPER
 from minimax_games.games.star_realms.effect import Combat, Effect, Trade
 from minimax_games.games.star_realms.state import GameState
 from minimax_games.games.star_realms.view import PlayerView, View
@@ -78,12 +80,13 @@ class GreedyBot:
     order. It needs nothing from the view beyond what the legal actions
     already say. In priority order, it:
 
-    0. when it must discard (an opponent's `OpponentDiscards`), discards its
-       cheapest card, ties broken by name: a discard is the only decision
-       offered then.
+    0. when it must discard (an opponent's `OpponentDiscards`) or scrap a
+       card from hand (Machine Base), discards or scraps its cheapest card,
+       ties broken by name: that is the only decision offered then.
     1. plays every card it can and uses every ally and base ability, in
        `actions` order. Bots are only offered the plays automatic play leaves
-       (draws and bases), and all of them are gains; playing before buying
+       (draws, bases, and ships that could be scrapped from hand instead),
+       and all of them are gains; playing before buying
        makes the most trade. Drawing first may reshuffle the discard pile
        before this turn's buys reach it, which a baseline ignores.
     2. acquires the most expensive affordable card, ties broken by name
@@ -93,13 +96,12 @@ class GreedyBot:
        the one with the least defense (ties by name). Weakest first destroys
        the most Outposts with the combat it has, so it reaches the player
        soonest. Other bases are ignored.
-    4. ends the turn. It never scraps: greedy keeps every card.
+    4. ends the turn. It never scraps when it may: greedy keeps every card.
     """
 
     def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
-        discards = [a for a in actions if isinstance(a, Discard)]
-        if discards:
-            return min(discards, key=lambda a: (a.card.cost, a.card.name))
+        if (forced := _forced(view, actions)) is not None:
+            return min(forced, key=_cheapest)
         for action in actions:
             if isinstance(action, PlayCard | UseAlly | UseBase):
                 return action
@@ -116,6 +118,22 @@ class GreedyBot:
         if outposts:
             return min(outposts, key=lambda a: (a.card.defense or 0, a.card.name))
         return EndTurn()
+
+
+type CardChoice = Discard | ScrapHandCard | ScrapDiscardCard
+"""An action that is a choice of one of the player's cards to give up."""
+
+
+def _forced(view: View, actions: tuple[Action, ...]) -> list[CardChoice] | None:
+    """The card choices of a decision the bot must make before anything else,
+    if one is pending: the discards it owes, or the scraps from hand it owes
+    (`View.must_scrap`), else `None`."""
+    discards: list[CardChoice] = [a for a in actions if isinstance(a, Discard)]
+    if discards:
+        return discards
+    if view.must_scrap:
+        return [a for a in actions if isinstance(a, ScrapHandCard)]
+    return None
 
 
 SYNERGY = 0.5
@@ -179,6 +197,21 @@ def _keep(card: Card, view: View) -> float:
     return card.cost + AGGRESSION * _combat(card.primary)
 
 
+def _cheapest(action: CardChoice) -> tuple[int, str]:
+    """A sort key for giving up cards: the cheapest first, ties by name."""
+    return action.card.cost, action.card.name
+
+
+def _least_wanted(choices: list[CardChoice], view: View) -> CardChoice:
+    """Of `choices`, the card the heuristic bot least wants to play (see its
+    docstring), ties broken by name."""
+
+    def key(action: CardChoice) -> tuple[float, str]:
+        return _keep(action.card, view), action.card.name
+
+    return min(choices, key=key)
+
+
 def _dearest(action: AttackBase) -> tuple[int, str]:
     """A sort key for attacks: the dearest base first, ties by name."""
     return -action.card.cost, action.card.name
@@ -191,15 +224,22 @@ class HeuristicBot:
     weights are module constants, tuned against greedy on seeds outside the
     test range. In priority order, it:
 
-    0. when it must discard (an opponent's `OpponentDiscards`), discards the
-       card it least wants to play, ties broken by name: the lowest cost plus,
-       in its first `ECONOMY_TURNS` turns, `ECONOMY` per point of primary
-       trade, and after them `AGGRESSION` per point of primary combat, the
-       weights it buys with. So Vipers and Scouts go first: a Viper early,
-       when trade builds the deck, and a Scout late.
-    1. plays every card it can and uses every ally and base ability, in
+    0. when it must discard (an opponent's `OpponentDiscards`) or scrap a
+       card from hand (Machine Base), discards or scraps the card it least
+       wants to play, ties broken by name: the lowest cost plus, in its first
+       `ECONOMY_TURNS` turns, `ECONOMY` per point of primary trade, and after
+       them `AGGRESSION` per point of primary combat, the weights it buys
+       with. So Vipers and Scouts go first: a Viper early, when trade builds
+       the deck, and a Scout late.
+    1. while it may scrap from hand or discard pile (Trade Bot, Junkyard,
+       ...), scraps a Viper or Scout, the one it least wants to play (as in
+       0) first: from the discard pile while one is there, where it does
+       nothing this turn, otherwise from hand, before playing it, since a
+       thinner deck is worth more than one point of trade or combat. Other
+       cards are kept.
+    2. plays every card it can and uses every ally and base ability, in
        `actions` order, as greedy does: all of them are gains.
-    2. acquires the affordable card worth most, ties broken by name, and
+    3. acquires the affordable card worth most, ties broken by name, and
        repeats while it can afford one. A card is worth its cost, plus
        `SYNERGY` for each card of its faction it already owns (for ally
        abilities), plus `BASE_DEFENSE` per point of defense for a base that
@@ -208,28 +248,28 @@ class HeuristicBot:
        them `AGGRESSION` per point of primary combat: economy early, combat
        late. Outposts get no bonus for their defense: tuning found it lost
        games, as an Outpost's defense only delays the opponent.
-    3. scraps cards for combat (after buying, so their trade is spent):
+    4. scraps cards for combat (after buying, so their trade is spent):
        every card with a combat scrap ability when the combat in hand and in
        those abilities reaches the opponent's Authority plus the defense of
        their Outposts, so this turn wins; otherwise only Explorers, whose
        trade helps only the turn they are played, so 2 combat and a thinner
        deck are worth more than keeping them. Other cards are kept. (Scrap
-       abilities that give trade, and scrapping Scouts and Vipers from hand or
-       discard pile, need effects a later card slice adds.)
-    4. attacks: while Outposts guard the opponent, destroys the weakest one
+       abilities that give trade aren't used.)
+    5. attacks: while Outposts guard the opponent, destroys the weakest one
        first if the combat clears them all (the order doesn't matter then),
        otherwise the dearest one it can (ties by name), as it can't reach the
        player this turn anyway. With no Outposts, it hits the player if that
        wins; otherwise it destroys the dearest base it can first (ties by
        name), since a base works every turn and the damage to the player
        can wait, then hits the player with the rest.
-    5. ends the turn.
+    6. ends the turn.
     """
 
     def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
-        discards = [a for a in actions if isinstance(a, Discard)]
-        if discards:
-            return min(discards, key=lambda a: (_keep(a.card, view), a.card.name))
+        if (forced := _forced(view, actions)) is not None:
+            return _least_wanted(forced, view)
+        if (thin := self._thin(view, actions)) is not None:
+            return thin
         for action in actions:
             if isinstance(action, PlayCard | UseAlly | UseBase):
                 return action
@@ -240,6 +280,17 @@ class HeuristicBot:
         if (attack := self._attack(view, actions)) is not None:
             return attack
         return EndTurn()
+
+    def _thin(self, view: View, actions: tuple[Action, ...]) -> Action | None:
+        starters = (SCOUT, VIPER)
+        from_discard: list[CardChoice] = [
+            a for a in actions if isinstance(a, ScrapDiscardCard) and a.card in starters
+        ]
+        from_hand: list[CardChoice] = [
+            a for a in actions if isinstance(a, ScrapHandCard) and a.card in starters
+        ]
+        scraps = from_discard or from_hand
+        return _least_wanted(scraps, view) if scraps else None
 
     def _buy(self, view: View, actions: tuple[Action, ...]) -> Action | None:
         owned = _owned(view)

@@ -13,6 +13,8 @@ from minimax_games.games.star_realms.action import (
     EndTurn,
     PlayCard,
     Scrap,
+    ScrapDiscardCard,
+    ScrapHandCard,
     UseAlly,
     UseBase,
 )
@@ -26,7 +28,13 @@ from minimax_games.games.star_realms.catalogue import (
     VIPER,
     playable_deck,
 )
-from minimax_games.games.star_realms.effect import Authority, Combat, Draw, Trade
+from minimax_games.games.star_realms.effect import (
+    Authority,
+    Combat,
+    Draw,
+    OpponentDiscards,
+    Trade,
+)
 from minimax_games.games.star_realms.state import GameState
 
 
@@ -147,8 +155,12 @@ def test_with_only_the_first_slice_effects_the_playable_deck_is_the_first_slice(
     }
 
 
+SLICE_2_EFFECTS = SLICE_1_EFFECTS | {OpponentDiscards}
+
+
 def test_the_playable_deck_adds_the_opponent_discard_cards_to_the_first_slice():
-    added = Counter(PLAYABLE_TRADE_DECK) - Counter(playable_deck(SLICE_1_EFFECTS))
+    deck = playable_deck(SLICE_2_EFFECTS)
+    added = Counter(deck) - Counter(playable_deck(SLICE_1_EFFECTS))
     assert {card.name: n for card, n in added.items()} == {
         "Imperial Fighter": 3,
         "Imperial Frigate": 3,
@@ -156,8 +168,23 @@ def test_the_playable_deck_adds_the_opponent_discard_cards_to_the_first_slice():
         "Royal Redoubt": 1,
     }
     # Battlecruiser's scrap ability also destroys a base, not implemented yet.
-    assert CATALOGUE["Battlecruiser"] not in PLAYABLE_TRADE_DECK
-    assert len(PLAYABLE_TRADE_DECK) == 40
+    assert CATALOGUE["Battlecruiser"] not in deck
+    assert len(deck) == 40
+
+
+def test_the_playable_deck_adds_the_scrap_from_hand_or_discard_cards():
+    added = Counter(PLAYABLE_TRADE_DECK) - Counter(playable_deck(SLICE_2_EFFECTS))
+    assert {card.name: n for card, n in added.items()} == {
+        "Trade Bot": 3,
+        "Missile Bot": 3,
+        "Supply Bot": 3,
+        "Battle Mech": 1,
+        "Junkyard": 1,
+        "Machine Base": 1,
+    }
+    # Patrol Mech's primary is an "or" choice, not implemented yet.
+    assert CATALOGUE["Patrol Mech"] not in PLAYABLE_TRADE_DECK
+    assert len(PLAYABLE_TRADE_DECK) == 52
 
 
 CUTTER = CATALOGUE["Cutter"]
@@ -629,3 +656,94 @@ def test_a_player_discards_no_more_cards_than_they_hold():
             state = rules.apply(state, discards(state)[0])
         assert state.players[1].hand == ()
         assert EndTurn() in rules.legal_actions(state)
+
+
+TRADE_BOT = CATALOGUE["Trade Bot"]  # Machine Cult: 1 trade, may scrap hand/discard
+JUNKYARD = CATALOGUE["Junkyard"]  # outpost: may scrap from hand or discard pile
+MACHINE_BASE = CATALOGUE["Machine Base"]  # outpost: draw, then scrap from hand
+
+
+def hand_or_discard_scraps(
+    state: GameState,
+) -> list[ScrapHandCard | ScrapDiscardCard]:
+    return [
+        a
+        for a in rules.legal_actions(state)
+        if isinstance(a, ScrapHandCard | ScrapDiscardCard)
+    ]
+
+
+def with_discard(state: GameState, *discard: Card) -> GameState:
+    first = dataclasses.replace(state.players[0], discard=discard)
+    return dataclasses.replace(state, players=(first, state.players[1]))
+
+
+def test_a_scrap_ability_lets_the_player_scrap_a_card_from_their_discard_pile():
+    state = with_discard(with_hand(rules.new_game(seed=1), TRADE_BOT), VIPER)
+    state = rules.apply(state, PlayCard(TRADE_BOT))
+    assert state.trade == 1
+    state = rules.apply(state, ScrapDiscardCard(VIPER))
+    assert state.players[0].discard == ()
+    assert state.scrap_heap == (VIPER,)
+
+
+def test_machine_base_draws_then_must_scrap_a_card_from_hand_before_anything_else():
+    state = with_hand(rules.new_game(seed=1), MACHINE_BASE, SCOUT)
+    deck = state.players[0].deck
+    state = rules.apply(state, PlayCard(MACHINE_BASE))
+    assert state.players[0].hand == (SCOUT, deck[0])
+    assert rules.legal_actions(state) == tuple(
+        ScrapHandCard(c) for c in dict.fromkeys((SCOUT, deck[0]))
+    )
+    state = rules.apply(state, ScrapHandCard(SCOUT))
+    assert state.players[0].hand == (deck[0],)
+    assert state.scrap_heap == (SCOUT,)
+    assert hand_or_discard_scraps(state) == []
+    assert EndTurn() in rules.legal_actions(state)
+
+
+def test_each_scrap_ability_scraps_at_most_one_card_and_skipping_it_is_allowed():
+    state = with_hand(rules.new_game(seed=1), TRADE_BOT, VIPER, CORVETTE)
+    state = with_discard(state, SCOUT, SCOUT)
+    assert hand_or_discard_scraps(state) == []
+    state = rules.apply(state, PlayCard(TRADE_BOT))
+    assert set(hand_or_discard_scraps(state)) == {
+        ScrapHandCard(VIPER),
+        ScrapHandCard(CORVETTE),
+        ScrapDiscardCard(SCOUT),
+    }
+    # The ability waits: playing other cards first doesn't use it up.
+    state = rules.apply(state, PlayCard(VIPER))
+    state = rules.apply(state, ScrapHandCard(CORVETTE))
+    assert state.players[0].hand == ()
+    assert state.scrap_heap == (CORVETTE,)
+    assert hand_or_discard_scraps(state) == []
+
+
+def test_a_scrap_ability_left_unused_is_lost_at_the_end_of_the_turn():
+    state = with_discard(with_hand(rules.new_game(seed=1), TRADE_BOT), SCOUT)
+    state = rules.apply(rules.apply(state, PlayCard(TRADE_BOT)), EndTurn())
+    assert state.may_scrap == 0
+    assert hand_or_discard_scraps(state) == []
+    assert state.scrap_heap == ()
+
+
+def test_an_explorer_scrapped_from_the_discard_pile_goes_back_to_its_pile():
+    state = with_discard(with_hand(rules.new_game(seed=1), TRADE_BOT), EXPLORER)
+    explorers = state.explorers
+    state = rules.apply(
+        rules.apply(state, PlayCard(TRADE_BOT)), ScrapDiscardCard(EXPLORER)
+    )
+    assert state.explorers == explorers + 1
+    assert state.players[0].discard == ()
+    assert state.scrap_heap == ()
+
+
+def test_machine_base_owes_no_scrap_when_there_is_nothing_to_draw_or_scrap():
+    state = with_hand(rules.new_game(seed=1), MACHINE_BASE)
+    first = dataclasses.replace(state.players[0], deck=())
+    state = dataclasses.replace(state, players=(first, state.players[1]))
+    state = rules.apply(state, PlayCard(MACHINE_BASE))
+    assert state.players[0].hand == ()
+    assert state.must_scrap == 0
+    assert EndTurn() in rules.legal_actions(state)

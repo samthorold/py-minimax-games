@@ -15,6 +15,8 @@ from minimax_games.games.star_realms.action import (
     EndTurn,
     PlayCard,
     Scrap,
+    ScrapDiscardCard,
+    ScrapHandCard,
     UseAlly,
     UseBase,
 )
@@ -77,6 +79,10 @@ def _gain(effect: Effect, state: GameState) -> str:
         case OpponentDiscards(cards):
             plural = "s" if cards != 1 else ""
             return f"{cards} discard{plural} by {_player(1 - state.current)}"
+        case ScrapHandOrDiscard(cards):
+            return f"{cards} scrap{'s' if cards != 1 else ''} from hand or discard pile"
+        case ScrapFromHand():
+            return "1 scrap from hand"
         case (
             AcquireShipFreeOnTop()
             | AllyForAllFactions()
@@ -87,8 +93,6 @@ def _gain(effect: Effect, state: GameState) -> str:
             | DrawIfBases()
             | DrawPerFactionCard()
             | NextShipOnTop()
-            | ScrapFromHand()
-            | ScrapHandOrDiscard()
             | ScrapThenDraw()
             | ScrapTradeRow()
             | ShipsGainCombat()
@@ -129,6 +133,10 @@ def describe(action: Action, state: GameState) -> str:
             return f"{player} destroys {opponent}'s {card.name} ({card.defense} combat)"
         case Discard(card):
             return f"{player} discards {card.name}"
+        case ScrapHandCard(card):
+            return f"{player} scraps {card.name} from hand"
+        case ScrapDiscardCard(card):
+            return f"{player} scraps {card.name} from the discard pile"
         case EndTurn():
             return f"{player} ends the turn"
         case _:

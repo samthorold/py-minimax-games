@@ -92,6 +92,28 @@ class Discard(Variant):
     card: Card
 
 
+class ScrapHandCard(Variant):
+    """Scrap `card` from hand: it goes to the scrap heap (an Explorer back to
+    its pile), without its scrap ability.
+
+    Offered while the turn has optional scraps left (`GameState.may_scrap`,
+    from `ScrapHandOrDiscard` effects), and, as the only legal actions, while
+    a scrap from hand is owed (`GameState.must_scrap`, Machine Base). Like
+    `PlayCard`, the action names the card, not a position in the hand.
+    """
+
+    card: Card
+
+
+class ScrapDiscardCard(Variant):
+    """Scrap `card` from the discard pile, like `ScrapHandCard` from hand.
+
+    Offered while the turn has optional scraps left (`GameState.may_scrap`).
+    """
+
+    card: Card
+
+
 class EndTurn(Variant):
     """Discard the hand and ships in play (bases stay), lose unspent trade and
     combat, draw 5."""
@@ -106,5 +128,7 @@ type Action = (
     | AttackPlayer
     | AttackBase
     | Discard
+    | ScrapHandCard
+    | ScrapDiscardCard
     | EndTurn
 )
