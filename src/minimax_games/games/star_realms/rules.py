@@ -8,6 +8,8 @@ from typing import assert_never
 
 from minimax_games.games.star_realms.action import (
     Acquire,
+    AcquireFreeShip,
+    AcquireOnTop,
     Action,
     AttackBase,
     AttackPlayer,
@@ -82,7 +84,11 @@ def _draw(player: PlayerState, n: int, seed: int) -> tuple[PlayerState, int]:
             deck, seed = _shuffle(discard, seed)
             discard = ()
         hand, deck = (*hand, deck[0]), deck[1:]
-    return player.replace(deck=deck, hand=hand, discard=discard), seed
+    # The known top cards are drawn first (`PlayerState.known_top`).
+    known_top = max(player.known_top - n, 0)
+    return player.replace(
+        deck=deck, hand=hand, discard=discard, known_top=known_top
+    ), seed
 
 
 def new_game(
@@ -189,15 +195,20 @@ def _resolve(state: GameState, effect: Effect, card: Card) -> GameState:
             if not state.players[state.current].hand:
                 return state
             return state.replace(recycling=cards)
+        case NextShipOnTop():
+            return state.replace(may_on_top=state.may_on_top + 1)
         case Choice():
             # The player chooses an option before anything else (`_forced`).
             return state.replace(choosing=(*state.choosing, card))
+        case AcquireShipFreeOnTop():
+            # With no ship in the row there is nothing to acquire.
+            if not any(c.type is CardType.SHIP for c in state.trade_row):
+                return state
+            return state.replace(free_ships=state.free_ships + 1)
         case (
-            AcquireShipFreeOnTop()
-            | AllyForAllFactions()
+            AllyForAllFactions()
             | CopyShip()
             | DrawIfBases()
-            | NextShipOnTop()
             | ScrapThenDraw()
             | ShipsGainCombat()
         ):
@@ -275,7 +286,9 @@ def legal_actions(state: GameState) -> tuple[Action, ...]:
     the discard pile; while the player may still scrap from the Trade Row
     (`GameState.may_scrap_row`), one `ScrapTradeRowCard` per distinct card
     in the row; one `Acquire` per distinct affordable card
-    in the Trade Row or on the Explorer pile; while the player may still
+    in the Trade Row or on the Explorer pile, and, while the player may
+    still put a ship on top of their deck (`GameState.may_on_top`), one
+    `AcquireOnTop` per affordable ship among them; while the player may still
     destroy a base (`GameState.may_destroy`), one `DestroyTarget` per
     distinct opponent's base, Outposts or not; one `AttackBase` per distinct
     opponent's base whose defense the combat covers, only Outposts while the
@@ -287,7 +300,9 @@ def legal_actions(state: GameState) -> tuple[Action, ...]:
     one `Discard` per distinct card in hand; while a scrap from hand is
     owed (Machine Base), one `ScrapHandCard` per distinct card in hand;
     while recycling (Recycling Station), one `Recycle` per distinct set of
-    cards; and while an "or" choice is being made, one `Choose` per option.
+    cards; while a free ship is owed (Blob Carrier), one `AcquireFreeShip`
+    per distinct ship in the Trade Row; and while an "or" choice is being
+    made, one `Choose` per option.
     """
     if winner(state) is not None:
         return ()
@@ -305,9 +320,12 @@ def legal_actions(state: GameState) -> tuple[Action, ...]:
             ScrapTradeRowCard(card) for card in dict.fromkeys(state.trade_row)
         )
     market = state.trade_row + ((EXPLORER,) if state.explorers else ())
-    actions.extend(
-        Acquire(card) for card in dict.fromkeys(market) if card.cost <= state.trade
-    )
+    affordable = [card for card in dict.fromkeys(market) if card.cost <= state.trade]
+    actions.extend(Acquire(card) for card in affordable)
+    if state.may_on_top:
+        actions.extend(
+            AcquireOnTop(card) for card in affordable if card.type is CardType.SHIP
+        )
     targets = state.players[1 - state.current].bases
     if state.may_destroy:
         actions.extend(DestroyTarget(card) for card in dict.fromkeys(targets))
@@ -327,7 +345,7 @@ def _forced(state: GameState) -> tuple[Action, ...] | None:
     """The actions of a decision the current player must make before any
     other, if one is pending, else `None`.
 
-    Four so far: a pending discard (`PlayerState.to_discard`), one `Discard`
+    Five so far: a pending discard (`PlayerState.to_discard`), one `Discard`
     per distinct card in hand (`EndTurn` caps the count at the hand's size,
     so while it is positive the hand isn't empty); an owed scrap from
     hand (`GameState.must_scrap`, Machine Base), one `ScrapHandCard` per
@@ -335,7 +353,10 @@ def _forced(state: GameState) -> tuple[Action, ...] | None:
     can happen until it is made); recycling (`GameState.recycling`,
     Recycling Station's `DiscardThenDraw` once chosen, only with a card in
     hand), one `Recycle` per distinct set of one card up to that many from
-    hand; and an "or" choice (`GameState.choosing`), one `Choose` per
+    hand; a free ship (`GameState.free_ships`, Blob Carrier's
+    `AcquireShipFreeOnTop`, owed only while the row holds a ship), one
+    `AcquireFreeShip` per distinct ship in the row; and an "or" choice
+    (`GameState.choosing`), one `Choose` per
     option of the first card's `Choice`, in the card's order. Later effects
     that interrupt the turn with a decision belong here too.
     """
@@ -347,6 +368,12 @@ def _forced(state: GameState) -> tuple[Action, ...] | None:
     if state.recycling:
         return tuple(
             Recycle(cards) for cards in _discard_sets(player.hand, state.recycling)
+        )
+    if state.free_ships:
+        return tuple(
+            AcquireFreeShip(card)
+            for card in dict.fromkeys(state.trade_row)
+            if card.type is CardType.SHIP
         )
     if state.choosing:
         card = state.choosing[0]
@@ -393,8 +420,9 @@ def _maybe_automatic(state: GameState) -> Iterator[Action]:
 def _pure_gain(effects: tuple[Effect, ...]) -> bool:
     """Whether `effects` only add trade, combat or Authority, make the
     opponent discard, or let the player scrap from hand or discard pile or
-    from the Trade Row, or destroy one of the opponent's bases, or are "or"
-    choices between options that do only that."""
+    from the Trade Row, destroy one of the opponent's bases or put a ship
+    they acquire on top of their deck, or are "or" choices between options
+    that do only that."""
     return all(
         isinstance(
             e,
@@ -404,7 +432,8 @@ def _pure_gain(effects: tuple[Effect, ...]) -> bool:
             | OpponentDiscards
             | ScrapHandOrDiscard
             | DestroyBase
-            | ScrapTradeRow,
+            | ScrapTradeRow
+            | NextShipOnTop,
         )
         or (isinstance(e, Choice) and all(map(_pure_gain, e.options)))
         for e in effects
@@ -442,10 +471,11 @@ def automatic(state: GameState, action: Action) -> bool:
       discards they make at the start of their next turn, so nothing this
       turn depends on when it happens; or letting the player scrap a card
       from hand or discard pile or from the Trade Row, or destroy one of
-      the opponent's bases, which they may do at any time in the turn: the
-      opponent's bases and the Trade Row only change when the player
-      destroys, scraps or buys, and a `DestroyBase` with no base to target
-      or a `ScrapTradeRow` with an empty row is lost either way),
+      the opponent's bases, or put a ship they acquire on top of their
+      deck, which they may do at any time in the turn: the opponent's bases
+      and the Trade Row only change when the player destroys, scraps or
+      buys, and a `DestroyBase` with no base to target or a
+      `ScrapTradeRow` with an empty row is lost either way),
       unless something could scrap it from hand this turn instead
       (`_hand_scrap_ahead`). A ship in hand and a ship in play both go to
       the discard pile at the end of the turn; in play it only adds options
@@ -469,7 +499,9 @@ def automatic(state: GameState, action: Action) -> bool:
     changes what is reshuffled. `Scrap` loses the card, and `Acquire`,
     attacks and `EndTurn` are the turn's real choices. `Discard`,
     `ScrapHandCard`, `ScrapDiscardCard` and `ScrapTradeRowCard` are the
-    player's choice of card, `DestroyTarget` their choice of the
+    player's choice of card, as are `AcquireOnTop` and `AcquireFreeShip`
+    (Blob Carrier's ally ability is a decision too: the row it takes from
+    changes as the player buys and scraps), `DestroyTarget` their choice of the
     opponent's base, `Choose` their choice of option and `Recycle` of the
     cards to discard. A choice with a draw among its options (Blob World,
     Recycling Station) isn't pure gain, so using it is a decision too.
@@ -489,6 +521,8 @@ def automatic(state: GameState, action: Action) -> bool:
         case (
             Scrap()
             | Acquire()
+            | AcquireOnTop()
+            | AcquireFreeShip()
             | AttackPlayer()
             | AttackBase()
             | DestroyTarget()
@@ -625,6 +659,22 @@ def _take_from_row(state: GameState, card: Card) -> GameState:
     )
 
 
+def _take_from_market(state: GameState, card: Card) -> GameState:
+    """`state` with `card` taken from the Trade Row (`_take_from_row`) or,
+    for an Explorer, from the Explorer pile."""
+    if card == EXPLORER:
+        return state.replace(explorers=state.explorers - 1)
+    return _take_from_row(state, card)
+
+
+def _on_top(state: GameState, card: Card) -> GameState:
+    """`state` with `card`, which the current player acquires, on top of
+    their deck, where both players know it (`PlayerState.known_top`)."""
+    player = state.players[state.current]
+    player = player.replace(deck=(card, *player.deck), known_top=player.known_top + 1)
+    return state.replace(players=_players(state, state.current, player))
+
+
 def _destroy(state: GameState, card: Card) -> GameState:
     """`state` with `card`, one of the opponent's bases, destroyed: in its
     owner's discard pile. Destroy-base abilities left over once the opponent
@@ -700,13 +750,18 @@ def _apply(state: GameState, action: Action) -> GameState:
             return state
         case Acquire(card):
             player = player.replace(discard=(*player.discard, card))
-            players = _players(state, me, player)
-            trade = state.trade - card.cost
-            if card == EXPLORER:
-                return state.replace(
-                    players=players, explorers=state.explorers - 1, trade=trade
-                )
-            return _take_from_row(state.replace(players=players, trade=trade), card)
+            state = state.replace(
+                players=_players(state, me, player), trade=state.trade - card.cost
+            )
+            return _take_from_market(state, card)
+        case AcquireOnTop(card):
+            state = _on_top(state, card).replace(
+                trade=state.trade - card.cost, may_on_top=state.may_on_top - 1
+            )
+            return _take_from_market(state, card)
+        case AcquireFreeShip(card):
+            state = _on_top(state, card).replace(free_ships=state.free_ships - 1)
+            return _take_from_row(state, card)
         case AttackPlayer():
             opponent = state.players[1 - me]
             opponent = opponent.replace(authority=opponent.authority - state.combat)
@@ -784,6 +839,7 @@ def _apply(state: GameState, action: Action) -> GameState:
                 may_destroy=0,
                 may_scrap_row=0,
                 factions_played=NO_FACTIONS_PLAYED,
+                may_on_top=0,
                 rng_seed=seed,
             )
         case _:

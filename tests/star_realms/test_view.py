@@ -4,9 +4,11 @@ from collections import Counter
 
 from minimax_games.games.star_realms import rules
 from minimax_games.games.star_realms.action import (
+    AcquireOnTop,
     EndTurn,
     PlayCard,
     ScrapTradeRowCard,
+    UseAlly,
 )
 from minimax_games.games.star_realms.bots import RandomBot
 from minimax_games.games.star_realms.catalogue import CATALOGUE, EXPLORER
@@ -38,21 +40,28 @@ def with_player(state: GameState, index: int, player: PlayerState) -> GameState:
 
 
 def hide(state: GameState, observer: int, rng: random.Random) -> GameState:
-    """`state` with only what `observer` can't see changed: every deck's order,
-    which of the opponent's cards are in hand and which in the deck (keeping
-    the sizes), the Trade Deck's order and the shuffle seed."""
+    """`state` with only what `observer` can't see changed: every deck's order
+    below its known top cards, which of the opponent's other cards are in
+    hand and which in the deck (keeping the sizes), the Trade Deck's order
+    and the shuffle seed."""
     opponent = 1 - observer
     mine = state.players[observer]
     theirs = state.players[opponent]
-    unseen = shuffled(theirs.hand + theirs.deck, rng)
+    top, rest = theirs.deck[: theirs.known_top], theirs.deck[theirs.known_top :]
+    unseen = shuffled(theirs.hand + rest, rng)
     hand_size = len(theirs.hand)
+    my_top, my_rest = mine.deck[: mine.known_top], mine.deck[mine.known_top :]
     state = with_player(
-        state, observer, dataclasses.replace(mine, deck=shuffled(mine.deck, rng))
+        state,
+        observer,
+        dataclasses.replace(mine, deck=my_top + shuffled(my_rest, rng)),
     )
     state = with_player(
         state,
         opponent,
-        dataclasses.replace(theirs, hand=unseen[:hand_size], deck=unseen[hand_size:]),
+        dataclasses.replace(
+            theirs, hand=unseen[:hand_size], deck=top + unseen[hand_size:]
+        ),
     )
     return dataclasses.replace(
         state,
@@ -99,6 +108,8 @@ def public_changes(state: GameState, observer: int) -> list[GameState]:
         dataclasses.replace(state, may_destroy=state.may_destroy + 1),
         dataclasses.replace(state, may_scrap_row=state.may_scrap_row + 1),
         dataclasses.replace(state, choosing=(*state.choosing, card)),
+        dataclasses.replace(state, may_on_top=state.may_on_top + 1),
+        dataclasses.replace(state, free_ships=state.free_ships + 1),
         dataclasses.replace(
             state,
             factions_played=(state.factions_played[0] + 1, *state.factions_played[1:]),
@@ -116,6 +127,7 @@ def public_changes(state: GameState, observer: int) -> list[GameState]:
                 ("discard", (*player.discard, card)),
                 ("bases", (*player.bases, card)),
                 ("to_discard", player.to_discard + 1),
+                ("known_top", min(player.known_top + 1, len(player.deck))),
             )
         ]
     # the opponent's hand size, with the same cards unseen
@@ -179,7 +191,13 @@ def test_a_sampled_world_keeps_pending_scraps_and_destroys():
     rng = random.Random(6)
     for seed in range(5):
         state = dataclasses.replace(
-            midgame(seed), may_scrap=2, must_scrap=1, may_destroy=3, may_scrap_row=4
+            midgame(seed),
+            may_scrap=2,
+            must_scrap=1,
+            may_destroy=3,
+            may_scrap_row=4,
+            may_on_top=5,
+            free_ships=6,
         )
         for observer in (0, 1):
             world = sample_world(observe(state, observer), rng)
@@ -188,7 +206,9 @@ def test_a_sampled_world_keeps_pending_scraps_and_destroys():
                 world.must_scrap,
                 world.may_destroy,
                 world.may_scrap_row,
-            ) == (2, 1, 3, 4)
+                world.may_on_top,
+                world.free_ships,
+            ) == (2, 1, 3, 4, 5, 6)
 
 
 def test_sampled_worlds_stay_consistent_when_the_trade_row_refills():
@@ -298,3 +318,32 @@ def test_random_games_from_sampled_worlds_finish_and_conserve_cards():
         assert rules.winner(world) is not None or all(
             not (p.deck or p.hand or p.in_play or p.discard) for p in world.players
         )
+
+
+def test_a_ship_put_on_top_of_the_deck_is_known_until_drawn():
+    freighter, shuttle = CATALOGUE["Freighter"], CATALOGUE["Federation Shuttle"]
+    cutter = CATALOGUE["Cutter"]
+    rng = random.Random(9)
+    for seed in range(10):
+        state = rules.new_game(seed)
+        if seed % 2:
+            state = rules.apply(state, EndTurn())
+        me = state.current
+        player = dataclasses.replace(state.players[me], hand=(freighter, shuttle))
+        state = dataclasses.replace(
+            with_player(state, me, player), trade_row=(cutter, *state.trade_row[1:])
+        )
+        for action in (PlayCard(freighter), PlayCard(shuttle), UseAlly(freighter)):
+            state = rules.apply(state, action)
+        state = rules.apply(state, AcquireOnTop(cutter))
+        for observer in (0, 1):
+            view = observe(state, observer)
+            assert view.players[me].deck_top == (cutter,)
+            assert cutter not in view.players[me].unseen
+            for _ in range(5):
+                world = sample_world(view, rng)
+                assert world.players[me].deck[0] == cutter
+                assert observe(world, observer) == view
+        # Drawn at the end of the turn, it is no longer known to be on top.
+        after = rules.apply(state, EndTurn())
+        assert observe(after, 1 - me).players[me].deck_top == ()

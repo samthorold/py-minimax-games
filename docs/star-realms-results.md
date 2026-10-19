@@ -838,3 +838,56 @@ With the 70-card deck the default `bench` positions are different games: horizon
 **Passes.** No crashes, no unfinished games, and the ladder order holds: heuristic beats greedy (89.6%), greedy beats random (100%), cheat beats greedy (74.0%).
 
 Raw outputs (not committed): `choice/heuristic-greedy-500.txt`, `choice/greedy-random-500.txt`, `choice/cheat-greedy-100.txt`, `choice/bench-before-{1,2}.txt`, `choice/bench-after-{1,2}.txt`, `choice/bench-new-deck.txt`, `choice/bench-budget-new-deck.txt`.
+
+## Milestone 4: next ship on top of the deck
+
+- Date: 2026-10-20
+- Commit: the `issue-100-on-top` branch (#100).
+- **The deck changed.** `NextShipOnTop` and `AcquireShipFreeOnTop` join `catalogue.IMPLEMENTED`, so the playable Trade Deck grows from 70 to **74 cards**: 2 Freighters, Central Office and Blob Carrier. These results compare with the previous slice's ("Milestone 4: "or" choices") only loosely.
+- `NextShipOnTop` (Freighter's ally ability, Central Office) is a "may" ability granted automatically (`GameState.may_on_top`); the player then chooses `AcquireOnTop` over `Acquire` for any ship bought later in the turn. Blob Carrier's ally ability is a decision, and its free ship a forced `AcquireFreeShip` choice. A card put on top of a deck is public until drawn (`PlayerView.deck_top`). Both baselines put the ship they buy on top when they may; greedy takes the most expensive free ship and the heuristic the one it would most want to buy (`GreedyBot` and `HeuristicBot` docstrings).
+- Budgets, machine and the check itself as in the previous slices: 500 games each of heuristic vs greedy and greedy vs random, 100 of cheat vs greedy at its defaults (2-turn horizon, 5,000 nodes per decision), seeds from 0, alternating seats, max 300 turns, `--jobs 3`, each run alone in the foreground.
+
+### heuristic vs greedy
+
+`python -m minimax_games.games.star_realms tournament --bots heuristic greedy --games 500 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| heuristic | 451/500 | 90.2% | 230/250 | 221/250 | 0.0099 |
+| greedy | 49/500 | 9.8% | 29/250 | 20/250 | 0.0051 |
+
+500 games, 0 unfinished, mean 23.1 turns, 1.3 s wall time. The heuristic's win rate: 90.2%, interval 87.3-92.5% ("or" choices slice: 89.6%, 86.6-92.0%).
+
+### greedy vs random
+
+`python -m minimax_games.games.star_realms tournament --bots greedy random --games 500 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| greedy | 500/500 | 100.0% | 250/250 | 250/250 | 0.0056 |
+| random | 0/500 | 0.0% | 0/250 | 0/250 | 0.0005 |
+
+500 games, 0 unfinished, mean 22.9 turns, 1.1 s wall time.
+
+### cheat vs greedy
+
+`python -m minimax_games.games.star_realms tournament --bots cheat greedy --games 100 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| cheat | 77/100 | 77.0% | 38/50 | 39/50 | 108 |
+| greedy | 23/100 | 23.0% | 11/50 | 12/50 | 0.0068 |
+
+100 games, 0 unfinished, mean 24.8 turns, 277 s wall time. The cheat's win rate: 77.0%, interval 67.8-84.2% ("or" choices slice: 74.0%, 64.6-81.6%).
+
+### Search speed
+
+The rules add `may_on_top` and `free_ships` to `GameState`, `known_top` to `PlayerState` (updated by every draw), a check in `_forced`, and the `AcquireOnTop` actions while `may_on_top` is positive. On the 70-card deck (`new_game`'s default patched back to it), `bench` searches the identical trees as before the change (222,942 nodes at horizon 1 and 498,923 at horizon 2): 32,300-32,400 and 40,100-40,200 nodes/s after, 33,700-33,800 and 41,600-41,700 before, over two runs each (about 4% slower: building and hashing the bigger state).
+
+With the 74-card deck the default `bench` positions are different games: horizon 1 5/8 searches finished within 200,000 nodes, 609,304 nodes at 38,300 nodes/s; horizon 2 4/8, 895,044 nodes at 39,400 nodes/s. `bench --budget 5000`: the cheat's decisions finished 2 turns at 1/8 positions, 1 turn at 4/8 and none at 3/8 ("or" choices deck, on this branch too: 4/8, 2/8 and 2/8), 118.7 ms per decision. The new branching isn't the cause: with `NextShipOnTop` patched to do nothing, the same eight decisions search exactly the same nodes (the positions' trees never reach an `AcquireOnTop`), so the drop is the new deck's different games, as when each earlier slice changed the deck. `AcquireOnTop` adds one action per affordable ship, only in a turn after Freighter's ally ability or Central Office is used, and Blob Carrier's free ship one decision node with a branch per ship in the row.
+
+### Verdict
+
+**Passes.** No crashes, no unfinished games, and the ladder order holds: heuristic beats greedy (90.2%), greedy beats random (100%), cheat beats greedy (77.0%).
+
+Raw outputs (not committed): `ontop/heuristic-greedy-500.txt`, `ontop/greedy-random-500.txt`, `ontop/cheat-greedy-100.txt`, `ontop/bench-before-{1,2}.txt`, `ontop/bench-after-{1,2}.txt`, `ontop/bench-new-deck.txt`, `ontop/bench-budget-new-deck.txt`, `ontop/bench-budget-old-deck.txt`.

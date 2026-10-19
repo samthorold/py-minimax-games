@@ -8,6 +8,8 @@ from typing import assert_never
 
 from minimax_games.games.star_realms.action import (
     Acquire,
+    AcquireFreeShip,
+    AcquireOnTop,
     Action,
     AttackBase,
     AttackPlayer,
@@ -97,14 +99,16 @@ def _gain(effect: Effect, state: GameState, card: Card) -> str:
             return f"1 card per {faction} card played"
         case DiscardThenDraw(cards):
             return f"up to {cards} cards discarded then drawn"
+        case NextShipOnTop():
+            return "1 ship acquired on top of the deck"
+        case AcquireShipFreeOnTop():
+            return "1 free ship on top of the deck"
         case Choice(options):
             return " or ".join(_gains(option, state, card) for option in options)
         case (
-            AcquireShipFreeOnTop()
-            | AllyForAllFactions()
+            AllyForAllFactions()
             | CopyShip()
             | DrawIfBases()
-            | NextShipOnTop()
             | ScrapThenDraw()
             | ShipsGainCombat()
         ):
@@ -134,6 +138,12 @@ def describe(action: Action, state: GameState) -> str:
             return f"{player} scraps {card.name} for {_gains(card.scrap, state, card)}"
         case Acquire(card):
             return f"{player} acquires {card.name} (cost {card.cost})"
+        case AcquireOnTop(card):
+            return (
+                f"{player} acquires {card.name} (cost {card.cost}) on top of the deck"
+            )
+        case AcquireFreeShip(card):
+            return f"{player} acquires {card.name} for free on top of the deck"
         case AttackPlayer():
             opponent = 1 - state.current
             before = state.players[opponent].authority
