@@ -109,6 +109,9 @@ class ScrapDiscardCard(Variant):
     """Scrap `card` from the discard pile, like `ScrapHandCard` from hand.
 
     Offered while the turn has optional scraps left (`GameState.may_scrap`).
+    These scraps come last in the turn: after one, only more of them (in
+    order of card name), a draw that reshuffles the discard pile or
+    `EndTurn` follow (`GameState.discard_scraps`).
     """
 
     card: Card

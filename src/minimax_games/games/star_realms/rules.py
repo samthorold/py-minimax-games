@@ -134,7 +134,7 @@ def _resolve(state: GameState, effect: Effect) -> GameState:
         case Draw(cards):
             player, seed = _draw(state.players[state.current], cards, state.rng_seed)
             players = _players(state, state.current, player)
-            return state.replace(players=players, rng_seed=seed)
+            return state.replace(players=players, rng_seed=seed, discard_scraps=())
         case OpponentDiscards(cards):
             them = 1 - state.current
             opponent = state.players[them]
@@ -232,6 +232,10 @@ def legal_actions(state: GameState) -> tuple[Action, ...]:
     opponent has one; `AttackPlayer` while there is combat to spend and the
     opponent has no Outpost; and `EndTurn`. Empty once the game is over.
 
+    Discard-pile scraps come last (`_after_discard_scrap`): once the player
+    has made one, only automatic actions, draws that reshuffle the discard
+    pile, more of them and `EndTurn` are legal, until they next draw.
+
     A decision the player must make before anything else replaces all of
     those (`_forced`): while discards are pending at the start of their turn,
     one `Discard` per distinct card in hand, and while a scrap from hand is
@@ -241,6 +245,8 @@ def legal_actions(state: GameState) -> tuple[Action, ...]:
         return ()
     if (forced := _forced(state)) is not None:
         return forced
+    if state.discard_scraps:
+        return _after_discard_scrap(state)
     player = state.players[state.current]
     actions: list[Action] = list(_maybe_automatic(state))
     in_play = player.in_play + player.bases
@@ -403,6 +409,100 @@ def automatic(state: GameState, action: Action) -> bool:
             | EndTurn()
         ):
             return False
+        case _:
+            assert_never(action)
+
+
+def _after_discard_scrap(state: GameState) -> tuple[Action, ...]:
+    """The legal actions once the player has scrapped from their discard
+    pile (`GameState.discard_scraps`), until they next draw: automatic
+    ones, those that draw more cards than the deck holds, so reshuffle the
+    discard pile, more scraps from it of cards whose name sorts no earlier
+    than the last one's, and `EndTurn`.
+
+    The canonical timing of discard-pile scraps (docs/star-realms.md): they
+    come last in the turn, or just before a draw that reshuffles the pile.
+    Safe because a scrap from the discard pile commutes with every other
+    action: nothing else reads the player's discard pile but a reshuffle.
+    Acquired cards are added to it and stay there until the end of the
+    turn, a destroyed base goes to the opponent's, and a draw from the deck
+    alone leaves it be. So any turn that scraps from the discard pile and
+    then does something else reaches the same end-of-turn outcome with the
+    scrap moved later, up to the next reshuffling draw or the end of the
+    turn; the scrap allowance (`may_scrap`) only grows until it is spent.
+    Two scraps from the discard pile commute too, so they are made in
+    order of card name. Hand scraps keep their timing: the heuristic scraps
+    a Viper from hand before it would play it, and holding the scrap back
+    keeps ships in hand waiting as decisions (`_hand_scrap_ahead`).
+
+    Every new effect that draws, or reads the discard pile, must revisit it
+    (`draws` counts `Draw` effects only).
+    """
+    player = state.players[state.current]
+    deck = len(player.deck)
+    actions: list[Action] = [
+        a for a in _maybe_automatic(state) if automatic(state, a) or draws(a) > deck
+    ]
+    actions.extend(
+        Scrap(card)
+        for card in dict.fromkeys(player.in_play + player.bases)
+        if _scrappable(card) and _scrap_draws(card) > deck
+    )
+    if state.may_scrap:
+        last = state.discard_scraps[-1].name
+        actions.extend(
+            ScrapDiscardCard(card)
+            for card in dict.fromkeys(player.discard)
+            if card.name >= last
+        )
+    actions.append(EndTurn())
+    return tuple(actions)
+
+
+def _draw_count(effects: tuple[Effect, ...]) -> int:
+    """How many cards `effects` draw."""
+    return sum(e.cards for e in effects if isinstance(e, Draw))
+
+
+@functools.cache
+def _primary_draws(card: Card) -> int:
+    """How many cards `card`'s primary ability draws (cached by card)."""
+    return _draw_count(card.primary)
+
+
+@functools.cache
+def _ally_draws(card: Card) -> int:
+    """How many cards `card`'s ally ability draws (cached)."""
+    return _draw_count(card.ally)
+
+
+@functools.cache
+def _scrap_draws(card: Card) -> int:
+    """How many cards `card`'s scrap ability draws (cached)."""
+    return _draw_count(card.scrap)
+
+
+def draws(action: Action) -> int:
+    """How many cards taking `action` draws for the current player (before
+    the end of the turn, which `EndTurn` doesn't count)."""
+    match action:
+        case PlayCard(card) | UseBase(card):
+            return _primary_draws(card)
+        case UseAlly(card):
+            return _ally_draws(card)
+        case Scrap(card):
+            return _scrap_draws(card)
+        case (
+            Acquire()
+            | AttackPlayer()
+            | AttackBase()
+            | DestroyTarget()
+            | Discard()
+            | ScrapHandCard()
+            | ScrapDiscardCard()
+            | EndTurn()
+        ):
+            return 0
         case _:
             assert_never(action)
 
@@ -633,6 +733,7 @@ def _apply(state: GameState, action: Action) -> GameState:
                 state.replace(
                     players=_players(state, me, player),
                     may_scrap=state.may_scrap - 1,
+                    discard_scraps=(*state.discard_scraps, card),
                 ),
                 card,
             )
@@ -658,6 +759,7 @@ def _apply(state: GameState, action: Action) -> GameState:
                 bases_used=(),
                 may_scrap=0,
                 may_destroy=0,
+                discard_scraps=(),
                 rng_seed=seed,
             )
         case _:

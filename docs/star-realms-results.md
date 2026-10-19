@@ -732,3 +732,59 @@ With the 56-card deck the default `bench` positions are different games: horizon
 **Passes.** No crashes, no unfinished games, and the ladder order holds: heuristic beats greedy (88.6%), greedy beats random (100%), cheat beats greedy (85.0%).
 
 Raw outputs (not committed): `destroy/heuristic-greedy-500.txt`, `destroy/greedy-random-500.txt`, `destroy/cheat-greedy-100.txt`, `destroy/bench-new-deck.txt`, `destroy/bench-budget-new-deck.txt`.
+
+## Milestone 4: canonical timing for discard-pile scraps
+
+- Date: 2026-10-19
+- Commit: the `issue-105-scrap-timing` branch (#105).
+- **No new cards**: the deck is the destroy slice's 56 cards. The rules change: once a player scraps from their discard pile, the turn goes on only with more such scraps (in order of card name), a draw that reshuffles the discard pile, or its end (`GameState.discard_scraps`, docs/star-realms.md). A brute-force test finds the same end-of-turn outcomes with and without the rule.
+- The heuristic now scraps Vipers and Scouts from its discard pile as it ends its turn, or just before playing a card whose draw would reshuffle them (step 1 of `HeuristicBot`'s docstring), instead of first thing; it still scraps them from hand before playing them when its discard pile holds too few.
+- Random bots now scrap most of what they may (after one scrap, most of their options are more), so in 18 of seeds 0-299 two random bots scrap their whole decks and deadlock behind Outposts neither can break; `test_match.py` now expects most, not all, random-bot games to end.
+- Budgets, machine and the check itself as in the previous slices.
+
+### heuristic vs greedy
+
+`python -m minimax_games.games.star_realms tournament --bots heuristic greedy --games 500 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| heuristic | 441/500 | 88.2% | 231/250 | 210/250 | 0.0107 |
+| greedy | 59/500 | 11.8% | 40/250 | 19/250 | 0.0035 |
+
+500 games, 0 unfinished, mean 22.9 turns, 1.2 s wall time. The heuristic's win rate: 88.2% (destroy slice: 88.6%). Its time per move rose from 0.006 to 0.011 ms: it now checks each play for a reshuffling draw.
+
+### greedy vs random
+
+`python -m minimax_games.games.star_realms tournament --bots greedy random --games 500 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| greedy | 500/500 | 100.0% | 250/250 | 250/250 | 0.0036 |
+| random | 0/500 | 0.0% | 0/250 | 0/250 | 0.0005 |
+
+500 games, 0 unfinished, mean 23.6 turns, 1.0 s wall time.
+
+### cheat vs greedy
+
+`python -m minimax_games.games.star_realms tournament --bots cheat greedy --games 100 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| cheat | 82/100 | 82.0% | 44/50 | 38/50 | 115 |
+| greedy | 18/100 | 18.0% | 12/50 | 6/50 | 0.0050 |
+
+100 games, 0 unfinished, mean 24.9 turns, 308 s wall time. The cheat's win rate: 82.0%, within the noise of the destroy slice's 85.0%. Main, rerun the same day for comparison, gave 85/100 at 102 ms per move (the destroy slice recorded 95.4 ms); profiling four of these games on each side took the same total time (74 s on this branch, 76 s on main) with fewer search nodes on this branch.
+
+### Search trees and speed
+
+`bench --budget 5000`, 56-card deck: the cheat's decisions finished 2 turns at 3/8 positions, 1 turn at 3/8 and none at 2/8 before the change, 74.3 ms per decision, and **the same after**, 78.7 ms per decision. With the scrap slice's 52-card deck (`new_game`'s default patched back to it) also unchanged: 2/8, 3/8 and 3/8 before and after, 89.4 and 93.0 ms per decision.
+
+The rule removes many orderings, but the budgeted search barely gains: alpha-beta already cut most of them, and the rest of the scrap cost is real. Each end-of-turn position still has one leaf per choice of cards to scrap, and those are different outcomes. The unfinished positions are dominated by buys and attacks in every order (at 1/7 and 2/13 the first turn has no scrap at all), or by those leaves (2/21). Exhaustive one-turn trees (`bench.turn_tree`, 52-card deck) with a scrap shrink about threefold: the opponent's turn after seed 1 turn 15 from 609,084 to 208,958 nodes, after seed 2 turn 5 from 34,626,844 to 12,769,486, with the same distinct states (4,286 and 7,081). Without a scrap the trees are identical (7 of the 8 default positions' first turns). In the full `bench`, 2-turn searches that finish change little and both ways, as move order changes pruning: 52-card deck, seed 1 turn 15 28,123 to 34,697 nodes, seed 2 turn 5 28,237 to 22,080, the rest identical; 56-card deck, seed 1 turn 11 34,180 to 19,745, seed 1 turn 19 983 to 795.
+
+Speed per node: on identical trees (52-card deck, horizon 1, two runs each) 55,100-55,300 nodes/s after against 56,300-56,500 before, about 2% slower: one more `GameState` field and one more check per `legal_actions`. Where the trees change, the mix of nodes shifts toward expensive ones. The pruned orderings were cheap nodes inside a turn; what is left after a discard-pile scrap is mostly `EndTurn`, which draws a hand, auto-plays the next player's cards and, at the horizon, evaluates. In the 2-turn search from seed 2 turn 21, 44,000 of the first 100,000 nodes are evaluated leaves after against 27,000 before, and the search runs at 19,300 nodes/s against 46,400 (seed 2 turn 13: 29,500 against 39,000). So with a node budget the cheat spends more time per decision for the same depth, hence its 115 ms against 102 ms per move above.
+
+### Verdict
+
+**Passes the regression check**: no crashes, no unfinished games, and the ladder order holds: heuristic beats greedy (88.2%), greedy beats random (100%), cheat beats greedy (82.0%). The rule is sound (identical outcomes) and shrinks exhaustive turn trees about threefold where scraps occur, but it doesn't change the depths the budgeted cheat finishes, and its decisions take longer per node budget (more of the nodes it searches are turn ends). The next bottleneck is the order of buys and attacks.
+
+Raw outputs (not committed): `timing/heuristic-greedy-500.txt`, `timing/greedy-random-500.txt`, `timing/cheat-greedy-100.txt`, `timing/cheat-greedy-100-main.txt`, `timing/bench-before.txt`, `timing/bench-after.txt`, `timing/bench-budget-before.txt`, `timing/bench-budget-after.txt`, `timing/bench52-*.txt`.

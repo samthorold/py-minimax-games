@@ -9,6 +9,7 @@ the true state.
 import random
 from typing import Protocol, runtime_checkable
 
+from minimax_games.games.star_realms import rules
 from minimax_games.games.star_realms.action import (
     Acquire,
     Action,
@@ -201,6 +202,17 @@ def _keep(card: Card, view: View) -> float:
     return card.cost + AGGRESSION * _combat(card.primary)
 
 
+STARTERS = (SCOUT, VIPER)
+"""The starting deck's cards, which the heuristic bot scraps when it may."""
+
+
+def _starters(
+    actions: tuple[Action, ...], kind: type[ScrapHandCard | ScrapDiscardCard]
+) -> list[CardChoice]:
+    """The `kind` scraps among `actions` of a Viper or Scout."""
+    return [a for a in actions if isinstance(a, kind) and a.card in STARTERS]
+
+
 def _cheapest(action: CardChoice) -> tuple[int, str]:
     """A sort key for giving up cards: the cheapest first, ties by name."""
     return action.card.cost, action.card.name
@@ -243,10 +255,12 @@ class HeuristicBot:
        the deck, and a Scout late.
     1. while it may scrap from hand or discard pile (Trade Bot, Junkyard,
        ...), scraps a Viper or Scout, the one it least wants to play (as in
-       0) first: from the discard pile while one is there, where it does
-       nothing this turn, otherwise from hand, before playing it, since a
-       thinner deck is worth more than one point of trade or combat. Other
-       cards are kept.
+       0) first: from hand, before playing it, while it has more scraps
+       than Vipers and Scouts in its discard pile, since a thinner deck is
+       worth more than one point of trade or combat. Those in the discard
+       pile, where they do nothing this turn, it scraps last (step 7), as
+       the rules want, or just before playing a card whose draw would
+       reshuffle them into the deck. Other cards are kept.
     2. plays every card it can and uses every ally and base ability, in
        `actions` order, as greedy does: all of them are gains.
     3. while it may destroy one of the opponent's bases (Missile Mech,
@@ -278,7 +292,8 @@ class HeuristicBot:
        wins; otherwise it destroys the dearest base it can first (ties by
        name), since a base works every turn and the damage to the player
        can wait, then hits the player with the rest.
-    7. ends the turn.
+    7. scraps the Vipers and Scouts it may from its discard pile (step 1),
+       then ends the turn.
     """
 
     def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
@@ -298,18 +313,31 @@ class HeuristicBot:
             return scrap
         if (attack := self._attack(view, actions)) is not None:
             return attack
+        if (thin := self._thin_discard(view, actions)) is not None:
+            return thin
         return EndTurn()
 
     def _thin(self, view: View, actions: tuple[Action, ...]) -> Action | None:
-        starters = (SCOUT, VIPER)
-        from_discard: list[CardChoice] = [
-            a for a in actions if isinstance(a, ScrapDiscardCard) and a.card in starters
-        ]
-        from_hand: list[CardChoice] = [
-            a for a in actions if isinstance(a, ScrapHandCard) and a.card in starters
-        ]
-        scraps = from_discard or from_hand
-        return _least_wanted(scraps, view) if scraps else None
+        """A scrap of a Viper or Scout to make now (step 1), if any."""
+        me = view.players[view.observer]
+        discarded = sum(card in STARTERS for card in me.discard)
+        if view.may_scrap > discarded and (
+            from_hand := _starters(actions, ScrapHandCard)
+        ):
+            return _least_wanted(from_hand, view)
+        reshuffle = any(
+            isinstance(a, PlayCard | UseAlly | UseBase)
+            and rules.draws(a) > me.deck_size
+            for a in actions
+        )
+        if view.discard_scraps or reshuffle:
+            return self._thin_discard(view, actions)
+        return None
+
+    def _thin_discard(self, view: View, actions: tuple[Action, ...]) -> Action | None:
+        """A scrap of a Viper or Scout from the discard pile, if any."""
+        from_discard = _starters(actions, ScrapDiscardCard)
+        return _least_wanted(from_discard, view) if from_discard else None
 
     def _buy(self, view: View, actions: tuple[Action, ...]) -> Action | None:
         owned = _owned(view)

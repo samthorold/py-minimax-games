@@ -853,3 +853,48 @@ def test_abilities_left_over_once_the_opponent_has_no_bases_are_dropped():
     assert state.may_destroy == 2
     state = rules.apply(state, DestroyTarget(THE_HIVE))
     assert state.may_destroy == 0
+
+
+# Canonical timing of discard-pile scraps: they come last in the turn, or
+# just before a draw that reshuffles the discard pile.
+
+
+def test_after_a_discard_pile_scrap_the_turn_can_only_end_or_scrap_again():
+    state = with_hand(rules.new_game(seed=1), JUNKYARD, SCOUT, CORVETTE)
+    state = with_discard(state, VIPER, VIPER)
+    state = dataclasses.replace(state, trade=5, may_scrap=1)
+    state = rules.apply(state, ScrapDiscardCard(VIPER))
+    # The deck holds enough for the Corvette's draw, so it can't reshuffle.
+    assert rules.legal_actions(state) == (EndTurn(),)
+    state = rules.apply(state, EndTurn())
+    assert state.discard_scraps == ()
+    assert len(rules.legal_actions(state)) > 1
+
+
+def test_a_draw_that_reshuffles_the_discard_pile_can_follow_a_discard_pile_scrap():
+    state = with_hand(rules.new_game(seed=1), CORVETTE, SCOUT)
+    first = dataclasses.replace(state.players[0], deck=(), discard=(VIPER, VIPER))
+    state = dataclasses.replace(state, players=(first, state.players[1]), may_scrap=2)
+    state = rules.apply(state, ScrapDiscardCard(VIPER))
+    assert rules.legal_actions(state) == (
+        PlayCard(CORVETTE),
+        ScrapDiscardCard(VIPER),
+        EndTurn(),
+    )
+    # After the draw, the turn goes on as usual.
+    state = rules.apply(state, PlayCard(CORVETTE))
+    assert state.players[0].hand == (SCOUT, VIPER)
+    assert {PlayCard(SCOUT), ScrapHandCard(SCOUT), AttackPlayer()} <= set(
+        rules.legal_actions(state)
+    )
+
+
+def test_several_discard_pile_scraps_are_made_in_order_of_card_name():
+    state = with_discard(rules.new_game(seed=1), VIPER, SCOUT, EXPLORER, SCOUT)
+    state = dataclasses.replace(state, may_scrap=3)
+    state = rules.apply(state, ScrapDiscardCard(SCOUT))
+    # Scrapping the Explorer before the Scout reaches the same position.
+    assert hand_or_discard_scraps(state) == [
+        ScrapDiscardCard(VIPER),
+        ScrapDiscardCard(SCOUT),
+    ]

@@ -37,6 +37,10 @@ from minimax_games.games.star_realms.view import View, observe, sample_world
 
 SEEDS = range(50)
 
+MAX_TURNS = 300
+"""Where `moves` stops a game that hasn't ended: some random-bot games never
+do (`test_most_games_between_random_bots_end_with_a_winner`)."""
+
 
 class Recorder:
     """Wraps a bot: records its actions."""
@@ -54,7 +58,7 @@ class Recorder:
 def moves(seed: int, bots: tuple[Bot, Bot]) -> Iterator[tuple[GameState, Action]]:
     """Each state of a game from `seed` with the action taken in it, the bot's
     or an automatic one, as `play_match` plays it: for checking properties of
-    the rules."""
+    the rules. Stops after `MAX_TURNS` turns."""
     automatic: list[tuple[GameState, Action]] = []
 
     def record(state: GameState, action: Action) -> None:
@@ -64,7 +68,7 @@ def moves(seed: int, bots: tuple[Bot, Bot]) -> Iterator[tuple[GameState, Action]
     while True:
         yield from automatic
         automatic.clear()
-        if rules.winner(state) is not None:
+        if rules.winner(state) is not None or state.turn > MAX_TURNS:
             return
         view = observe(state, state.current)
         action = bots[state.current].choose(view, rules.legal_actions(state))
@@ -88,14 +92,24 @@ class Passive:
         return EndTurn() if EndTurn() in actions else actions[0]
 
 
-def test_games_between_random_bots_end_with_a_winner():
-    # With the 30-card first slice, seed 13 stalled: once the market was
-    # empty, the Authority automatic play gave outpaced random attacks. Since
-    # opponent discards joined the deck, none of seeds 0-299 does.
+def test_most_games_between_random_bots_end_with_a_winner():
+    # Some never end: with the 30-card first slice, seed 13 stalled once the
+    # market was empty, the Authority automatic play gave outpacing random
+    # attacks. Since discard-pile scraps come last in the turn, random bots
+    # scrap most of what they may (after one scrap, most of their options are
+    # more), and in 18 of seeds 0-299 both players scrap their whole deck
+    # and are left behind Outposts the other's combat can't break: 5 of 50
+    # here.
+    ended = 0
     for seed in SEEDS:
-        result = play_match((RandomBot(seed), RandomBot(seed + 1000)), seed)
+        try:
+            result = play_match((RandomBot(seed), RandomBot(seed + 1000)), seed)
+        except MatchTooLong:
+            continue
         assert result.winner in (0, 1)
         assert result.turns > 0
+        ended += 1
+    assert ended >= 40
 
 
 def test_the_same_seed_gives_the_same_game():

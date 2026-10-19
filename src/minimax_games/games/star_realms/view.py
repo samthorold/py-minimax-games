@@ -74,6 +74,7 @@ class View:
     may_scrap: int
     must_scrap: int
     may_destroy: int
+    discard_scraps: tuple[Card, ...]
 
 
 def _player_view(player: PlayerState, *, hand_seen: bool) -> PlayerView:
@@ -116,6 +117,7 @@ def observe(state: GameState, observer: int) -> View:
         may_scrap=state.may_scrap,
         must_scrap=state.must_scrap,
         may_destroy=state.may_destroy,
+        discard_scraps=state.discard_scraps,
     )
 
 
@@ -163,4 +165,5 @@ def sample_world(view: View, rng: random.Random) -> GameState:
         may_scrap=view.may_scrap,
         must_scrap=view.must_scrap,
         may_destroy=view.may_destroy,
+        discard_scraps=view.discard_scraps,
     )

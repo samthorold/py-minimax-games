@@ -16,7 +16,7 @@ from minimax_games.games.star_realms.action import (
     UseAlly,
 )
 from minimax_games.games.star_realms.card import Card
-from minimax_games.games.star_realms.catalogue import CATALOGUE, SCOUT, VIPER
+from minimax_games.games.star_realms.catalogue import CATALOGUE, EXPLORER, SCOUT, VIPER
 from minimax_games.games.star_realms.state import GameState, PlayerState
 
 
@@ -412,3 +412,67 @@ def test_auto_play_does_nothing_once_the_game_is_over():
     loser = dataclasses.replace(state.players[1], authority=0)
     state = dataclasses.replace(state, players=(state.players[0], loser))
     assert rules.auto_play(state) == state
+
+
+# Canonical timing of discard-pile scraps: after one, the turn goes on only
+# with more of them, a draw that reshuffles the discard pile, or its end.
+# Brute-force every way to play the turn with that rule and without it (the
+# flag cleared after each action), and compare the outcomes.
+
+
+def untimed(state: GameState, action: Action) -> GameState:
+    """`automated`, without the canonical timing of discard-pile scraps."""
+    after = dataclasses.replace(rules.apply(state, action), discard_scraps=())
+    return rules.auto_play(after)
+
+
+def tree_size(state: GameState, step: Step) -> int:
+    """How many decisions the tree of ways to play out the turn from `state`
+    holds, as a search without transpositions meets them."""
+    actions = [a for a in rules.legal_actions(state) if a != EndTurn()]
+    return 1 + sum(tree_size(step(state, a), step) for a in actions)
+
+
+MISSILE_BOT = CATALOGUE["Missile Bot"]  # 2 combat, may scrap hand/discard
+
+TIMING_STATES = {
+    # The existing scrap state: a draw that doesn't reshuffle, and a buy.
+    "scraps": SMALL_STATES["scraps"],
+    # A draw that reshuffles the discard pile mid-turn, around a buy whose
+    # card goes to the discard pile, with a scrap to make.
+    "reshuffle": small(
+        hand=(TRADE_BOT, SCOUT, CORVETTE), discard=(VIPER, SCOUT, EXPLORER)
+    ),
+    # Two scraps, a base's and a ship's, and a draw that reshuffles.
+    "two scraps": small(
+        hand=(MISSILE_BOT, SCOUT, CORVETTE),
+        deck=(SCOUT,),
+        discard=(VIPER, EXPLORER),
+        bases=(JUNKYARD,),
+        trade_row=(CORVETTE,),
+    ),
+    # Machine Base's draw reshuffles, then its forced scrap from hand.
+    "machine base": small(
+        hand=(TRADE_BOT, SCOUT),
+        discard=(VIPER, SCOUT),
+        bases=(MACHINE_BASE,),
+    ),
+    # Destroying a base puts it in the opponent's discard pile.
+    "destroy": small(hand=(MISSILE_MECH, TRADE_BOT), discard=(VIPER, SCOUT)),
+}
+
+
+@pytest.mark.parametrize("name", TIMING_STATES)
+def test_discard_scrap_timing_keeps_every_end_of_turn_outcome(name: str):
+    state = rules.auto_play(TIMING_STATES[name])
+    assert outcomes(state, automated) == outcomes(state, untimed)
+    assert tree_size(state, automated) < tree_size(state, untimed)
+
+
+def test_the_timing_check_catches_scraps_that_cant_precede_a_reshuffle(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    state = rules.auto_play(TIMING_STATES["reshuffle"])
+    untimed_outcomes = outcomes(state, untimed)
+    monkeypatch.setattr(rules, "draws", lambda action: 0)
+    assert outcomes(state, automated) != untimed_outcomes

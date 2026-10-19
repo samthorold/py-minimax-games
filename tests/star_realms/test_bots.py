@@ -260,20 +260,49 @@ def test_heuristic_makes_an_owed_scrap_from_hand_of_the_card_it_least_wants():
             assert heuristic(*actions, view=view) == ScrapHandCard(least)
 
 
-def test_heuristic_scraps_vipers_and_scouts_it_may_before_anything_else():
-    """From the discard pile first, where the card does nothing this turn;
-    the one it least wants to play first: a Viper early, a Scout late."""
+def test_heuristic_scraps_vipers_and_scouts_from_its_discard_pile_last():
+    """Scraps from the discard pile come last in the turn (the rules offer
+    little else after one), so the bot makes them as it ends the turn; the
+    one it least wants to play first: a Viper early, a Scout late."""
     rest = (PlayCard(SCOUT), Acquire(CUTTER), AttackPlayer(), EndTurn())
     both = (ScrapDiscardCard(SCOUT), ScrapDiscardCard(VIPER), ScrapDiscardCard(CUTTER))
     for turn, least in ((1, VIPER), (30, SCOUT)):
-        view = dataclasses.replace(view_with(turn=turn), may_scrap=1)
+        view = dataclasses.replace(
+            view_with(turn=turn, owned=(SCOUT, VIPER, CUTTER)), may_scrap=1
+        )
         for scraps in (both, both[::-1]):
             actions = (ScrapHandCard(VIPER), *scraps, *rest)
-            assert heuristic(*actions, view=view) == ScrapDiscardCard(least)
+            assert heuristic(*actions, view=view) == PlayCard(SCOUT)
+            assert heuristic(*scraps, EndTurn(), view=view) == ScrapDiscardCard(least)
+    # Other cards are kept.
+    view = dataclasses.replace(view_with(owned=(EXPLORER,)), may_scrap=1)
+    assert heuristic(ScrapDiscardCard(EXPLORER), EndTurn(), view=view) == EndTurn()
+
+
+def test_heuristic_scraps_from_its_discard_pile_before_a_draw_reshuffles_it():
+    me = dataclasses.replace(VIEW.players[0], deck_size=0, discard=(VIPER,))
+    view = dataclasses.replace(VIEW, players=(me, VIEW.players[1]), may_scrap=1)
+    actions = (PlayCard(CORVETTE), ScrapDiscardCard(VIPER), EndTurn())
+    assert heuristic(*actions, view=view) == ScrapDiscardCard(VIPER)
+    # With cards left in the deck, the draw doesn't reshuffle: scrap later.
+    me = dataclasses.replace(me, deck_size=1)
+    view = dataclasses.replace(view, players=(me, VIEW.players[1]))
+    assert heuristic(*actions, view=view) == PlayCard(CORVETTE)
+
+
+def test_heuristic_scraps_vipers_and_scouts_from_hand_before_playing_them():
+    """Only scraps the starters in its discard pile can't take."""
+    rest = (PlayCard(SCOUT), Acquire(CUTTER), AttackPlayer(), EndTurn())
     view = dataclasses.replace(view_with(), may_scrap=1)
     in_hand = (ScrapHandCard(CUTTER), ScrapHandCard(SCOUT), ScrapDiscardCard(CUTTER))
     assert heuristic(*in_hand, *rest, view=view) == ScrapHandCard(SCOUT)
+    view = dataclasses.replace(view_with(owned=(VIPER,)), may_scrap=1)
+    actions = (ScrapHandCard(SCOUT), ScrapDiscardCard(VIPER), *rest)
+    assert heuristic(*actions, view=view) == PlayCard(SCOUT)
+    view = dataclasses.replace(view, may_scrap=2)
+    assert heuristic(*actions, view=view) == ScrapHandCard(SCOUT)
     # Other cards are kept.
+    view = dataclasses.replace(view_with(), may_scrap=1)
     others = (ScrapHandCard(CUTTER), ScrapDiscardCard(EXPLORER))
     assert heuristic(*others, *rest, view=view) == PlayCard(SCOUT)
 
