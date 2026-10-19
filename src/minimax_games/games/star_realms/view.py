@@ -20,6 +20,7 @@ a full world consistent with a view by dealing each player's `unseen` cards,
 known) and the rest to the deck, and shuffling `trade_deck`.
 """
 
+import random
 from dataclasses import dataclass
 
 from minimax_games.games.star_realms.card import Card
@@ -107,4 +108,47 @@ def observe(state: GameState, observer: int) -> View:
         combat=state.combat,
         allies_used=state.allies_used,
         bases_used=state.bases_used,
+    )
+
+
+def _shuffled(cards: tuple[Card, ...], rng: random.Random) -> tuple[Card, ...]:
+    return tuple(rng.sample(cards, len(cards)))
+
+
+def _sample_player(player: PlayerView, rng: random.Random) -> PlayerState:
+    unseen = _shuffled(player.unseen, rng)
+    dealt = player.hand_size - len(player.hand)
+    return PlayerState(
+        authority=player.authority,
+        deck=unseen[dealt:],
+        hand=player.hand + unseen[:dealt],
+        in_play=player.in_play,
+        discard=player.discard,
+        bases=player.bases,
+    )
+
+
+def sample_world(view: View, rng: random.Random) -> GameState:
+    """A full state consistent with `view`, its hidden information drawn from
+    `rng`: `observe(sample_world(view, rng), view.observer) == view`.
+
+    Each player's `unseen` cards are shuffled and dealt, enough to fill the
+    hand to `hand_size` (none for the observer, whose hand is known) and the
+    rest to the deck. The Trade Deck is shuffled, and the seed for future
+    shuffles is fresh from `rng`, in the range the rules draw seeds from.
+    """
+    first, second = (_sample_player(player, rng) for player in view.players)
+    return GameState(
+        players=(first, second),
+        rng_seed=rng.getrandbits(64),
+        trade_deck=_shuffled(view.trade_deck, rng),
+        trade_row=view.trade_row,
+        explorers=view.explorers,
+        scrap_heap=view.scrap_heap,
+        current=view.current,
+        turn=view.turn,
+        trade=view.trade,
+        combat=view.combat,
+        allies_used=view.allies_used,
+        bases_used=view.bases_used,
     )
