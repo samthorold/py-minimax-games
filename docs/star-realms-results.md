@@ -785,3 +785,56 @@ With the 60-card deck the default `bench` positions are different games: horizon
 **Passes.** No crashes, no unfinished games, and the ladder order holds: heuristic beats greedy (83.6%), greedy beats random (100%), cheat beats greedy (80.0%).
 
 Raw outputs (not committed): `rowscrap/heuristic-greedy-500.txt`, `rowscrap/greedy-random-500.txt`, `rowscrap/cheat-greedy-100.txt`, `rowscrap/bench-before-{1,2}.txt`, `rowscrap/bench-after-{1,2}.txt`, `rowscrap/bench-new-deck.txt`, `rowscrap/bench-budget-new-deck.txt`.
+
+## Milestone 4: "or" choices
+
+- Date: 2026-10-19
+- Commit: the `issue-99-choice` branch (#99).
+- **The deck changed.** `Choice`, `DrawPerFactionCard` and `DiscardThenDraw` join `catalogue.IMPLEMENTED`, so the playable Trade Deck grows from 60 to **70 cards**: 2 Trading Posts, 2 Barter Worlds, Defense Center, 2 Patrol Mechs, Blob World and 2 Recycling Stations. These results compare with the previous slice's ("Milestone 4: scrap from the Trade Row") only loosely.
+- Using a choice between pure gains is automatic (Patrol Mech, and Trading Post, Barter World and Defense Center on later turns); the option is a forced `Choose` decision. Greedy takes the option with the most trade plus combat; the heuristic takes trade early, combat late, Authority at 10 or less, draws with Blob World once that draws 3 or more cards, and recycles Vipers and Scouts with Recycling Station while it holds any (step 0 of `HeuristicBot`'s docstring).
+- Budgets, machine and the check itself as in the previous slices: 500 games each of heuristic vs greedy and greedy vs random, 100 of cheat vs greedy at its defaults (2-turn horizon, 5,000 nodes per decision), seeds from 0, alternating seats, max 300 turns, `--jobs 3`, each run alone in the foreground.
+
+### heuristic vs greedy
+
+`python -m minimax_games.games.star_realms tournament --bots heuristic greedy --games 500 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| heuristic | 448/500 | 89.6% | 221/250 | 227/250 | 0.0088 |
+| greedy | 52/500 | 10.4% | 23/250 | 29/250 | 0.0041 |
+
+500 games, 0 unfinished, mean 22.9 turns, 1.1 s wall time. The heuristic's win rate: 89.6%, interval 86.6-92.0% (Trade Row slice: 83.6%, 80.1-86.6%).
+
+### greedy vs random
+
+`python -m minimax_games.games.star_realms tournament --bots greedy random --games 500 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| greedy | 500/500 | 100.0% | 250/250 | 250/250 | 0.0044 |
+| random | 0/500 | 0.0% | 0/250 | 0/250 | 0.0005 |
+
+500 games, 0 unfinished, mean 22.7 turns, 1.0 s wall time.
+
+### cheat vs greedy
+
+`python -m minimax_games.games.star_realms tournament --bots cheat greedy --games 100 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| cheat | 74/100 | 74.0% | 36/50 | 38/50 | 109 |
+| greedy | 26/100 | 26.0% | 12/50 | 14/50 | 0.0062 |
+
+100 games, 0 unfinished, mean 24.9 turns, 281 s wall time. The cheat's win rate: 74.0%, interval 64.6-81.6% (Trade Row slice: 80.0%, 71.1-86.7%): lower, but the intervals overlap widely.
+
+### Search speed
+
+The rules add three fields to `GameState` (`choosing`, `recycling`, `factions_played`), a per-faction count updated by every `PlayCard`, and two checks in `_forced`; `Choice` joins the pure-gain effects when its options are pure gain. The per-card checks of which abilities are implemented (`_scrappable`, `_ally_usable`, `_primary_usable`) are now cached by card, as a `Choice` makes them recurse. On the 60-card deck (`new_game`'s default patched back to it), `bench` searches the identical trees as before the change (446,773 nodes at horizon 1 and 1,016,157 at horizon 2): 35,400-35,600 and 38,900-39,000 nodes/s after, 37,000 and 40,800 before, over two runs each (about 4-5% slower: building and hashing the bigger state).
+
+With the 70-card deck the default `bench` positions are different games: horizon 1 7/8 searches finished within 200,000 nodes, 222,942 nodes at 33,400 nodes/s; horizon 2 6/8, 498,923 nodes at 41,600 nodes/s. `bench --budget 5000`: the cheat's decisions finished 2 turns at 4/8 positions, 1 turn at 2/8 and none at 2/8 (Trade Row deck: 2/8, 1/8 and 5/8), 87.0 ms per decision. A choice adds one decision node with one branch per option, and only where the card is used; the plays it makes automatic don't branch on timing.
+
+### Verdict
+
+**Passes.** No crashes, no unfinished games, and the ladder order holds: heuristic beats greedy (89.6%), greedy beats random (100%), cheat beats greedy (74.0%).
+
+Raw outputs (not committed): `choice/heuristic-greedy-500.txt`, `choice/greedy-random-500.txt`, `choice/cheat-greedy-100.txt`, `choice/bench-before-{1,2}.txt`, `choice/bench-after-{1,2}.txt`, `choice/bench-new-deck.txt`, `choice/bench-budget-new-deck.txt`.

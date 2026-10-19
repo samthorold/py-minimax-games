@@ -10,6 +10,7 @@ from minimax_games.games.star_realms import rules
 from minimax_games.games.star_realms.action import (
     Acquire,
     Action,
+    Choose,
     EndTurn,
     PlayCard,
     ScrapHandCard,
@@ -17,6 +18,7 @@ from minimax_games.games.star_realms.action import (
 )
 from minimax_games.games.star_realms.card import Card
 from minimax_games.games.star_realms.catalogue import CATALOGUE, SCOUT, VIPER
+from minimax_games.games.star_realms.effect import Authority, Combat, Trade
 from minimax_games.games.star_realms.state import GameState, PlayerState
 
 
@@ -153,6 +155,28 @@ def test_row_scraps_are_granted_automatically_but_the_card_is_a_decision():
     assert BLOB_DESTROYER in after.allies_used
     assert after.may_scrap_row == 2
     assert after.combat == 12  # with Battle Pod's ally ability
+    assert not any(rules.automatic(after, a) for a in rules.legal_actions(after))
+
+
+PATROL_MECH = CATALOGUE["Patrol Mech"]  # 3 trade or 5 combat; ally: may scrap
+DEFENSE_CENTER = CATALOGUE["Defense Center"]  # outpost: 3 Authority or 2 combat
+TRADING_POST = CATALOGUE["Trading Post"]  # outpost: 1 Authority or 1 trade
+
+
+def test_a_choice_between_pure_gains_is_used_automatically_but_chosen_by_the_player():
+    state = with_hand(rules.new_game(seed=1), PATROL_MECH, CORVETTE)
+    after = rules.auto_play(state)
+    assert after.players[0].hand == (CORVETTE,)
+    assert rules.legal_actions(after) == (
+        Choose(PATROL_MECH, (Trade(3),)),
+        Choose(PATROL_MECH, (Combat(5),)),
+    )
+    state = with_bases(with_hand(rules.new_game(seed=1), CORVETTE), DEFENSE_CENTER)
+    after = rules.auto_play(state)
+    assert after.bases_used == (DEFENSE_CENTER,)
+    assert rules.legal_actions(after)[0] == Choose(DEFENSE_CENTER, (Authority(3),))
+    after = rules.advance(after, Choose(DEFENSE_CENTER, (Combat(2),)))
+    assert after.combat == 2
     assert not any(rules.automatic(after, a) for a in rules.legal_actions(after))
 
 
@@ -337,6 +361,13 @@ SMALL_STATES = {
         hand=(BATTLE_POD, TRADE_POD, CORVETTE),
         deck=(SCOUT,),
         trade_row=(CUTTER, BLOB_FIGHTER),
+    ),
+    # "Or" choices between pure gains: a ship's and a base's in play, with a
+    # base in hand whose choice is also a decision, around a buy and a draw.
+    "choices": small(
+        hand=(PATROL_MECH, TRADING_POST, CORVETTE),
+        deck=(SCOUT,),
+        bases=(DEFENSE_CENTER,),
     ),
 }
 

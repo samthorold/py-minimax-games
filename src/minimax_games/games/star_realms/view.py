@@ -58,7 +58,8 @@ class View:
     """What `observer` knows about the game. `players` is indexed like
         `GameState.players`; the turn state (whose turn, trade, combat, abilities
         used, scraps left and owed, bases left to destroy, Trade Row scraps
-    left) is all public."""
+    left, the choices and recycling being made, the factions played) is all
+    public."""
 
     observer: int
     players: tuple[PlayerView, PlayerView]
@@ -76,6 +77,9 @@ class View:
     must_scrap: int
     may_destroy: int
     may_scrap_row: int
+    choosing: tuple[Card, ...]
+    recycling: int
+    factions_played: tuple[int, ...]
 
 
 def _player_view(player: PlayerState, *, hand_seen: bool) -> PlayerView:
@@ -119,6 +123,9 @@ def observe(state: GameState, observer: int) -> View:
         must_scrap=state.must_scrap,
         may_destroy=state.may_destroy,
         may_scrap_row=state.may_scrap_row,
+        choosing=state.choosing,
+        recycling=state.recycling,
+        factions_played=state.factions_played,
     )
 
 
@@ -167,4 +174,7 @@ def sample_world(view: View, rng: random.Random) -> GameState:
         must_scrap=view.must_scrap,
         may_destroy=view.may_destroy,
         may_scrap_row=view.may_scrap_row,
+        choosing=view.choosing,
+        recycling=view.recycling,
+        factions_played=view.factions_played,
     )

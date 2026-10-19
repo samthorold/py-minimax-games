@@ -1,6 +1,7 @@
 """The rules: dealing, legal actions and applying them."""
 
 import functools
+import itertools
 import random
 from collections.abc import Callable, Iterator
 from typing import assert_never
@@ -10,10 +11,12 @@ from minimax_games.games.star_realms.action import (
     Action,
     AttackBase,
     AttackPlayer,
+    Choose,
     DestroyTarget,
     Discard,
     EndTurn,
     PlayCard,
+    Recycle,
     Scrap,
     ScrapDiscardCard,
     ScrapHandCard,
@@ -21,13 +24,13 @@ from minimax_games.games.star_realms.action import (
     UseAlly,
     UseBase,
 )
-from minimax_games.games.star_realms.card import Card, CardType
+from minimax_games.games.star_realms.card import Card, CardType, Faction
 from minimax_games.games.star_realms.catalogue import (
     EXPLORER,
     EXPLORER_PILE,
-    IMPLEMENTED,
     PLAYABLE_TRADE_DECK,
     STARTING_DECK,
+    implemented_effect,
 )
 from minimax_games.games.star_realms.effect import (
     AcquireShipFreeOnTop,
@@ -54,6 +57,7 @@ from minimax_games.games.star_realms.effect import (
 from minimax_games.games.star_realms.state import (
     FIRST_HAND_SIZE,
     HAND_SIZE,
+    NO_FACTIONS_PLAYED,
     STARTING_AUTHORITY,
     TRADE_ROW_SIZE,
     GameState,
@@ -122,7 +126,21 @@ def _players(
     return (player, second) if index == 0 else (first, player)
 
 
-def _resolve(state: GameState, effect: Effect) -> GameState:
+_FACTION_INDEX = {faction: i for i, faction in enumerate(Faction)}
+"""Each faction's place in `GameState.factions_played`."""
+
+
+def _played(state: GameState, card: Card) -> tuple[int, ...]:
+    """`state.factions_played` once `card` is played too."""
+    played = state.factions_played
+    if card.faction is None:
+        return played
+    i = _FACTION_INDEX[card.faction]
+    return (*played[:i], played[i] + 1, *played[i + 1 :])
+
+
+def _resolve(state: GameState, effect: Effect, card: Card) -> GameState:
+    """`state` after `effect`, one of `card`'s, applies."""
     match effect:
         case Trade(amount):
             return state.replace(trade=state.trade + amount)
@@ -161,14 +179,24 @@ def _resolve(state: GameState, effect: Effect) -> GameState:
             if not state.players[state.current].hand:
                 return state
             return state.replace(must_scrap=state.must_scrap + 1)
+        case DrawPerFactionCard():
+            if card.faction is None:
+                return state
+            cards = state.factions_played[_FACTION_INDEX[card.faction]]
+            return _resolve(state, Draw(cards), card)
+        case DiscardThenDraw(cards):
+            # With an empty hand there is nothing to discard, so nothing to draw.
+            if not state.players[state.current].hand:
+                return state
+            return state.replace(recycling=cards)
+        case Choice():
+            # The player chooses an option before anything else (`_forced`).
+            return state.replace(choosing=(*state.choosing, card))
         case (
             AcquireShipFreeOnTop()
             | AllyForAllFactions()
-            | Choice()
             | CopyShip()
-            | DiscardThenDraw()
             | DrawIfBases()
-            | DrawPerFactionCard()
             | NextShipOnTop()
             | ScrapThenDraw()
             | ShipsGainCombat()
@@ -182,20 +210,34 @@ def _resolve(state: GameState, effect: Effect) -> GameState:
 
 
 def _implemented(effect: Effect) -> bool:
-    """Whether the rules implement `effect` (`catalogue.IMPLEMENTED`)."""
-    return type(effect) in IMPLEMENTED
+    """Whether the rules implement `effect` (`catalogue.IMPLEMENTED`, and,
+    for a choice, every effect of its options)."""
+    return implemented_effect(effect)
 
 
+@functools.cache
+def _options(card: Card) -> tuple[tuple[Effect, ...], ...]:
+    """The options of `card`'s "or" choice, its one `Choice` effect (cached)."""
+    choice = next(
+        e for e in card.primary + card.ally + card.scrap if isinstance(e, Choice)
+    )
+    return choice.options
+
+
+@functools.cache
 def _scrappable(card: Card) -> bool:
-    """Whether `card` has a scrap ability whose effects are all implemented."""
+    """Whether `card` has a scrap ability whose effects are all implemented
+    (cached by card, which hashes by its name)."""
     return bool(card.scrap) and all(_implemented(e) for e in card.scrap)
 
 
+@functools.cache
 def _ally_usable(card: Card) -> bool:
     """Whether `card` has an ally ability whose effects are all implemented."""
     return bool(card.ally) and all(_implemented(e) for e in card.ally)
 
 
+@functools.cache
 def _primary_usable(card: Card) -> bool:
     """Whether `card` has a primary ability whose effects are all implemented."""
     return bool(card.primary) and all(_implemented(e) for e in card.primary)
@@ -242,8 +284,10 @@ def legal_actions(state: GameState) -> tuple[Action, ...]:
 
     A decision the player must make before anything else replaces all of
     those (`_forced`): while discards are pending at the start of their turn,
-    one `Discard` per distinct card in hand, and while a scrap from hand is
-    owed (Machine Base), one `ScrapHandCard` per distinct card in hand.
+    one `Discard` per distinct card in hand; while a scrap from hand is
+    owed (Machine Base), one `ScrapHandCard` per distinct card in hand;
+    while recycling (Recycling Station), one `Recycle` per distinct set of
+    cards; and while an "or" choice is being made, one `Choose` per option.
     """
     if winner(state) is not None:
         return ()
@@ -283,20 +327,44 @@ def _forced(state: GameState) -> tuple[Action, ...] | None:
     """The actions of a decision the current player must make before any
     other, if one is pending, else `None`.
 
-    Two so far: a pending discard (`PlayerState.to_discard`), one `Discard`
+    Four so far: a pending discard (`PlayerState.to_discard`), one `Discard`
     per distinct card in hand (`EndTurn` caps the count at the hand's size,
-    so while it is positive the hand isn't empty); and an owed scrap from
+    so while it is positive the hand isn't empty); an owed scrap from
     hand (`GameState.must_scrap`, Machine Base), one `ScrapHandCard` per
     distinct card in hand (owed only with a card in hand, and nothing else
-    can happen until it is made). Later effects that interrupt the turn
-    with a decision belong here too.
+    can happen until it is made); recycling (`GameState.recycling`,
+    Recycling Station's `DiscardThenDraw` once chosen, only with a card in
+    hand), one `Recycle` per distinct set of one card up to that many from
+    hand; and an "or" choice (`GameState.choosing`), one `Choose` per
+    option of the first card's `Choice`, in the card's order. Later effects
+    that interrupt the turn with a decision belong here too.
     """
     player = state.players[state.current]
     if player.to_discard:
         return tuple(Discard(card) for card in dict.fromkeys(player.hand))
     if state.must_scrap:
         return tuple(ScrapHandCard(card) for card in dict.fromkeys(player.hand))
+    if state.recycling:
+        return tuple(
+            Recycle(cards) for cards in _discard_sets(player.hand, state.recycling)
+        )
+    if state.choosing:
+        card = state.choosing[0]
+        return tuple(Choose(card, option) for option in _options(card))
     return None
+
+
+def _discard_sets(hand: tuple[Card, ...], most: int) -> list[tuple[Card, ...]]:
+    """Each distinct set of one card up to `most` cards from `hand`, its cards
+    sorted by name."""
+    cards = sorted(hand, key=lambda card: card.name)
+    return list(
+        dict.fromkeys(
+            combo
+            for size in range(1, min(most, len(cards)) + 1)
+            for combo in itertools.combinations(cards, size)
+        )
+    )
 
 
 def _maybe_automatic(state: GameState) -> Iterator[Action]:
@@ -325,7 +393,8 @@ def _maybe_automatic(state: GameState) -> Iterator[Action]:
 def _pure_gain(effects: tuple[Effect, ...]) -> bool:
     """Whether `effects` only add trade, combat or Authority, make the
     opponent discard, or let the player scrap from hand or discard pile or
-    from the Trade Row, or destroy one of the opponent's bases."""
+    from the Trade Row, or destroy one of the opponent's bases, or are "or"
+    choices between options that do only that."""
     return all(
         isinstance(
             e,
@@ -337,6 +406,7 @@ def _pure_gain(effects: tuple[Effect, ...]) -> bool:
             | DestroyBase
             | ScrapTradeRow,
         )
+        or (isinstance(e, Choice) and all(map(_pure_gain, e.options)))
         for e in effects
     )
 
@@ -384,6 +454,14 @@ def automatic(state: GameState, action: Action) -> bool:
       effects are pure gain: the card stays where it is, and the gain can't
       be lost by taking it early.
 
+    An "or" choice between pure-gain options counts as pure gain: using the
+    ability is automatic (Patrol Mech, and Trading Post, Barter World and
+    Defense Center on the turns after they are played), and the `Choose`
+    it leaves is the decision. Choosing an option early or late gives the
+    same gain, so every outcome stays reachable; what is lost is only
+    information a view-based bot would have had later in the turn (a
+    draw), the accepted price of not branching on when to use it.
+
     Everything else is a decision. `Draw` never is automatic: drawing can
     reshuffle the discard pile, so drawing before or after an `Acquire` (the
     acquired card goes to the discard pile) changes the deck. Playing a base
@@ -391,8 +469,10 @@ def automatic(state: GameState, action: Action) -> bool:
     changes what is reshuffled. `Scrap` loses the card, and `Acquire`,
     attacks and `EndTurn` are the turn's real choices. `Discard`,
     `ScrapHandCard`, `ScrapDiscardCard` and `ScrapTradeRowCard` are the
-    player's choice of card, and `DestroyTarget` their choice of the
-    opponent's base.
+    player's choice of card, `DestroyTarget` their choice of the
+    opponent's base, `Choose` their choice of option and `Recycle` of the
+    cards to discard. A choice with a draw among its options (Blob World,
+    Recycling Station) isn't pure gain, so using it is a decision too.
 
     This is sound only for the effects the engine implements so far, with
     one accepted gap: a draw may bring a card that scraps from hand, and a
@@ -416,6 +496,8 @@ def automatic(state: GameState, action: Action) -> bool:
             | ScrapHandCard()
             | ScrapDiscardCard()
             | ScrapTradeRowCard()
+            | Choose()
+            | Recycle()
             | EndTurn()
         ):
             return False
@@ -568,26 +650,30 @@ def _apply(state: GameState, action: Action) -> GameState:
             hand = _without(player.hand, card)
             if card.type is CardType.SHIP:
                 player = player.replace(hand=hand, in_play=(*player.in_play, card))
-                state = state.replace(players=_players(state, me, player))
+                state = state.replace(
+                    players=_players(state, me, player),
+                    factions_played=_played(state, card),
+                )
             else:
                 # Playing a base uses its primary ability for this turn.
                 player = player.replace(hand=hand, bases=(*player.bases, card))
                 state = state.replace(
                     players=_players(state, me, player),
                     bases_used=(*state.bases_used, card),
+                    factions_played=_played(state, card),
                 )
             for effect in card.primary:
-                state = _resolve(state, effect)
+                state = _resolve(state, effect, card)
             return state
         case UseAlly(card):
             state = state.replace(allies_used=(*state.allies_used, card))
             for effect in card.ally:
-                state = _resolve(state, effect)
+                state = _resolve(state, effect, card)
             return state
         case UseBase(card):
             state = state.replace(bases_used=(*state.bases_used, card))
             for effect in card.primary:
-                state = _resolve(state, effect)
+                state = _resolve(state, effect, card)
             return state
         case Scrap(card):
             if card.type is CardType.SHIP:
@@ -610,7 +696,7 @@ def _apply(state: GameState, action: Action) -> GameState:
                 card,
             )
             for effect in card.scrap:
-                state = _resolve(state, effect)
+                state = _resolve(state, effect, card)
             return state
         case Acquire(card):
             player = player.replace(discard=(*player.discard, card))
@@ -660,6 +746,20 @@ def _apply(state: GameState, action: Action) -> GameState:
             if not state.trade_row:
                 return state.replace(may_scrap_row=0)
             return state.replace(may_scrap_row=state.may_scrap_row - 1)
+        case Choose(card, option):
+            state = state.replace(choosing=state.choosing[1:])
+            for effect in option:
+                state = _resolve(state, effect, card)
+            return state
+        case Recycle(cards):
+            hand = player.hand
+            for card in cards:
+                hand = _without(hand, card)
+            player = player.replace(hand=hand, discard=player.discard + cards)
+            player, seed = _draw(player, len(cards), state.rng_seed)
+            return state.replace(
+                players=_players(state, me, player), rng_seed=seed, recycling=0
+            )
         case EndTurn():
             player = player.replace(
                 hand=(),
@@ -683,6 +783,7 @@ def _apply(state: GameState, action: Action) -> GameState:
                 may_scrap=0,
                 may_destroy=0,
                 may_scrap_row=0,
+                factions_played=NO_FACTIONS_PLAYED,
                 rng_seed=seed,
             )
         case _:

@@ -12,10 +12,12 @@ from minimax_games.games.star_realms.action import (
     Action,
     AttackBase,
     AttackPlayer,
+    Choose,
     DestroyTarget,
     Discard,
     EndTurn,
     PlayCard,
+    Recycle,
     Scrap,
     ScrapDiscardCard,
     ScrapHandCard,
@@ -30,7 +32,7 @@ from minimax_games.games.star_realms.bots import (
     RandomBot,
 )
 from minimax_games.games.star_realms.catalogue import CATALOGUE, EXPLORER, VIPER
-from minimax_games.games.star_realms.effect import Authority, Draw
+from minimax_games.games.star_realms.effect import Authority, Combat, Draw
 from minimax_games.games.star_realms.match import MatchTooLong, play_match
 from minimax_games.games.star_realms.sampler import SamplerBot
 from minimax_games.games.star_realms.state import GameState
@@ -223,13 +225,15 @@ def test_random_games_neither_create_nor_lose_cards_and_use_every_action():
 
 
 class Buyer:
-    """Makes any discard it must, plays its whole hand, acquires whatever it
-    can, attacks bases then the player, scraps from hand whenever it may or
-    must (it has played its hand by then), ends the turn."""
+    """Makes any discard it must, takes the first option of any choice,
+    plays its whole hand, acquires whatever it can, attacks bases then the
+    player, scraps from hand whenever it may or must (it has played its hand
+    by then), ends the turn."""
 
     def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
         for kind in (
             Discard,
+            Choose,
             PlayCard,
             Acquire,
             AttackBase,
@@ -443,3 +447,28 @@ def test_only_a_benchmark_bot_is_given_the_true_state():
         play_match(bots, seed)
         assert cheat.calls > 0
         assert ordinary.calls > 0
+
+
+def test_the_log_shows_or_choices_offered_and_made():
+    state = rules.new_game(seed=1)
+    post, mech = CATALOGUE["Trading Post"], CATALOGUE["Patrol Mech"]
+    assert transcript.describe(UseBase(post), state) == (
+        "Player 1 uses Trading Post for 1 Authority or 1 trade"
+    )
+    assert transcript.describe(Choose(mech, (Combat(5),)), state) == (
+        "Player 1 chooses 5 combat from Patrol Mech"
+    )
+    world, station = CATALOGUE["Blob World"], CATALOGUE["Recycling Station"]
+    assert transcript.describe(UseBase(world), state) == (
+        "Player 1 uses Blob World for 5 combat or 1 card per Blob card played"
+    )
+    assert transcript.describe(UseBase(station), state) == (
+        "Player 1 uses Recycling Station for 1 trade or up to 2 cards"
+        " discarded then drawn"
+    )
+    assert transcript.describe(Recycle((VIPER, VIPER)), state) == (
+        "Player 1 discards Viper, Viper and draws 2 cards"
+    )
+    assert transcript.describe(Recycle((VIPER,)), state) == (
+        "Player 1 discards Viper and draws 1 card"
+    )

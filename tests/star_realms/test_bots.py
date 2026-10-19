@@ -6,10 +6,12 @@ from minimax_games.games.star_realms.action import (
     Action,
     AttackBase,
     AttackPlayer,
+    Choose,
     DestroyTarget,
     Discard,
     EndTurn,
     PlayCard,
+    Recycle,
     Scrap,
     ScrapDiscardCard,
     ScrapHandCard,
@@ -17,9 +19,23 @@ from minimax_games.games.star_realms.action import (
     UseAlly,
     UseBase,
 )
-from minimax_games.games.star_realms.bots import GreedyBot, HeuristicBot, RandomBot
+from minimax_games.games.star_realms.bots import (
+    BLOB_WORLD_DRAWS,
+    LOW_AUTHORITY,
+    GreedyBot,
+    HeuristicBot,
+    RandomBot,
+)
 from minimax_games.games.star_realms.card import Card
 from minimax_games.games.star_realms.catalogue import CATALOGUE, EXPLORER, SCOUT, VIPER
+from minimax_games.games.star_realms.effect import (
+    Authority,
+    Choice,
+    Combat,
+    DiscardThenDraw,
+    DrawPerFactionCard,
+    Trade,
+)
 from minimax_games.games.star_realms.match import play_match
 from minimax_games.games.star_realms.view import View, observe
 
@@ -101,9 +117,42 @@ def test_greedy_never_scraps_from_the_trade_row():
     assert greedy(*actions) == EndTurn()
 
 
+PATROL_MECH = CATALOGUE["Patrol Mech"]  # 3 trade or 5 combat
+DEFENSE_CENTER = CATALOGUE["Defense Center"]  # 3 Authority or 2 combat
+
+
+def choices(card: Card) -> tuple[Choose, ...]:
+    """The `Choose` actions for `card`'s choice, in the card's order."""
+    (choice,) = card.primary
+    assert isinstance(choice, Choice)
+    return tuple(Choose(card, option) for option in choice.options)
+
+
+def test_greedy_chooses_the_option_with_the_most_trade_and_combat():
+    for card, best in (
+        (TRADING_POST, (Trade(1),)),
+        (PATROL_MECH, (Combat(5),)),
+        (DEFENSE_CENTER, (Combat(2),)),
+    ):
+        options = choices(card)
+        for actions in (options, options[::-1]):
+            assert greedy(*actions) == Choose(card, best)
+
+
+RECYCLING_STATION = CATALOGUE["Recycling Station"]  # 1 trade or recycle 2
+BLOB_WORLD = CATALOGUE["Blob World"]  # 5 combat or a card per Blob played
+
+
+def test_greedy_takes_trade_or_combat_over_drawing_and_recycles_little():
+    assert greedy(*choices(RECYCLING_STATION)) == Choose(RECYCLING_STATION, (Trade(1),))
+    assert greedy(*choices(BLOB_WORLD)) == Choose(BLOB_WORLD, (Combat(5),))
+    recycles = (Recycle((SCOUT, VIPER)), Recycle((CUTTER,)), Recycle((SCOUT,)))
+    assert greedy(*recycles) == Recycle((SCOUT,))
+
+
 def test_greedy_beats_random_in_the_large_majority_of_seeded_games():
     """30 seeds, alternating seats. Measured: greedy wins all 30 (500 of
-    500 over seeds 0-499, with the Milestone 4 Trade Row scrap deck), in
+    500 over seeds 0-499, with the Milestone 4 "or" choices deck), in
     about 23 turns on average."""
     wins = 0
     for seed in range(30):
@@ -124,12 +173,13 @@ def view_with(
     opponent_bases: tuple[Card, ...] = (),
     turn: int = 1,
     combat: int = 0,
+    authority: int = 50,
 ) -> View:
     """VIEW, observer 0 to move, owning the starting deck plus `owned` (in
     the discard pile) with `in_play`, against an opponent at
     `opponent_authority` with `opponent_bases`, with `combat` to spend."""
     me, them = VIEW.players
-    me = dataclasses.replace(me, discard=owned, in_play=in_play)
+    me = dataclasses.replace(me, discard=owned, in_play=in_play, authority=authority)
     them = dataclasses.replace(them, authority=opponent_authority, bases=opponent_bases)
     return dataclasses.replace(VIEW, players=(me, them), turn=turn, combat=combat)
 
@@ -274,6 +324,55 @@ def test_heuristic_prefers_economy_early_and_combat_late():
     assert heuristic(*buys, view=view_with(turn=30)) == Acquire(FIGHTER)
 
 
+def test_heuristic_chooses_trade_early_combat_late_and_authority_when_low():
+    early, late = view_with(turn=1), view_with(turn=30)
+    low = view_with(turn=30, authority=LOW_AUTHORITY)
+    for card, view, best in (
+        (PATROL_MECH, early, (Trade(3),)),
+        (PATROL_MECH, late, (Combat(5),)),
+        (DEFENSE_CENTER, early, (Combat(2),)),
+        (DEFENSE_CENTER, late, (Combat(2),)),
+        (DEFENSE_CENTER, low, (Authority(3),)),
+        (TRADING_POST, late, (Trade(1),)),
+        (TRADING_POST, low, (Authority(1),)),
+    ):
+        options = choices(card)
+        for actions in (options, options[::-1]):
+            assert heuristic(*actions, view=view) == Choose(card, best)
+
+
+def test_heuristic_recycles_starting_cards_when_its_hand_holds_any():
+    me = dataclasses.replace(VIEW.players[0], hand=(CUTTER, SCOUT, VIPER, SCOUT))
+    view = dataclasses.replace(VIEW, players=(me, VIEW.players[1]), turn=30)
+    recycle = Choose(RECYCLING_STATION, (DiscardThenDraw(2),))
+    assert heuristic(*choices(RECYCLING_STATION), view=view) == recycle
+    recycles = (
+        Recycle((CUTTER,)),
+        Recycle((CUTTER, SCOUT)),
+        Recycle((SCOUT,)),
+        Recycle((SCOUT, SCOUT)),
+        Recycle((SCOUT, VIPER)),
+        Recycle((VIPER,)),
+    )
+    # Late, a Scout is the card it least wants: the two Scouts go.
+    assert heuristic(*recycles, view=view) == Recycle((SCOUT, SCOUT))
+    me = dataclasses.replace(me, hand=(CUTTER, CORVETTE))
+    view = dataclasses.replace(view, players=(me, VIEW.players[1]))
+    assert heuristic(*choices(RECYCLING_STATION), view=view) == Choose(
+        RECYCLING_STATION, (Trade(1),)
+    )
+
+
+def test_heuristic_draws_with_blob_world_once_it_would_draw_enough():
+    def played(blobs: int) -> View:
+        return dataclasses.replace(VIEW, factions_played=(blobs, 0, 0, 0))
+
+    draw = Choose(BLOB_WORLD, (DrawPerFactionCard(),))
+    combat = Choose(BLOB_WORLD, (Combat(5),))
+    assert heuristic(*choices(BLOB_WORLD), view=played(BLOB_WORLD_DRAWS)) == draw
+    assert heuristic(*choices(BLOB_WORLD), view=played(BLOB_WORLD_DRAWS - 1)) == combat
+
+
 def test_heuristic_discards_starting_cards_first_viper_early_and_scout_late():
     """It keeps the card worth most to play: trade early, combat late."""
     discards = (Discard(EXPLORER), Discard(SCOUT), Discard(VIPER), Discard(CUTTER))
@@ -330,8 +429,8 @@ def test_heuristic_values_a_base_for_the_turns_it_stays_in_play():
 
 
 def test_heuristic_beats_greedy_in_clearly_more_than_half_of_seeded_games():
-    """40 seeds, alternating seats. Measured: the heuristic wins 35 of 40
-    (418 of 500 over seeds 0-499) with the Milestone 4 Trade Row scrap deck.
+    """40 seeds, alternating seats. Measured: the heuristic wins 32 of 40
+    (448 of 500 over seeds 0-499) with the Milestone 4 "or" choices deck.
     Tuned on seeds from 1000 with the 30-card first slice."""
     wins = 0
     for seed in range(40):

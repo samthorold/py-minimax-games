@@ -1,12 +1,13 @@
 """What a player can do: the `Action` enum.
 
-Only the variants the implemented cards need exist so far; a later slice
-adds `Choose` (docs/star-realms.md).
+Only the variants the implemented cards need exist so far
+(docs/star-realms.md).
 """
 
 from superenums import Variant
 
 from minimax_games.games.star_realms.card import Card
+from minimax_games.games.star_realms.effect import Effect
 
 
 class PlayCard(Variant):
@@ -139,6 +140,35 @@ class DestroyTarget(Variant):
     card: Card
 
 
+class Choose(Variant):
+    """Pick `option`, one of the options of `card`'s "or" choice (a `Choice`
+    effect), whose effects then apply.
+
+    Offered, as the only legal actions, once the player has used the
+    ability (`GameState.choosing`): one `Choose` per option, in the card's
+    order. The action names the card and the option's effects, so a log
+    or a bot can read the choice without looking it up.
+    """
+
+    card: Card
+    option: tuple[Effect, ...]
+
+
+class Recycle(Variant):
+    """Discard `cards` from hand, then draw as many, for a `DiscardThenDraw`
+    ability (Recycling Station: "discard up to two cards, then draw that
+    many cards").
+
+    Offered, as the only legal actions, once the player has chosen that
+    option (`GameState.recycling`): one `Recycle` per distinct set of one
+    card up to that many from hand, `cards` sorted by name. Discarding none
+    does nothing, so it isn't offered (the other option was better). The
+    draw may shuffle the discard pile, discarded cards included.
+    """
+
+    cards: tuple[Card, ...]
+
+
 class EndTurn(Variant):
     """Discard the hand and ships in play (bases stay), lose unspent trade and
     combat, draw 5."""
@@ -157,5 +187,7 @@ type Action = (
     | ScrapHandCard
     | ScrapDiscardCard
     | ScrapTradeRowCard
+    | Choose
+    | Recycle
     | EndTurn
 )

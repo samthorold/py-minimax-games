@@ -9,10 +9,12 @@ from minimax_games.games.star_realms.action import (
     Acquire,
     AttackBase,
     AttackPlayer,
+    Choose,
     DestroyTarget,
     Discard,
     EndTurn,
     PlayCard,
+    Recycle,
     Scrap,
     ScrapDiscardCard,
     ScrapHandCard,
@@ -32,13 +34,17 @@ from minimax_games.games.star_realms.catalogue import (
 )
 from minimax_games.games.star_realms.effect import (
     Authority,
+    Choice,
     Combat,
     DestroyBase,
+    DiscardThenDraw,
     Draw,
+    DrawPerFactionCard,
     NextShipOnTop,
     OpponentDiscards,
     ScrapFromHand,
     ScrapHandOrDiscard,
+    ScrapTradeRow,
     Trade,
 )
 from minimax_games.games.star_realms.state import GameState
@@ -214,13 +220,37 @@ def test_the_playable_deck_adds_the_destroy_base_cards():
     assert len(deck) == 56
 
 
+SLICE_5_EFFECTS = SLICE_4_EFFECTS | {ScrapTradeRow}
+
+
 def test_the_playable_deck_adds_the_trade_row_scrap_cards():
-    added = Counter(PLAYABLE_TRADE_DECK) - Counter(playable_deck(SLICE_4_EFFECTS))
+    deck = playable_deck(SLICE_5_EFFECTS)
+    added = Counter(deck) - Counter(playable_deck(SLICE_4_EFFECTS))
     assert {card.name: n for card, n in added.items()} == {
         "Battle Pod": 2,
         "Blob Destroyer": 2,
     }
-    assert len(PLAYABLE_TRADE_DECK) == 60
+    assert len(deck) == 60
+
+
+def test_the_playable_deck_adds_the_or_choice_cards():
+    added = Counter(PLAYABLE_TRADE_DECK) - Counter(playable_deck(SLICE_5_EFFECTS))
+    assert {card.name: n for card, n in added.items()} == {
+        "Blob World": 1,
+        "Trading Post": 2,
+        "Barter World": 2,
+        "Defense Center": 1,
+        "Recycling Station": 2,
+        "Patrol Mech": 2,
+    }
+    assert len(PLAYABLE_TRADE_DECK) == 70
+
+
+def test_a_choice_is_playable_only_once_every_option_is():
+    without = SLICE_5_EFFECTS | {Choice, DrawPerFactionCard}
+    names = {card.name for card in playable_deck(without)}
+    assert "Blob World" in names
+    assert "Recycling Station" not in names
 
 
 CUTTER = CATALOGUE["Cutter"]
@@ -925,3 +955,94 @@ def test_nothing_is_scrapped_from_the_row_once_the_trade_deck_has_run_out():
     assert state.may_scrap_row == 0
     empty = with_hand(state, BATTLE_POD)
     assert rules.apply(empty, PlayCard(BATTLE_POD)).may_scrap_row == 0
+
+
+TRADING_POST = CATALOGUE["Trading Post"]  # outpost: 1 Authority or 1 trade
+PATROL_MECH = CATALOGUE["Patrol Mech"]  # 3 trade or 5 combat; ally: may scrap
+
+
+def test_using_a_choice_offers_each_option_and_nothing_else_until_one_is_chosen():
+    state = with_hand(rules.new_game(seed=1), TRADING_POST, SCOUT)
+    state = rules.apply(state, PlayCard(TRADING_POST))
+    assert rules.legal_actions(state) == (
+        Choose(TRADING_POST, (Authority(1),)),
+        Choose(TRADING_POST, (Trade(1),)),
+    )
+    after = rules.apply(state, Choose(TRADING_POST, (Trade(1),)))
+    assert after.trade == 1
+    assert after.players[0].authority == 50
+    assert PlayCard(SCOUT) in rules.legal_actions(after)
+    after = rules.apply(state, Choose(TRADING_POST, (Authority(1),)))
+    assert after.trade == 0
+    assert after.players[0].authority == 51
+
+
+BLOB_WORLD = CATALOGUE["Blob World"]  # base: 5 combat or a card per Blob played
+
+
+def test_blob_world_draws_a_card_for_each_blob_card_played_this_turn():
+    # Ram is scrapped before Blob World is played, Cutter isn't Blob, and
+    # Blob World counts itself.
+    state = with_hand(rules.new_game(seed=1), RAM, TRADE_POD, CUTTER, BLOB_WORLD)
+    deck = state.players[0].deck
+    for card in (RAM, TRADE_POD, CUTTER):
+        state = rules.apply(state, PlayCard(card))
+    state = rules.apply(state, Scrap(RAM))
+    state = rules.apply(state, PlayCard(BLOB_WORLD))
+    draw = Choose(BLOB_WORLD, (DrawPerFactionCard(),))
+    assert rules.legal_actions(state) == (Choose(BLOB_WORLD, (Combat(5),)), draw)
+    after = rules.apply(state, draw)
+    assert after.players[0].hand == deck[:3]
+    # On a later turn, used rather than played, it doesn't count itself.
+    state = with_hand(rules.apply(rules.apply(after, EndTurn()), EndTurn()), RAM)
+    state = rules.apply(rules.apply(state, PlayCard(RAM)), UseBase(BLOB_WORLD))
+    hand = state.players[0].hand
+    after = rules.apply(state, draw)
+    assert after.players[0].hand == (*hand, state.players[0].deck[0])
+
+
+RECYCLING_STATION = CATALOGUE["Recycling Station"]  # 1 trade or recycle 2
+
+
+def test_recycling_station_discards_up_to_two_cards_then_draws_that_many():
+    state = with_hand(rules.new_game(seed=1), RECYCLING_STATION, VIPER, SCOUT, SCOUT)
+    deck = state.players[0].deck
+    state = rules.apply(state, PlayCard(RECYCLING_STATION))
+    recycle = Choose(RECYCLING_STATION, (DiscardThenDraw(2),))
+    assert rules.legal_actions(state) == (
+        Choose(RECYCLING_STATION, (Trade(1),)),
+        recycle,
+    )
+    state = rules.apply(state, recycle)
+    # Each distinct set of one or two cards, and nothing else first.
+    assert set(rules.legal_actions(state)) == {
+        Recycle((SCOUT,)),
+        Recycle((VIPER,)),
+        Recycle((SCOUT, SCOUT)),
+        Recycle((SCOUT, VIPER)),
+    }
+    after = rules.apply(state, Recycle((SCOUT, VIPER)))
+    assert after.players[0].hand == (SCOUT, *deck[:2])
+    assert after.players[0].discard == (SCOUT, VIPER)
+    assert EndTurn() in rules.legal_actions(after)
+    after = rules.apply(state, Recycle((VIPER,)))
+    assert after.players[0].hand == (SCOUT, SCOUT, deck[0])
+
+
+def test_the_discarded_cards_are_reshuffled_if_the_deck_runs_out():
+    state = with_hand(rules.new_game(seed=1), RECYCLING_STATION, VIPER, SCOUT)
+    first = dataclasses.replace(state.players[0], deck=())
+    state = dataclasses.replace(state, players=(first, state.players[1]))
+    state = rules.apply(state, PlayCard(RECYCLING_STATION))
+    state = rules.apply(state, Choose(RECYCLING_STATION, (DiscardThenDraw(2),)))
+    after = rules.apply(state, Recycle((SCOUT, VIPER)))
+    assert sorted(c.name for c in after.players[0].hand) == ["Scout", "Viper"]
+    assert after.players[0].discard == ()
+
+
+def test_recycling_with_an_empty_hand_does_nothing():
+    state = with_hand(rules.new_game(seed=1), RECYCLING_STATION)
+    state = rules.apply(state, PlayCard(RECYCLING_STATION))
+    after = rules.apply(state, Choose(RECYCLING_STATION, (DiscardThenDraw(2),)))
+    assert after.players[0].hand == ()
+    assert EndTurn() in rules.legal_actions(after)
