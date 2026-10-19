@@ -56,8 +56,9 @@ class PlayerView:
 @dataclass(frozen=True, slots=True)
 class View:
     """What `observer` knows about the game. `players` is indexed like
-    `GameState.players`; the turn state (whose turn, trade, combat, abilities
-    used, scraps left and owed, bases left to destroy) is all public."""
+        `GameState.players`; the turn state (whose turn, trade, combat, abilities
+        used, scraps left and owed, bases left to destroy, Trade Row scraps
+    left) is all public."""
 
     observer: int
     players: tuple[PlayerView, PlayerView]
@@ -74,6 +75,7 @@ class View:
     may_scrap: int
     must_scrap: int
     may_destroy: int
+    may_scrap_row: int
 
 
 def _player_view(player: PlayerState, *, hand_seen: bool) -> PlayerView:
@@ -116,6 +118,7 @@ def observe(state: GameState, observer: int) -> View:
         may_scrap=state.may_scrap,
         must_scrap=state.must_scrap,
         may_destroy=state.may_destroy,
+        may_scrap_row=state.may_scrap_row,
     )
 
 
@@ -163,4 +166,5 @@ def sample_world(view: View, rng: random.Random) -> GameState:
         may_scrap=view.may_scrap,
         must_scrap=view.must_scrap,
         may_destroy=view.may_destroy,
+        may_scrap_row=view.may_scrap_row,
     )

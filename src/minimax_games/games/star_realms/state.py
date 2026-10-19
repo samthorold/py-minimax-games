@@ -31,6 +31,10 @@ from your hand"), which they make before anything else.
 destroy this turn (`DestroyBase` effects), like `may_scrap`: optional,
 usable at any time in the turn, and lost at its end.
 
+`may_scrap_row` counts the cards the current player may still scrap from
+the Trade Row this turn (`ScrapTradeRow` effects), like `may_scrap`:
+optional, usable at any time in the turn, and lost at its end.
+
 `PlayerState.to_discard` counts the discards an opponent's `OpponentDiscards`
 effects have left a player to make at the start of their next turn. It is
 public, and capped at the hand's size when their turn starts.
@@ -97,6 +101,7 @@ class GameState:
     may_scrap: int = 0
     must_scrap: int = 0
     may_destroy: int = 0
+    may_scrap_row: int = 0
 
     def replace(
         self,
@@ -116,6 +121,7 @@ class GameState:
         may_scrap: int | None = None,
         must_scrap: int | None = None,
         may_destroy: int | None = None,
+        may_scrap_row: int | None = None,
     ) -> "GameState":
         """`dataclasses.replace(self, ...)`, without its introspection of the
         fields on every call: the search builds several states per node, so
@@ -137,4 +143,5 @@ class GameState:
             self.may_scrap if may_scrap is None else may_scrap,
             self.must_scrap if must_scrap is None else must_scrap,
             self.may_destroy if may_destroy is None else may_destroy,
+            self.may_scrap_row if may_scrap_row is None else may_scrap_row,
         )

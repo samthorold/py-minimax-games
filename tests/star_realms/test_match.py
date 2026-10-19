@@ -19,6 +19,7 @@ from minimax_games.games.star_realms.action import (
     Scrap,
     ScrapDiscardCard,
     ScrapHandCard,
+    ScrapTradeRowCard,
     UseAlly,
     UseBase,
 )
@@ -215,6 +216,7 @@ def test_random_games_neither_create_nor_lose_cards_and_use_every_action():
         ScrapHandCard,
         ScrapDiscardCard,
         DestroyTarget,
+        ScrapTradeRowCard,
     )
     for kind in kinds:
         assert taken[kind.__name__] > 0, kind
@@ -322,6 +324,23 @@ def test_the_log_shows_scraps_from_hand_or_discard_pile_given_and_made():
     assert transcript.describe(
         ScrapDiscardCard(EXPLORER), dataclasses.replace(state, current=1)
     ) == ("Player 2 scraps Explorer from the discard pile")
+
+
+def test_the_log_shows_trade_row_scraps_given_and_made_with_the_refill():
+    state = rules.new_game(seed=1)
+    destroyer = CATALOGUE["Blob Destroyer"]
+    assert transcript.describe(UseAlly(destroyer), state) == (
+        "Player 1 uses Blob Destroyer's ally ability for 1 base of Player 2 to"
+        " destroy, 1 scrap from the Trade Row"
+    )
+    card, refill = state.trade_row[0], state.trade_deck[0]
+    assert transcript.describe(ScrapTradeRowCard(card), state) == (
+        f"Player 1 scraps {card.name} from the Trade Row; {refill.name} replaces it"
+    )
+    empty = dataclasses.replace(state, trade_deck=())
+    assert transcript.describe(ScrapTradeRowCard(card), empty) == (
+        f"Player 1 scraps {card.name} from the Trade Row"
+    )
 
 
 def test_the_log_shows_bases_to_destroy_given_and_destroyed():

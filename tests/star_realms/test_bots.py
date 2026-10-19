@@ -13,6 +13,7 @@ from minimax_games.games.star_realms.action import (
     Scrap,
     ScrapDiscardCard,
     ScrapHandCard,
+    ScrapTradeRowCard,
     UseAlly,
     UseBase,
 )
@@ -95,10 +96,15 @@ def test_greedy_never_uses_a_destroy_base_ability():
     assert greedy(*actions) == EndTurn()
 
 
+def test_greedy_never_scraps_from_the_trade_row():
+    actions = (ScrapTradeRowCard(CUTTER), ScrapTradeRowCard(BATTLE_BLOB), EndTurn())
+    assert greedy(*actions) == EndTurn()
+
+
 def test_greedy_beats_random_in_the_large_majority_of_seeded_games():
     """30 seeds, alternating seats. Measured: greedy wins all 30 (500 of
-    500 over seeds 0-499, with the Milestone 4 destroy-base deck), in about
-    24 turns on average."""
+    500 over seeds 0-499, with the Milestone 4 Trade Row scrap deck), in
+    about 23 turns on average."""
     wins = 0
     for seed in range(30):
         seat = seed % 2
@@ -208,6 +214,40 @@ def test_heuristic_destroys_the_toughest_base_it_may_before_buying_or_attacking(
     assert heuristic(PlayCard(WHEEL), *destroys, view=view) == PlayCard(WHEEL)
 
 
+def row_view(*, opponent_owned: tuple[Card, ...], trade_deck: tuple[Card, ...]) -> View:
+    """VIEW late in the game, the opponent owning `opponent_owned` (in the
+    discard pile), with `trade_deck` left to refill the Trade Row."""
+    me, them = VIEW.players
+    them = dataclasses.replace(them, discard=opponent_owned)
+    return dataclasses.replace(VIEW, players=(me, them), trade_deck=trade_deck, turn=30)
+
+
+def test_heuristic_scraps_the_row_card_the_opponent_wants_most_after_buying():
+    """Cutter (Trade Federation) and Corvette (Star Empire) both cost 2; the
+    opponent owns Federation cards, so it denies them the Cutter."""
+    view = row_view(
+        opponent_owned=(CATALOGUE["Federation Shuttle"],) * 4,
+        trade_deck=(SCOUT, VIPER),
+    )
+    scraps = (ScrapTradeRowCard(CUTTER), ScrapTradeRowCard(CORVETTE))
+    for actions in (scraps, scraps[::-1]):
+        assert heuristic(*actions, EndTurn(), view=view) == ScrapTradeRowCard(CUTTER)
+    buy = Acquire(CORVETTE)
+    assert heuristic(*scraps, buy, EndTurn(), view=view) == buy
+    assert heuristic(PlayCard(WHEEL), *scraps, view=view) == PlayCard(WHEEL)
+    attack = (AttackPlayer(), EndTurn())
+    assert heuristic(*scraps, *attack, view=view) == ScrapTradeRowCard(CUTTER)
+
+
+def test_heuristic_leaves_the_row_when_a_refill_would_likely_be_better():
+    """A refill is drawn from the Trade Deck the view shows: when the row's
+    best card is worth less to the opponent than the average card left
+    there, scrapping it would likely hand them something better."""
+    view = row_view(opponent_owned=(), trade_deck=(BATTLE_BLOB, WAR_WORLD))
+    scraps = (ScrapTradeRowCard(CUTTER), ScrapTradeRowCard(CORVETTE))
+    assert heuristic(*scraps, EndTurn(), view=view) == EndTurn()
+
+
 RAM = CATALOGUE["Ram"]  # scrap: 3 trade
 
 
@@ -290,8 +330,8 @@ def test_heuristic_values_a_base_for_the_turns_it_stays_in_play():
 
 
 def test_heuristic_beats_greedy_in_clearly_more_than_half_of_seeded_games():
-    """40 seeds, alternating seats. Measured: the heuristic wins 39 of 40
-    (443 of 500 over seeds 0-499) with the Milestone 4 destroy-base deck.
+    """40 seeds, alternating seats. Measured: the heuristic wins 35 of 40
+    (418 of 500 over seeds 0-499) with the Milestone 4 Trade Row scrap deck.
     Tuned on seeds from 1000 with the 30-card first slice."""
     wins = 0
     for seed in range(40):
