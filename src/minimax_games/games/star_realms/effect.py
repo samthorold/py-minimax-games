@@ -1,8 +1,7 @@
 """What a card does: the `Effect` enum.
 
-The engine doesn't implement every variant yet: later card slices add them
-(see docs/star-realms.md). Abilities a card says you "may" use are optional
-when the engine implements them; the variant docstrings say which.
+The rules implement every variant (docs/star-realms.md). Abilities a card
+says you "may" use are optional; the variant docstrings say which.
 """
 
 from superenums import Variant
@@ -97,17 +96,21 @@ class ScrapFromHand(Variant):
 
 
 class CopyShip(Variant):
-    """Copy another ship you've played this turn (Stealth Needle)."""
+    """Copy another ship you've played this turn (Stealth Needle), which has
+    that ship's faction as well as its own. The rules copy a ship still in
+    play, as the Needle is played (docs/star-realms.md)."""
 
 
 class ShipsGainCombat(Variant):
-    """Every ship you play gains `amount` combat (Fleet HQ)."""
+    """Every ship you play gains `amount` combat (Fleet HQ): always on while
+    the base is in play, for the ships played after it."""
 
     amount: int
 
 
 class AllyForAllFactions(Variant):
-    """This card counts as an ally for every faction (Mech World)."""
+    """This card counts as an ally for every faction (Mech World): always on
+    while the base is in play, for ally abilities only."""
 
 
 type Effect = (

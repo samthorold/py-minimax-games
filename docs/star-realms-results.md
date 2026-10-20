@@ -891,3 +891,58 @@ With the 74-card deck the default `bench` positions are different games: horizon
 **Passes.** No crashes, no unfinished games, and the ladder order holds: heuristic beats greedy (90.2%), greedy beats random (100%), cheat beats greedy (77.0%).
 
 Raw outputs (not committed): `ontop/heuristic-greedy-500.txt`, `ontop/greedy-random-500.txt`, `ontop/cheat-greedy-100.txt`, `ontop/bench-before-{1,2}.txt`, `ontop/bench-after-{1,2}.txt`, `ontop/bench-new-deck.txt`, `ontop/bench-budget-new-deck.txt`, `ontop/bench-budget-old-deck.txt`.
+
+## Milestone 4: the remaining one-off abilities
+
+- Date: 2026-10-20
+- Commit: the `issue-101-one-offs` branch (#101).
+- **The deck changed, for the last time.** `DrawIfBases`, `ScrapThenDraw`, `CopyShip`, `ShipsGainCombat` and `AllyForAllFactions` join `catalogue.IMPLEMENTED`, so the playable Trade Deck grows from 74 cards to the whole base set, **80 cards**: 2 Embassy Yachts, Brain World, Stealth Needle, Fleet HQ and Mech World. These results compare with the previous slice's ("Milestone 4: next ship on top of the deck") only loosely.
+- Embassy Yacht draws 2 when its owner has 2 bases in play, and is played automatically while it can't. Brain World's scraps are a forced `ScrapAndDraw` choice; Stealth Needle copies a ship in play through a forced `Copy`, becoming a copy of it (faction and abilities, plus Machine Cult) until it leaves play. Fleet HQ (+1 combat per ship played) and Mech World (an ally for every faction) are always on; ships wait in hand while a Fleet HQ is there. Greedy copies the ship with the most trade plus combat and never scraps with Brain World; the heuristic copies the ship it would least want to give up and scraps up to two Vipers and Scouts with Brain World, from the discard pile first (`GreedyBot` and `HeuristicBot` docstrings).
+- Budgets, machine and the check itself as in the previous slices: 500 games each of heuristic vs greedy and greedy vs random, 100 of cheat vs greedy at its defaults (2-turn horizon, 5,000 nodes per decision), seeds from 0, alternating seats, max 300 turns, `--jobs 3`, each run alone in the foreground.
+
+### heuristic vs greedy
+
+`python -m minimax_games.games.star_realms tournament --bots heuristic greedy --games 500 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| heuristic | 453/500 | 90.6% | 227/250 | 226/250 | 0.0106 |
+| greedy | 47/500 | 9.4% | 24/250 | 23/250 | 0.0064 |
+
+500 games, 0 unfinished, mean 23.9 turns, 1.3 s wall time. The heuristic's win rate: 90.6%, interval 87.7-92.9% (next-ship-on-top slice: 90.2%, 87.3-92.5%).
+
+### greedy vs random
+
+`python -m minimax_games.games.star_realms tournament --bots greedy random --games 500 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| greedy | 500/500 | 100.0% | 250/250 | 250/250 | 0.0070 |
+| random | 0/500 | 0.0% | 0/250 | 0/250 | 0.0005 |
+
+500 games, 0 unfinished, mean 23.9 turns, 1.1 s wall time.
+
+Random against random can now stall: with Brain World beside Machine Base, Junkyard and the other scrappers, random bots sometimes scrap nearly every card they own, leaving neither able to win (seeds 51, 109, 131, 166, 254 and 274 of 0-299 pass 1,000 turns; the match tests use seeds 0-49, which all finish). No baseline does that.
+
+### cheat vs greedy
+
+`python -m minimax_games.games.star_realms tournament --bots cheat greedy --games 100 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| cheat | 76/100 | 76.0% | 37/50 | 39/50 | 116 |
+| greedy | 24/100 | 24.0% | 11/50 | 13/50 | 0.0093 |
+
+100 games, 0 unfinished, mean 26.2 turns, 330 s wall time. The cheat's win rate: 76.0%, interval 66.8-83.3% (next-ship-on-top slice: 77.0%, 67.8-84.2%).
+
+### Search speed
+
+The rules add `scrap_to_draw` and `copying` to `GameState`, a Fleet HQ check before a ship is played automatically, Mech World and the Needle's copies in the ally check (`_allied`), and a Fleet HQ bonus when a ship is played. On the 74-card deck (`new_game`'s default patched back to it), `bench` searches the identical trees as before the change (609,304 nodes at horizon 1 and 895,044 at horizon 2): 36,700-36,900 and 38,200-38,300 nodes/s after, 38,100-38,400 and 38,900-39,200 before, over two runs each (about 2-4% slower). A first version was 10% slower: looking cards up by `Card` (whose hash is a Python call) in the per-action checks; the Fleet HQ, Stealth Needle and Mech World checks now look up names instead.
+
+With the 80-card deck the default `bench` positions are different games: horizon 1 5/8 searches finished within 200,000 nodes, 632,643 nodes at 46,100 nodes/s; horizon 2 4/8, 966,570 nodes at 37,600 nodes/s. `bench --budget 5000`: the cheat's decisions finished 2 turns at 2/8 positions, 1 turn at 2/8 and none at 4/8 (74-card deck, on this branch: 1/8, 4/8 and 3/8), 101.8 ms per decision. The new decisions are a `Copy` node with a branch per other ship in play and a `ScrapAndDraw` node with a branch per choice of up to two cards from hand and discard pile (dozens with a long discard pile), each only when Stealth Needle or Brain World is used; Embassy Yacht stays automatic unless it can draw.
+
+### Verdict
+
+**Passes.** No crashes, no unfinished games, and the ladder order holds: heuristic beats greedy (90.6%), greedy beats random (100%), cheat beats greedy (76.0%). Every base-set card is now in play.
+
+Raw outputs (not committed): `oneoffs/heuristic-greedy-500.txt`, `oneoffs/greedy-random-500.txt`, `oneoffs/cheat-greedy-100.txt`, `oneoffs/bench-before-{1,2}.txt`, `oneoffs/bench-after-{1,2}.txt`, `oneoffs/bench-new-deck.txt`, `oneoffs/bench-budget-new-deck.txt`, `oneoffs/bench-budget-old-deck.txt`.

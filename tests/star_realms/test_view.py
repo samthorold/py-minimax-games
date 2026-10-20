@@ -5,6 +5,7 @@ from collections import Counter
 from minimax_games.games.star_realms import rules
 from minimax_games.games.star_realms.action import (
     AcquireOnTop,
+    Copy,
     EndTurn,
     PlayCard,
     ScrapTradeRowCard,
@@ -110,6 +111,8 @@ def public_changes(state: GameState, observer: int) -> list[GameState]:
         dataclasses.replace(state, choosing=(*state.choosing, card)),
         dataclasses.replace(state, may_on_top=state.may_on_top + 1),
         dataclasses.replace(state, free_ships=state.free_ships + 1),
+        dataclasses.replace(state, scrap_to_draw=state.scrap_to_draw + 1),
+        dataclasses.replace(state, copying=state.copying + 1),
         dataclasses.replace(
             state,
             factions_played=(state.factions_played[0] + 1, *state.factions_played[1:]),
@@ -127,9 +130,16 @@ def public_changes(state: GameState, observer: int) -> list[GameState]:
                 ("discard", (*player.discard, card)),
                 ("bases", (*player.bases, card)),
                 ("to_discard", player.to_discard + 1),
-                ("known_top", min(player.known_top + 1, len(player.deck))),
             )
         ]
+        if player.known_top < len(player.deck):
+            changes.append(
+                with_player(
+                    state,
+                    index,
+                    dataclasses.replace(player, known_top=player.known_top + 1),
+                )
+            )
     # the opponent's hand size, with the same cards unseen
     unseen = theirs.hand + theirs.deck
     size = 2 if len(theirs.hand) == 3 else 3
@@ -166,7 +176,8 @@ def test_a_sampled_world_keeps_pending_discards_and_so_the_legal_actions():
     rng = random.Random(5)
     for seed in range(10):
         state = midgame(seed)
-        if rules.winner(state) is not None:
+        # Skip finished games, and decisions that must come first.
+        if EndTurn() not in rules.legal_actions(state):
             continue
         # The player to move made the opponent discard, then ended the turn.
         me = state.players[state.current]
@@ -198,6 +209,8 @@ def test_a_sampled_world_keeps_pending_scraps_and_destroys():
             may_scrap_row=4,
             may_on_top=5,
             free_ships=6,
+            scrap_to_draw=7,
+            copying=1,
         )
         for observer in (0, 1):
             world = sample_world(observe(state, observer), rng)
@@ -208,7 +221,9 @@ def test_a_sampled_world_keeps_pending_scraps_and_destroys():
                 world.may_scrap_row,
                 world.may_on_top,
                 world.free_ships,
-            ) == (2, 1, 3, 4, 5, 6)
+                world.scrap_to_draw,
+                world.copying,
+            ) == (2, 1, 3, 4, 5, 6, 7, 1)
 
 
 def test_sampled_worlds_stay_consistent_when_the_trade_row_refills():
@@ -216,7 +231,8 @@ def test_sampled_worlds_stay_consistent_when_the_trade_row_refills():
     rng = random.Random(8)
     for seed in range(10):
         state = midgame(seed)
-        if rules.winner(state) is not None:
+        # Skip finished games, and decisions that must come first.
+        if EndTurn() not in rules.legal_actions(state):
             continue
         me = state.players[state.current]
         state = with_player(state, state.current, dataclasses.replace(me, hand=(pod,)))
@@ -293,7 +309,7 @@ def all_cards(state: GameState) -> Counter[str]:
             player.discard,
             player.bases,
         ]
-    return Counter(card.name for pile in piles for card in pile)
+    return Counter(rules.original(card).name for pile in piles for card in pile)
 
 
 def test_random_games_from_sampled_worlds_finish_and_conserve_cards():
@@ -347,3 +363,21 @@ def test_a_ship_put_on_top_of_the_deck_is_known_until_drawn():
         # Drawn at the end of the turn, it is no longer known to be on top.
         after = rules.apply(state, EndTurn())
         assert observe(after, 1 - me).players[me].deck_top == ()
+
+
+def test_a_sampled_world_keeps_stealth_needles_copy():
+    needle, ram = CATALOGUE["Stealth Needle"], CATALOGUE["Ram"]
+    state = rules.new_game(seed=3)
+    me = dataclasses.replace(state.players[0], hand=(ram, needle))
+    state = with_player(state, 0, me)
+    state = rules.apply(rules.apply(state, PlayCard(ram)), PlayCard(needle))
+    assert state.copying == 1
+    rng = random.Random(3)
+    for observer in (0, 1):
+        world = sample_world(observe(state, observer), rng)
+        assert observe(world, observer) == observe(state, observer)
+    state = rules.apply(state, Copy(ram))
+    view = observe(state, 0)
+    world = sample_world(view, rng)
+    assert observe(world, 0) == view
+    assert rules.legal_actions(world) == rules.legal_actions(state)

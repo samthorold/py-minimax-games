@@ -12,12 +12,14 @@ from minimax_games.games.star_realms.action import (
     AttackBase,
     AttackPlayer,
     Choose,
+    Copy,
     DestroyTarget,
     Discard,
     EndTurn,
     PlayCard,
     Recycle,
     Scrap,
+    ScrapAndDraw,
     ScrapDiscardCard,
     ScrapHandCard,
     ScrapTradeRowCard,
@@ -35,14 +37,15 @@ from minimax_games.games.star_realms.catalogue import (
     playable_deck,
 )
 from minimax_games.games.star_realms.effect import (
+    AcquireShipFreeOnTop,
     Authority,
     Choice,
     Combat,
-    CopyShip,
     DestroyBase,
     DiscardThenDraw,
     Draw,
     DrawPerFactionCard,
+    NextShipOnTop,
     OpponentDiscards,
     ScrapFromHand,
     ScrapHandOrDiscard,
@@ -252,14 +255,31 @@ def test_the_playable_deck_adds_the_or_choice_cards():
     assert len(deck) == 70
 
 
+SLICE_7_EFFECTS = SLICE_6_EFFECTS | {NextShipOnTop, AcquireShipFreeOnTop}
+
+
 def test_the_playable_deck_adds_the_next_ship_on_top_cards():
-    added = Counter(PLAYABLE_TRADE_DECK) - Counter(playable_deck(SLICE_6_EFFECTS))
+    deck = playable_deck(SLICE_7_EFFECTS)
+    added = Counter(deck) - Counter(playable_deck(SLICE_6_EFFECTS))
     assert {card.name: n for card, n in added.items()} == {
         "Freighter": 2,
         "Central Office": 1,
         "Blob Carrier": 1,
     }
-    assert len(PLAYABLE_TRADE_DECK) == 74
+    assert len(deck) == 74
+
+
+def test_every_trade_deck_card_is_playable():
+    added = Counter(PLAYABLE_TRADE_DECK) - Counter(playable_deck(SLICE_7_EFFECTS))
+    assert {card.name: n for card, n in added.items()} == {
+        "Embassy Yacht": 2,
+        "Fleet HQ": 1,
+        "Stealth Needle": 1,
+        "Mech World": 1,
+        "Brain World": 1,
+    }
+    assert PLAYABLE_TRADE_DECK == TRADE_DECK
+    assert len(PLAYABLE_TRADE_DECK) == 80
 
 
 def test_a_choice_is_playable_only_once_every_option_is():
@@ -404,17 +424,6 @@ def test_each_copy_in_play_can_be_scrapped_once():
     assert scraps(state) == []
 
 
-def test_scrap_abilities_with_effects_not_yet_implemented_are_unavailable():
-    frigate = CATALOGUE["Imperial Frigate"]  # scrap: draw a card
-    # Every base-set scrap ability is implemented now, so make one that isn't.
-    culler = dataclasses.replace(frigate, name="Culler", scrap=(CopyShip(),))
-    state = rules.new_game(seed=1)
-    in_play = (frigate, culler)
-    first = dataclasses.replace(state.players[0], hand=(), in_play=in_play)
-    state = dataclasses.replace(state, players=(first, state.players[1]))
-    assert scraps(state) == [Scrap(frigate)]
-
-
 SHUTTLE = CATALOGUE["Federation Shuttle"]
 
 
@@ -496,18 +505,6 @@ def test_scrapping_one_of_two_copies_scraps_the_one_whose_ally_was_used():
     assert allies(state) == [UseAlly(RAM), UseAlly(TRADE_POD)]
     state = rules.apply(state, UseAlly(RAM))
     assert allies(state) == [UseAlly(TRADE_POD)]
-
-
-def test_ally_abilities_with_effects_not_yet_implemented_are_unavailable():
-    # Every base-set Blob ally ability is implemented now, so make one that isn't.
-    destroyer = dataclasses.replace(RAM, name="Hoarder", ally=(CopyShip(),))
-    frigate = CATALOGUE["Imperial Frigate"]  # ally: 2 combat
-    corvette = CATALOGUE["Corvette"]  # ally: 2 combat
-    state = rules.new_game(seed=1)
-    in_play = (destroyer, RAM, frigate, corvette, SCOUT, SCOUT)
-    first = dataclasses.replace(state.players[0], hand=(), in_play=in_play)
-    state = dataclasses.replace(state, players=(first, state.players[1]))
-    assert allies(state) == [UseAlly(RAM), UseAlly(frigate), UseAlly(corvette)]
 
 
 BLOB_WHEEL = CATALOGUE["Blob Wheel"]
@@ -1145,4 +1142,137 @@ def test_blob_carriers_ally_does_nothing_without_a_ship_in_the_row():
     state = rules.apply(state, PlayCard(RAM))
     after = rules.apply(state, UseAlly(BLOB_CARRIER))
     assert after.players[0] == state.players[0]
+    assert EndTurn() in rules.legal_actions(after)
+
+
+EMBASSY_YACHT = CATALOGUE["Embassy Yacht"]  # 3 Authority, 2 trade; 2 bases: draw 2
+
+
+def test_embassy_yacht_draws_two_cards_only_with_two_bases_in_play():
+    state = with_hand(rules.new_game(seed=1), EMBASSY_YACHT)
+    deck = state.players[0].deck
+    after = rules.apply(state, PlayCard(EMBASSY_YACHT))
+    assert after.players[0].hand == ()
+    assert after.trade == 2
+    assert after.players[0].authority == 53
+    state = with_hand(with_bases(state, BLOB_WHEEL, THE_HIVE), EMBASSY_YACHT)
+    after = rules.apply(state, PlayCard(EMBASSY_YACHT))
+    assert after.players[0].hand == deck[:2]
+    assert after.trade == 2
+
+
+FLEET_HQ = CATALOGUE["Fleet HQ"]  # base: all your ships gain 1 combat
+
+
+def test_ships_played_while_fleet_hq_is_in_play_gain_one_combat():
+    state = with_hand(rules.new_game(seed=1), VIPER, FLEET_HQ, SCOUT, BLOB_WHEEL)
+    state = rules.apply(state, PlayCard(VIPER))
+    assert state.combat == 1
+    state = rules.apply(state, PlayCard(FLEET_HQ))
+    # Ships played before it don't, nor do bases.
+    assert state.combat == 1
+    state = rules.apply(state, PlayCard(SCOUT))
+    assert (state.trade, state.combat) == (1, 2)
+    state = rules.apply(state, PlayCard(BLOB_WHEEL))
+    assert state.combat == 3
+    # Its ability is always on: there is nothing to use.
+    later = rules.apply(rules.apply(state, EndTurn()), EndTurn())
+    assert UseBase(FLEET_HQ) not in rules.legal_actions(later)
+
+
+MECH_WORLD = CATALOGUE["Mech World"]  # outpost: an ally for every faction
+
+
+def test_mech_world_is_an_ally_for_every_faction():
+    state = with_hand(with_bases(rules.new_game(seed=1), MECH_WORLD), CUTTER, RAM)
+    state = rules.apply(rules.apply(state, PlayCard(CUTTER)), PlayCard(RAM))
+    assert allies(state) == [UseAlly(CUTTER), UseAlly(RAM)]
+    # Its ability is always on: there is nothing to use.
+    assert UseBase(MECH_WORLD) not in rules.legal_actions(state)
+    # It is an ally, not a card of each faction: Blob World counts Ram only.
+    state = with_hand(rules.new_game(seed=1), MECH_WORLD, RAM)
+    state = rules.apply(rules.apply(state, PlayCard(MECH_WORLD)), PlayCard(RAM))
+    assert state.factions_played == (1, 0, 0, 1)
+
+
+BRAIN_WORLD = CATALOGUE["Brain World"]  # outpost: scrap up to 2, draw as many
+
+
+def test_brain_world_scraps_up_to_two_cards_then_draws_as_many():
+    state = with_bases(rules.new_game(seed=1), BRAIN_WORLD)
+    first = dataclasses.replace(
+        state.players[0], hand=(SCOUT, VIPER), discard=(SCOUT, CUTTER)
+    )
+    state = dataclasses.replace(state, players=(first, state.players[1]))
+    deck = first.deck
+    state = rules.apply(state, UseBase(BRAIN_WORLD))
+    # Each distinct choice of up to two cards from hand and discard pile, none
+    # included, and nothing else first.
+    assert set(rules.legal_actions(state)) == {
+        ScrapAndDraw((), ()),
+        ScrapAndDraw((SCOUT,), ()),
+        ScrapAndDraw((VIPER,), ()),
+        ScrapAndDraw((), (CUTTER,)),
+        ScrapAndDraw((), (SCOUT,)),
+        ScrapAndDraw((SCOUT, VIPER), ()),
+        ScrapAndDraw((SCOUT,), (CUTTER,)),
+        ScrapAndDraw((SCOUT,), (SCOUT,)),
+        ScrapAndDraw((VIPER,), (CUTTER,)),
+        ScrapAndDraw((VIPER,), (SCOUT,)),
+        ScrapAndDraw((), (CUTTER, SCOUT)),
+    }
+    after = rules.apply(state, ScrapAndDraw((VIPER,), (CUTTER,)))
+    assert after.players[0].hand == (SCOUT, *deck[:2])
+    assert after.players[0].discard == (SCOUT,)
+    assert after.scrap_heap == (VIPER, CUTTER)
+    assert EndTurn() in rules.legal_actions(after)
+    after = rules.apply(state, ScrapAndDraw((), ()))
+    assert after.players[0] == first
+
+
+def test_brain_world_with_nothing_to_scrap_does_nothing():
+    state = with_hand(rules.new_game(seed=1), BRAIN_WORLD)
+    after = rules.apply(state, PlayCard(BRAIN_WORLD))
+    assert after.players[0].hand == ()
+    assert EndTurn() in rules.legal_actions(after)
+
+
+STEALTH_NEEDLE = CATALOGUE["Stealth Needle"]  # copy another ship played this turn
+
+
+def test_stealth_needle_copies_another_ship_played_this_turn_and_its_faction():
+    state = with_hand(rules.new_game(seed=1), RAM, SCOUT, STEALTH_NEEDLE, TRADE_BOT)
+    for card in (RAM, SCOUT, TRADE_BOT):
+        state = rules.apply(state, PlayCard(card))
+    state = dataclasses.replace(state, may_scrap=0)
+    state = rules.apply(state, PlayCard(STEALTH_NEEDLE))
+    # One per distinct other ship in play, and nothing else first.
+    assert rules.legal_actions(state) == (Copy(RAM), Copy(SCOUT), Copy(TRADE_BOT))
+    after = rules.apply(state, Copy(RAM))
+    assert after.combat == 5 + 5
+    needle = after.players[0].in_play[-1]
+    assert needle.name == "Stealth Needle (Ram)"
+    # A Blob card now, and still a Machine Cult one: Blob World counts it,
+    # and it allies Ram and Trade Bot, with Ram's ally ability.
+    assert after.factions_played == (2, 0, 0, 2)
+    assert allies(after) == [UseAlly(RAM), UseAlly(TRADE_BOT), UseAlly(needle)]
+    assert rules.apply(after, UseAlly(needle)).combat == 5 + 5 + 2
+    # Scrapped, it gives Ram's scrap ability, and Stealth Needle is scrapped.
+    scrapped = rules.apply(after, Scrap(needle))
+    assert scrapped.trade == 1 + 1 + 3
+    assert scrapped.scrap_heap == (STEALTH_NEEDLE,)
+    # At the end of the turn, it is Stealth Needle again.
+    ended = rules.apply(after, EndTurn())
+    assert STEALTH_NEEDLE in ended.players[0].discard + ended.players[0].hand
+    assert needle not in ended.players[0].discard + ended.players[0].hand
+
+
+def test_stealth_needle_with_no_other_ship_in_play_copies_nothing():
+    state = with_hand(rules.new_game(seed=1), STEALTH_NEEDLE, SCOUT)
+    after = rules.apply(state, PlayCard(STEALTH_NEEDLE))
+    assert after.players[0].in_play == (STEALTH_NEEDLE,)
+    assert after.factions_played == (0, 0, 0, 1)
+    assert EndTurn() in rules.legal_actions(after)
+    # Ships played later don't make it copy.
+    after = rules.apply(after, PlayCard(SCOUT))
     assert EndTurn() in rules.legal_actions(after)

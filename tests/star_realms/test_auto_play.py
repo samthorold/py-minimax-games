@@ -248,7 +248,9 @@ def outcome(state: GameState) -> Outcome:
 
 
 def names(cards: tuple[Card, ...]) -> tuple[str, ...]:
-    return tuple(sorted(card.name for card in cards))
+    """The cards' names, sorted, Stealth Needle's copies as Stealth Needle
+    (as they are once they leave play)."""
+    return tuple(sorted(rules.original(card).name for card in cards))
 
 
 def ordered(cards: tuple[Card, ...]) -> tuple[Card, ...]:
@@ -315,6 +317,11 @@ def automated(state: GameState, action: Action) -> GameState:
 RAM = CATALOGUE["Ram"]  # Blob; ally 2 combat; scrap 3 trade
 SPACE_STATION = CATALOGUE["Space Station"]  # Star Empire; scrap 4 trade
 SURVEY_SHIP = CATALOGUE["Survey Ship"]  # Star Empire; draw; scrap: discards 1
+EMBASSY_YACHT = CATALOGUE["Embassy Yacht"]  # 3 Authority, 2 trade; 2 bases: draw 2
+FLEET_HQ = CATALOGUE["Fleet HQ"]  # base: all your ships gain 1 combat
+BRAIN_WORLD = CATALOGUE["Brain World"]  # outpost: scrap up to 2, draw as many
+MECH_WORLD = CATALOGUE["Mech World"]  # outpost: an ally for every faction
+STEALTH_NEEDLE = CATALOGUE["Stealth Needle"]  # copy another ship played this turn
 
 
 def small(
@@ -404,6 +411,36 @@ SMALL_STATES = {
         deck=(VIPER,),
         trade_row=(CUTTER, BLOB_WHEEL),
     ),
+    # Embassy Yacht with one base in play, so it can't draw, around a draw.
+    "yacht": small(hand=(EMBASSY_YACHT, CORVETTE), deck=(SCOUT,), bases=(WAR_WORLD,)),
+    # Embassy Yacht with a base in hand that would let it draw.
+    "yacht and base": small(
+        hand=(EMBASSY_YACHT, BLOB_WHEEL), deck=(SCOUT, VIPER), bases=(WAR_WORLD,)
+    ),
+    # Fleet HQ in hand, ships waiting for it, beside allies in play.
+    "fleet hq": small(
+        hand=(FLEET_HQ, SCOUT, CORVETTE), deck=(VIPER,), in_play=(SHUTTLE, CUTTER)
+    ),
+    # Mech World allying ships of two factions, around a draw.
+    "mech world": small(
+        hand=(CUTTER, RAM, CORVETTE), deck=(SCOUT,), bases=(MECH_WORLD,)
+    ),
+    # Stealth Needle copying a ship with an ally and a scrap ability, or a
+    # Scout, around Ram's scrap.
+    "needle": small(hand=(STEALTH_NEEDLE, RAM, SCOUT), deck=(VIPER,)),
+    # Stealth Needle could copy Trade Bot to scrap a second card from hand.
+    "needle and scrapper": small(
+        hand=(STEALTH_NEEDLE, TRADE_BOT, VIPER), discard=(SCOUT,)
+    ),
+    # Brain World scrapping from hand and discard pile, then drawing, beside
+    # allies in play.
+    "brain world": small(
+        hand=(SCOUT, VIPER),
+        deck=(SCOUT, VIPER),
+        discard=(VIPER,),
+        bases=(BRAIN_WORLD,),
+        in_play=(SHUTTLE, CUTTER),
+    ),
 }
 
 
@@ -430,13 +467,33 @@ def test_the_outcome_check_catches_automating_a_draw(monkeypatch: pytest.MonkeyP
     assert not dominated(manual, auto)
 
 
-@pytest.mark.parametrize("name", ["scraps", "machine base"])
+@pytest.mark.parametrize("name", ["scraps", "machine base", "needle and scrapper"])
 def test_the_outcome_check_catches_playing_ships_that_could_be_scrapped_from_hand(
     name: str, monkeypatch: pytest.MonkeyPatch
 ):
     state = SMALL_STATES[name]
     manual = outcomes(state, rules.apply)
     monkeypatch.setattr(rules, "_hand_scrap_ahead", lambda state, card: False)
+    auto = outcomes(rules.auto_play(state), automated)
+    assert not dominated(manual, auto)
+
+
+def test_the_outcome_check_catches_playing_ships_before_fleet_hq(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    state = SMALL_STATES["fleet hq"]
+    manual = outcomes(state, rules.apply)
+    monkeypatch.setattr(rules, "_bonus_ahead", lambda state: False)
+    auto = outcomes(rules.auto_play(state), automated)
+    assert not dominated(manual, auto)
+
+
+def test_the_outcome_check_catches_playing_embassy_yacht_before_a_base(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    state = SMALL_STATES["yacht and base"]
+    manual = outcomes(state, rules.apply)
+    monkeypatch.setattr(rules, "_cannot_draw", lambda s, card: card == EMBASSY_YACHT)
     auto = outcomes(rules.auto_play(state), automated)
     assert not dominated(manual, auto)
 
@@ -499,3 +556,43 @@ def test_auto_play_does_nothing_once_the_game_is_over():
     loser = dataclasses.replace(state.players[1], authority=0)
     state = dataclasses.replace(state, players=(state.players[0], loser))
     assert rules.auto_play(state) == state
+
+
+def test_embassy_yacht_is_played_automatically_only_while_it_cannot_draw():
+    state = with_bases(with_hand(rules.new_game(seed=1), EMBASSY_YACHT), WAR_WORLD)
+    after = rules.auto_play(state)
+    assert after.players[0].hand == ()
+    assert after.trade == 2
+    # A base in hand could make it two bases first.
+    state = with_bases(
+        with_hand(rules.new_game(seed=1), EMBASSY_YACHT, BLOB_WHEEL), WAR_WORLD
+    )
+    assert EMBASSY_YACHT in rules.auto_play(state).players[0].hand
+    # With two bases it draws, so it is a decision.
+    state = with_bases(
+        with_hand(rules.new_game(seed=1), EMBASSY_YACHT), WAR_WORLD, BLOB_WHEEL
+    )
+    after = rules.auto_play(state)
+    assert after.players[0].hand == (EMBASSY_YACHT,)
+    assert not rules.automatic(after, PlayCard(EMBASSY_YACHT))
+
+
+def test_ships_wait_in_hand_while_fleet_hq_could_be_played_first():
+    state = with_hand(rules.new_game(seed=1), SCOUT, VIPER, FLEET_HQ)
+    after = rules.auto_play(state)
+    assert after.players[0].hand == (SCOUT, VIPER, FLEET_HQ)
+    after = rules.advance(after, PlayCard(FLEET_HQ))
+    assert after.players[0].hand == ()
+    assert (after.trade, after.combat) == (1, 3)
+    # In play, it doesn't keep them waiting.
+    state = with_bases(with_hand(rules.new_game(seed=1), SCOUT, VIPER), FLEET_HQ)
+    assert rules.auto_play(state).combat == 3
+
+
+def test_ships_wait_in_hand_while_brain_world_could_scrap_them():
+    state = with_bases(with_hand(rules.new_game(seed=1), SCOUT, VIPER), BRAIN_WORLD)
+    after = rules.auto_play(state)
+    assert after.players[0].hand == (SCOUT, VIPER)
+    assert not any(rules.automatic(after, a) for a in rules.legal_actions(after))
+    state = with_hand(rules.new_game(seed=1), SCOUT, BRAIN_WORLD)
+    assert SCOUT in rules.auto_play(state).players[0].hand

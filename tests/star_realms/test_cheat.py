@@ -110,7 +110,7 @@ def unbudgeted_move(state: GameState, turns: int) -> Action:
     return search(StarRealmsNode(state, state.current), turns).moves[0]
 
 
-@pytest.mark.parametrize(("seed", "turn"), [(0, 3), (1, 3), (0, 13)])
+@pytest.mark.parametrize(("seed", "turn"), [(0, 3), (1, 3), (2, 11)])
 def test_with_a_budget_big_enough_it_plays_the_unbudgeted_move(seed, turn):
     state = position(seed, turn)
     decision = decide(state, turns=2, budget=1_000_000)
@@ -136,7 +136,7 @@ def test_a_finished_decision_counts_the_nodes_it_searched():
 
 
 def test_when_the_deeper_search_is_cut_off_it_plays_the_deepest_finished_one():
-    state = position(seed=19, turn=9)  # 1 turn and 2 turns disagree here
+    state = position(seed=28, turn=7)  # 1 turn and 2 turns disagree here
     one_turn, two_turns = unbudgeted_move(state, 1), unbudgeted_move(state, 2)
     assert one_turn != two_turns
     decision = decide(state, turns=2, budget=1_000)

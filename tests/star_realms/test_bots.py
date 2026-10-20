@@ -9,12 +9,14 @@ from minimax_games.games.star_realms.action import (
     AttackBase,
     AttackPlayer,
     Choose,
+    Copy,
     DestroyTarget,
     Discard,
     EndTurn,
     PlayCard,
     Recycle,
     Scrap,
+    ScrapAndDraw,
     ScrapDiscardCard,
     ScrapHandCard,
     ScrapTradeRowCard,
@@ -478,3 +480,49 @@ def test_heuristic_beats_greedy_in_clearly_more_than_half_of_seeded_games():
         result = play_match((bots[0], bots[1]), seed, max_turns=100)
         wins += result.winner == seat
     assert wins >= 28
+
+
+BRAIN_WORLD_SCRAPS = (
+    ScrapAndDraw((), ()),
+    ScrapAndDraw((CUTTER,), ()),
+    ScrapAndDraw((SCOUT,), ()),
+    ScrapAndDraw((), (SCOUT,)),
+    ScrapAndDraw((), (VIPER,)),
+    ScrapAndDraw((CUTTER, SCOUT), ()),
+    ScrapAndDraw((CUTTER,), (SCOUT,)),
+    ScrapAndDraw((CUTTER,), (VIPER,)),
+    ScrapAndDraw((SCOUT,), (SCOUT,)),
+    ScrapAndDraw((SCOUT,), (VIPER,)),
+    ScrapAndDraw((), (SCOUT, VIPER)),
+)
+"""Brain World's choices with Cutter and Scout in hand and Scout and Viper in
+the discard pile."""
+
+
+def test_greedy_scraps_nothing_with_brain_world():
+    assert greedy(*reversed(BRAIN_WORLD_SCRAPS)) == ScrapAndDraw((), ())
+
+
+def test_heuristic_scraps_starting_cards_with_brain_world_from_the_discard_first():
+    assert heuristic(*BRAIN_WORLD_SCRAPS) == ScrapAndDraw((), (SCOUT, VIPER))
+    # With one starting card in the discard pile, the other comes from hand.
+    one = tuple(a for a in BRAIN_WORLD_SCRAPS if VIPER not in a.discard)
+    assert heuristic(*one) == ScrapAndDraw((SCOUT,), (SCOUT,))
+    # It keeps its other cards.
+    keep = (ScrapAndDraw((), ()), ScrapAndDraw((CUTTER,), ()))
+    assert heuristic(*keep) == ScrapAndDraw((), ())
+
+
+def test_greedy_copies_the_ship_with_the_most_trade_and_combat():
+    # Battle Blob: 8 combat; Corvette: 1 combat (and a draw); Cutter: 2 trade.
+    copies = (Copy(CUTTER), Copy(BATTLE_BLOB), Copy(CORVETTE))
+    assert greedy(*copies) == Copy(BATTLE_BLOB)
+
+
+def test_heuristic_copies_the_ship_it_would_most_want_to_play():
+    copies = (Copy(SHUTTLE), Copy(FIGHTER))
+    # Federation Shuttle: 2 trade; Blob Fighter: 3 combat; both cost 1.
+    early = dataclasses.replace(VIEW, turn=1)
+    late = dataclasses.replace(VIEW, turn=30)
+    assert heuristic(*copies, view=early) == Copy(SHUTTLE)
+    assert heuristic(*copies, view=late) == Copy(FIGHTER)

@@ -17,12 +17,14 @@ from minimax_games.games.star_realms.action import (
     AttackBase,
     AttackPlayer,
     Choose,
+    Copy,
     DestroyTarget,
     Discard,
     EndTurn,
     PlayCard,
     Recycle,
     Scrap,
+    ScrapAndDraw,
     ScrapDiscardCard,
     ScrapHandCard,
     ScrapTradeRowCard,
@@ -103,7 +105,9 @@ class GreedyBot:
        draws with Blob World or recycles with Recycling Station, and if made
        to recycle it gives up as few and as cheap cards as it can. When it
        must take a free ship (Blob Carrier), it takes the most expensive,
-       ties broken by name.
+       ties broken by name. When its Stealth Needle must copy a ship, it
+       copies the one with the most primary trade plus combat, ties broken
+       by name. With Brain World it scraps nothing, as it never scraps.
     1. plays every card it can and uses every ally and base ability, in
        `actions` order. Bots are only offered the plays automatic play leaves
        (draws, bases, and ships that could be scrapped from hand instead),
@@ -138,6 +142,16 @@ class GreedyBot:
             return min(recycles, key=_fewest_cheapest)
         if frees := _free_ships(actions):
             return min(frees, key=lambda a: (-a.card.cost, a.card.name))
+        if ScrapAndDraw((), ()) in actions:
+            return ScrapAndDraw((), ())
+        if copies := _copies(actions):
+            return min(
+                copies,
+                key=lambda a: (
+                    -_trade(a.card.primary) - _combat(a.card.primary),
+                    a.card.name,
+                ),
+            )
         for action in actions:
             if isinstance(action, PlayCard | UseAlly | UseBase):
                 return action
@@ -191,6 +205,18 @@ def _on_top(buy: Acquire, actions: tuple[Action, ...]) -> Acquire | AcquireOnTop
     in later."""
     on_top = AcquireOnTop(buy.card)
     return on_top if on_top in actions else buy
+
+
+def _copies(actions: tuple[Action, ...]) -> list[Copy]:
+    """The ships the bot's Stealth Needle may copy, if it must choose one
+    (they are then the only actions), else empty."""
+    return [a for a in actions if isinstance(a, Copy)]
+
+
+def _scraps_to_draw(actions: tuple[Action, ...]) -> list[ScrapAndDraw]:
+    """The choices of cards to scrap and draw for (Brain World), if the bot
+    must make one (they are then the only actions), else empty."""
+    return [a for a in actions if isinstance(a, ScrapAndDraw)]
 
 
 def _free_ships(actions: tuple[Action, ...]) -> list[AcquireFreeShip]:
@@ -344,6 +370,12 @@ class HeuristicBot:
        most, as it buys (4). Using Blob Carrier's ally ability is one of the
        abilities it uses at once (2), so the free ship is the one it wants
        most, whatever it costs, before it buys.
+       With Brain World, it scraps as many Vipers and Scouts as it may (up
+       to 2), from the discard pile first, then the ones it least wants
+       (as above), and draws for them; other cards are kept. When its
+       Stealth Needle must copy a ship, it copies the one it would least
+       want to give up (as above, the highest such worth), ties broken by
+       name: so trade early and combat late.
     1. while it may scrap from hand or discard pile (Trade Bot, Junkyard,
        ...), scraps a Viper or Scout, the one it least wants to play (as in
        0) first: from the discard pile while one is there, where it does
@@ -402,6 +434,10 @@ class HeuristicBot:
             return self._recycle(view, recycles)
         if frees := _free_ships(actions):
             return self._most_wanted(view, frees)
+        if culls := _scraps_to_draw(actions):
+            return self._scrap_to_draw(view, culls)
+        if copies := _copies(actions):
+            return min(copies, key=lambda a: (-_keep(a.card, view), a.card.name))
         if (thin := self._thin(view, actions)) is not None:
             return thin
         for action in actions:
@@ -448,6 +484,18 @@ class HeuristicBot:
         def key(action: Recycle) -> tuple[int, float, tuple[str, ...]]:
             keep = sum(_keep(card, view) for card in action.cards)
             return -len(action.cards), keep, tuple(c.name for c in action.cards)
+
+        return min(only, key=key)
+
+    def _scrap_to_draw(self, view: View, culls: list[ScrapAndDraw]) -> Action:
+        starters = (SCOUT, VIPER)
+        only = [a for a in culls if all(c in starters for c in a.hand + a.discard)]
+
+        def key(action: ScrapAndDraw) -> tuple[int, int, float, tuple[str, ...]]:
+            cards = action.hand + action.discard
+            keep = sum(_keep(card, view) for card in cards)
+            names = tuple(c.name for c in cards)
+            return -len(cards), -len(action.discard), keep, names
 
         return min(only, key=key)
 

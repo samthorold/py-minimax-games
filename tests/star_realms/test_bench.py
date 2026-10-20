@@ -69,13 +69,13 @@ def test_the_bench_command_reports_nodes_rates_and_time_per_decision(capsys):
         ["0", "3", "1"],
         ["0", "3", "2"],
     ]
-    assert rows[0][3] == "8"
+    assert rows[0][3] == "19"
     assert rows[-1][3] == ">40"  # stopped at the budget
     assert any(line.startswith("Horizon 2:") for line in lines)
 
 
 def test_the_turn_tree_counts_the_one_turn_tree_and_its_distinct_states():
-    state = position(seed=0, turn=7)
+    state = position(seed=0, turn=9)
     tree = turn_tree(state)
     assert tree.states < tree.nodes  # orders of the same plays transpose
     # the cheat's table merges them, so its search visits far fewer nodes
@@ -85,7 +85,7 @@ def test_the_turn_tree_counts_the_one_turn_tree_and_its_distinct_states():
 def test_the_bench_command_with_states_sizes_each_whole_first_turn(capsys):
     main(["bench", "--positions", "0:3", "--horizons", "1", "--states"])
     lines = capsys.readouterr().out.splitlines()
-    assert "Seed 0 turn 3, one whole turn: 22 nodes, 16 distinct states (1.4x)" in lines
+    assert "Seed 0 turn 3, one whole turn: 90 nodes, 52 distinct states (1.7x)" in lines
 
 
 def test_the_default_positions_are_games_still_in_play():
@@ -104,7 +104,7 @@ def test_a_budgeted_decision_reports_its_depth_nodes_and_time():
 
 
 def test_the_bench_command_with_a_budget_times_the_cheats_decisions(capsys):
-    argv = ["bench", "--positions", "0:1", "1:5", "--horizons", "2"]
+    argv = ["bench", "--positions", "0:1", "1:7", "--horizons", "2"]
     main([*argv, "--budget", "1000"])
     lines = capsys.readouterr().out.splitlines()
     assert lines[0] == (
@@ -114,8 +114,8 @@ def test_the_bench_command_with_a_budget_times_the_cheats_decisions(capsys):
     assert header == ["Seed", "Turn", "Depth", "Nodes", "nodes/s", "ms"]
     start = lines.index("") + 2
     rows = [line.split() for line in lines[start : start + 2]]
-    assert [row[:3] for row in rows] == [["0", "1", "2"], ["1", "5", "1"]]
-    assert rows[0][3] == "42"
+    assert [row[:3] for row in rows] == [["0", "1", "2"], ["1", "7", "1"]]
+    assert rows[0][3] == "154"
     assert int(rows[1][3]) <= 1000
     assert "Depth finished: 2 turns 1/2, 1 turn 1/2, none 0/2" in lines
 

@@ -196,11 +196,17 @@ IMPLEMENTED: frozenset[type[Effect]] = frozenset(
         DiscardThenDraw,
         NextShipOnTop,
         AcquireShipFreeOnTop,
+        DrawIfBases,
+        ScrapThenDraw,
+        ShipsGainCombat,
+        AllyForAllFactions,
+        CopyShip,
     }
 )
-"""The kinds of effect the rules implement. Each card slice adds its own
-(docs/star-realms.md): the playable Trade Deck and which abilities `rules`
-offers both follow from this one set."""
+"""The kinds of effect the rules implement: every one, since the last card
+slice (docs/star-realms.md), so the playable Trade Deck is the whole Trade
+Deck. The card slices added theirs one at a time; a subset of this set
+still gives the deck each slice played with (`playable_deck`)."""
 
 
 def implemented_effect(
@@ -238,7 +244,7 @@ def playable_deck(
 
 PLAYABLE_TRADE_DECK: tuple[Card, ...] = playable_deck()
 """The Trade Deck games use: every copy of the cards whose effects the rules
-all implement."""
+all implement, which is now all 80."""
 
 EXPLORER_PILE = 10
 """How many Explorers the game starts with."""

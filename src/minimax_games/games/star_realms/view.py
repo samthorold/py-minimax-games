@@ -65,7 +65,8 @@ class View:
     `GameState.players`; the turn state (whose turn, trade, combat, abilities
     used, scraps left and owed, bases left to destroy, Trade Row scraps
     left, the choices and recycling being made, the factions played, ships
-    left to put on top of the deck and free ships owed) is all public."""
+    left to put on top of the deck, free ships owed, and the scraps (Brain
+    World) and copy (Stealth Needle) being made) is all public."""
 
     observer: int
     players: tuple[PlayerView, PlayerView]
@@ -88,6 +89,8 @@ class View:
     factions_played: tuple[int, ...]
     may_on_top: int
     free_ships: int
+    scrap_to_draw: int
+    copying: int
 
 
 def _player_view(player: PlayerState, *, hand_seen: bool) -> PlayerView:
@@ -138,6 +141,8 @@ def observe(state: GameState, observer: int) -> View:
         factions_played=state.factions_played,
         may_on_top=state.may_on_top,
         free_ships=state.free_ships,
+        scrap_to_draw=state.scrap_to_draw,
+        copying=state.copying,
     )
 
 
@@ -192,4 +197,6 @@ def sample_world(view: View, rng: random.Random) -> GameState:
         factions_played=view.factions_played,
         may_on_top=view.may_on_top,
         free_ships=view.free_ships,
+        scrap_to_draw=view.scrap_to_draw,
+        copying=view.copying,
     )
