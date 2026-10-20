@@ -48,3 +48,8 @@ tasks:
     desc: "Profile the cheat's budgeted decisions, report in profiles/: task profile -- [--budget N] [--game-turns N]"
     cmds:
       - uv run python -m minimax_games.games.star_realms profile {{.CLI_ARGS}}
+
+  tune:
+    desc: "Tune evaluate's weights by tournament (hours at the defaults): task tune -- [--fields W ...] [--games N] [--jobs N] [--cache FILE] [--screen]"
+    cmds:
+      - uv run python -m minimax_games.games.star_realms tune {{.CLI_ARGS}}

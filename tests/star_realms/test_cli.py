@@ -152,3 +152,31 @@ def test_tournament_sets_the_search_bots_budget_and_the_samplers_worlds(capsys):
     main([*argv, *tail, "--jobs", "2"])  # the configured bots reach the workers
     parallel = capsys.readouterr().out.splitlines()
     assert parallel[:4] == out[:4]  # the same settings and unfinished games
+
+
+def test_tune_prints_each_step_and_resumes_from_its_cache(capsys, tmp_path):
+    cache = tmp_path / "trials.jsonl"
+    argv = ["tune", "--fields", "trade", "--games", "2", "--budget", "20"]
+    main([*argv, "--cache", str(cache)])
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].startswith("Tuning trade: cheat vs heuristic, 2 games per trial,")
+    assert out[1].startswith("start: ")
+    assert out[3].startswith("  trade 20 -> 40: ")
+    assert out[-1].startswith("Weights: Weights(")
+    trials = cache.read_text()
+    assert len(trials.splitlines()) == 3
+
+    main([*argv, "--cache", str(cache)])
+    assert capsys.readouterr().out.splitlines() == out
+    assert cache.read_text() == trials
+
+
+def test_tune_screen_ranks_the_weights_by_decisions_changed(capsys):
+    fields = ["--fields", "trade", "draw"]
+    main(
+        ["tune", "--screen", *fields, "--games", "1", "--budget", "20", "--every", "20"]
+    )
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].startswith("Screen: ")
+    assert len(out) == 3
+    assert all("% of decisions changed" in line for line in out[1:])

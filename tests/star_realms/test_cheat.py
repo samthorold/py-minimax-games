@@ -16,6 +16,7 @@ from minimax_games.games.star_realms.cheat import (
     decide,
     search,
 )
+from minimax_games.games.star_realms.evaluate import WEIGHTS, Weights
 from minimax_games.games.star_realms.match import MatchTooLong, play_match
 from minimax_games.games.star_realms.node import StarRealmsNode, transposition_key
 from minimax_games.games.star_realms.state import GameState, PlayerState
@@ -190,3 +191,19 @@ def test_the_search_skips_the_legality_check_for_moves_from_legal_actions(
         child.state for child in StarRealmsNode(mid_turn(5, 5, 20), 0).children()
     ]
     assert children == expected
+
+
+def test_the_cheat_searches_with_the_weights_it_is_given():
+    state = mid_turn(combat=0, trade=3, opponent_authority=50)
+    # By default it buys the Cutter (Authority, trade); valuing combat far
+    # above all else, it buys the Corvette (combat, draw).
+    defaults = decide(state, turns=1, budget=1_000)
+    weighted = Weights(combat=1_000)
+    assert decide(state, turns=1, budget=1_000, weights=weighted).move != (
+        defaults.move
+    )
+    assert decide(state, turns=1, budget=1_000, weights=WEIGHTS) == defaults
+    bot = CheatBot(turns=1, budget=1_000, weights=weighted)
+    assert bot.choose_from_state(state, rules.legal_actions(state)) == (
+        decide(state, turns=1, budget=1_000, weights=weighted).move
+    )

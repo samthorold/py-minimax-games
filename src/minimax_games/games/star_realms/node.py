@@ -13,12 +13,13 @@ from typing import Self
 
 from minimax_games.games.star_realms import rules
 from minimax_games.games.star_realms.action import Action, EndTurn
-from minimax_games.games.star_realms.evaluate import WIN, evaluate
+from minimax_games.games.star_realms.evaluate import WEIGHTS, WIN, Weights, evaluate
 from minimax_games.games.star_realms.state import GameState
 
 
 class StarRealmsNode:
-    """`state` seen from `perspective`, reached by `moves` from the root."""
+    """`state` seen from `perspective`, reached by `moves` from the root,
+    scored by `evaluate` with `weights` (its children's too)."""
 
     def __init__(
         self,
@@ -27,8 +28,10 @@ class StarRealmsNode:
         moves: list[Action] | None = None,
         *,
         score: int | None = None,
+        weights: Weights = WEIGHTS,
     ) -> None:
         self.state = state
+        self.weights = weights
         self.perspective = perspective
         self.moves: list[Action] = [] if moves is None else moves
         self._score = score
@@ -52,7 +55,7 @@ class StarRealmsNode:
         so the search prefers the quickest win and the slowest loss.
         """
         if self._score is None:
-            score = evaluate(self.state, self.perspective)
+            score = evaluate(self.state, self.perspective, self.weights)
             if abs(score) == WIN:
                 score -= len(self.moves) if score > 0 else -len(self.moves)
             self._score = score
@@ -70,15 +73,20 @@ class StarRealmsNode:
                 rules.advance_legal(self.state, action),
                 self.perspective,
                 [*self.moves, action],
+                weights=self.weights,
             )
 
     def minimum(self) -> Self:
         """A sentinel scoring below every real node, even a lost game."""
-        return type(self)(self.state, self.perspective, score=-WIN - 1)
+        return type(self)(
+            self.state, self.perspective, score=-WIN - 1, weights=self.weights
+        )
 
     def maximum(self) -> Self:
         """A sentinel scoring above every real node, even a won game."""
-        return type(self)(self.state, self.perspective, score=WIN + 1)
+        return type(self)(
+            self.state, self.perspective, score=WIN + 1, weights=self.weights
+        )
 
 
 def ends_turn(node: StarRealmsNode) -> int:
