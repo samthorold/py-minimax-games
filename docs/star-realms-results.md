@@ -1056,3 +1056,41 @@ The budgeted decisions at the same positions, against the milestone-3 table's 5,
 - The bar for a legitimate bot stays the **heuristic**, now 90.6% against greedy and far above the search bots. The result to beat is the **sampler** at K = 4, 5,000 nodes on the full deck: **27.2%** against the heuristic (interval 23.5-31.3%), 62.4% against greedy and 40.0% against the cheat, at these seeds and seats, with equal budgets for ISMCTS (as the design says).
 - **Start with the evaluation, in the cheat.** Milestone 3 already found the evaluation, not the search or the sampling, holds the search bots back; on the full deck that is plainer still. A rollout-based `evaluate` (or one that values the new effects: scraps, draws, discards, choices and ally abilities) should first lift the **cheat** clearly above its **32.8%** against the heuristic, its upper bound; one that doesn't won't lift the sampler or ISMCTS either. Then rerun the sampler, and the budget and K sweeps, since a better evaluation may finally make depth and more worlds pay.
 - **Depth, if it matters again**: canonicalising the order of buys and attacks (#105) is the measured lever, not the new cards' branching.
+
+## Milestone 5: card values
+
+- Date: 2026-10-20
+- Commit: `586d7b4` (#114): `evaluate`'s deck-economy term is now the average **card value** of the cards a player owns, counting every effect a card has (docs/star-realms.md, Evaluation), where it was the average primary trade and combat. Nothing else changed, so this is an ablation of the evaluation against the milestone-4 ladder.
+- The effect values (`evaluate.Weights`, points per unit of the per-card average, as `trade` and `combat`'s 20 were): trade 20, combat 20, Authority 8, draw 30 per card, opponent discards 20 per card, destroy a base 20, scrap from hand or discard 15 per card, Trade Row scrap 6 per card, next ship on top 15, free ship on top 80, draw if bases 15 per card, Blob World's draw per Blob card 45, discard then draw 10 per card, scrap then draw 35 per card, Machine Base's forced scrap 5, copy a ship 40, Fleet HQ 60 per point, Mech World's allies 30. A choice is worth its best option. Ally abilities count times `1 - (1 - share)^4` (`ally_hand = 4`), `share` being the fraction of the player's other cards of the card's faction; scrap abilities count a quarter (`scrap_ability = 0.25`). The base-defense weights and the starter-card penalty are unchanged.
+- **The values were chosen by hand, not tuned.** One check ran before the measurement, on seeds outside it: cheat vs heuristic, 100 games at seeds 1000-1099, 44/100 (44.0%). The values were not changed after it, and none were tried on seeds 0-499. Tuning is #115, on its own seeds.
+- Budgets and machine as in the milestone-4 ladder: 2-turn horizon, 5,000 nodes per decision, Apple M1 MacBook, CPython 3.14.0.
+
+### cheat vs heuristic
+
+`python -m minimax_games.games.star_realms tournament --bots cheat heuristic --games 500 --jobs 3`, as five runs of 100 consecutive seeds (0-99, ..., 400-499) one after another in the foreground, combined with `tournament.combine`, as in the milestone-4 ladder.
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| cheat | 260/500 | 52.0% | 152/250 | 108/250 | 119 |
+| heuristic | 240/500 | 48.0% | 142/250 | 98/250 | 0.0143 |
+
+500 games, 0 unfinished, mean 24.7 turns, 36,415 cheat decisions (73 per game), 1.2 hours of cheat thinking time, 25.7 minutes of wall time. The first player won 294/500 (58.8%). The cheat's win rate: 52.0%, interval **47.6-56.3%** (as first player 60.8%, 54.6-66.6%; as second 43.2%, 37.2-49.4%). The five runs: 56, 53, 53, 55 and 43 wins of 100.
+
+Against the milestone-4 ladder's **32.8%** (28.8-37.0%) at the same seeds and seats: **+19.2 points**, p < 0.0001 (two independent 500-game rates). Against an even match (50%), p ≈ 0.37: the cheat is now level with the heuristic, not clearly above it. On the 30-card first slice it won 53.6% (milestone-2 ladder).
+
+Raw outputs (not committed): `m5/cardvalue/cheat-heuristic-500.txt` and the per-run `cheat-heuristic-<first seed>.txt`, the check `quick-v1-1000.txt`.
+
+### Search speed
+
+`task bench`, before (`31d8e97`, main) and after (`586d7b4`), at the same positions, one after the other:
+
+| | Horizon 1 | Horizon 2 |
+|---|---|---|
+| before | 5/8 finished, 632,643 nodes in 13.4 s (47,200 nodes/s) | 4/8, 966,570 nodes in 25.0 s (38,700 nodes/s) |
+| after | 5/8 finished, 632,643 nodes in 13.6 s (46,600 nodes/s) | 4/8, 941,416 nodes in 24.3 s (38,800 nodes/s) |
+
+The same speed, within run-to-run noise (the horizon-2 trees differ, since the evaluation orders them differently). `evaluate` alone is about twice as fast as before: 5.9-7.4 µs per call against 11.3-14.0 µs, over the 4,504 states of 30 random games (seeds 0-29, 150 decisions each), timed alternately. The card values are precomputed per `Weights`, keyed by name, and the old starter-card penalty's comparison of every owned card with Scout and Viper (`Card.__eq__`, in Python) is now part of each card's precomputed value. Raw outputs: `m5/cardvalue/bench-before.txt`, `bench-after.txt`, `microbench.txt`.
+
+### Verdict
+
+Valuing what every card does lifts the cheat from 32.8% to 52.0% against the heuristic, nearly all of the 20.8 points it lost on the full deck (53.6% on the first slice), at no cost in search speed. So the milestone-4 reading holds: the evaluation, blind to the new cards' abilities, was what held the search back. The cheat is now level with the heuristic, not above it, with untuned values: tuning them (#115) is next, then rerunning the sampler against the heuristic (27.2% in the milestone-4 ladder).
