@@ -15,12 +15,14 @@ from minimax_games.games.star_realms.action import (
     AttackBase,
     AttackPlayer,
     Choose,
+    Copy,
     DestroyTarget,
     Discard,
     EndTurn,
     PlayCard,
     Recycle,
     Scrap,
+    ScrapAndDraw,
     ScrapDiscardCard,
     ScrapHandCard,
     ScrapTradeRowCard,
@@ -33,7 +35,7 @@ from minimax_games.games.star_realms.bots import (
     GreedyBot,
     RandomBot,
 )
-from minimax_games.games.star_realms.catalogue import CATALOGUE, EXPLORER, VIPER
+from minimax_games.games.star_realms.catalogue import CATALOGUE, EXPLORER, SCOUT, VIPER
 from minimax_games.games.star_realms.effect import Authority, Combat, Draw
 from minimax_games.games.star_realms.match import MatchTooLong, play_match
 from minimax_games.games.star_realms.sampler import SamplerBot
@@ -95,8 +97,11 @@ class Passive:
 
 def test_games_between_random_bots_end_with_a_winner():
     # With the 30-card first slice, seed 13 stalled: once the market was
-    # empty, the Authority automatic play gave outpaced random attacks. Since
-    # opponent discards joined the deck, none of seeds 0-299 does.
+    # empty, the Authority automatic play gave outpaced random attacks.
+    # Opponent discards fixed that, but with the whole deck random bots can
+    # scrap nearly every card they own (Brain World, Junkyard, Machine Base,
+    # ...), and then nobody can win: seeds 51, 109, 131, 166, 254 and 274 of
+    # 0-299 stall that way. These seeds don't.
     for seed in SEEDS:
         result = play_match((RandomBot(seed), RandomBot(seed + 1000)), seed)
         assert result.winner in (0, 1)
@@ -197,7 +202,7 @@ def all_cards(state: GameState) -> Counter[str]:
             player.discard,
             player.bases,
         ]
-    return Counter(card.name for pile in piles for card in pile)
+    return Counter(rules.original(card).name for pile in piles for card in pile)
 
 
 def test_random_games_neither_create_nor_lose_cards_and_use_every_action():
@@ -223,6 +228,8 @@ def test_random_games_neither_create_nor_lose_cards_and_use_every_action():
         ScrapTradeRowCard,
         AcquireOnTop,
         AcquireFreeShip,
+        Copy,
+        ScrapAndDraw,
     )
     for kind in kinds:
         assert taken[kind.__name__] > 0, kind
@@ -362,6 +369,30 @@ def test_the_log_shows_bases_to_destroy_given_and_destroyed():
     assert transcript.describe(
         DestroyTarget(hive), dataclasses.replace(state, current=1)
     ) == ("Player 2 destroys Player 1's The Hive (no combat)")
+
+
+def test_the_log_shows_the_last_base_set_abilities():
+    state = rules.new_game(seed=1)
+    yacht, needle = CATALOGUE["Embassy Yacht"], CATALOGUE["Stealth Needle"]
+    brain, hq = CATALOGUE["Brain World"], CATALOGUE["Fleet HQ"]
+    ram = CATALOGUE["Ram"]
+    assert transcript.describe(UseBase(brain), state) == (
+        "Player 1 uses Brain World for up to 2 cards scrapped then as many drawn"
+    )
+    assert transcript.describe(ScrapAndDraw((VIPER,), (SCOUT,)), state) == (
+        "Player 1 scraps Viper from hand, Scout from the discard pile and draws 2 cards"
+    )
+    assert transcript.describe(ScrapAndDraw((), ()), state) == (
+        "Player 1 scraps nothing"
+    )
+    assert transcript.describe(Copy(ram), state) == "Player 1 copies Ram"
+    assert transcript.describe(PlayCard(needle), state) == (
+        "Player 1 plays Stealth Needle"
+    )
+    assert transcript.describe(PlayCard(yacht), state) == (
+        "Player 1 plays Embassy Yacht"
+    )
+    assert transcript.describe(PlayCard(hq), state) == "Player 1 plays Fleet HQ"
 
 
 class OnlyViews:

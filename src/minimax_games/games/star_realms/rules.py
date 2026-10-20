@@ -14,12 +14,14 @@ from minimax_games.games.star_realms.action import (
     AttackBase,
     AttackPlayer,
     Choose,
+    Copy,
     DestroyTarget,
     Discard,
     EndTurn,
     PlayCard,
     Recycle,
     Scrap,
+    ScrapAndDraw,
     ScrapDiscardCard,
     ScrapHandCard,
     ScrapTradeRowCard,
@@ -28,11 +30,11 @@ from minimax_games.games.star_realms.action import (
 )
 from minimax_games.games.star_realms.card import Card, CardType, Faction
 from minimax_games.games.star_realms.catalogue import (
+    CATALOGUE,
     EXPLORER,
     EXPLORER_PILE,
     PLAYABLE_TRADE_DECK,
     STARTING_DECK,
-    implemented_effect,
 )
 from minimax_games.games.star_realms.effect import (
     AcquireShipFreeOnTop,
@@ -205,25 +207,27 @@ def _resolve(state: GameState, effect: Effect, card: Card) -> GameState:
             if not any(c.type is CardType.SHIP for c in state.trade_row):
                 return state
             return state.replace(free_ships=state.free_ships + 1)
-        case (
-            AllyForAllFactions()
-            | CopyShip()
-            | DrawIfBases()
-            | ScrapThenDraw()
-            | ShipsGainCombat()
-        ):
-            # Only playable cards (`catalogue.IMPLEMENTED`) are dealt; later
-            # slices implement the rest (docs/star-realms.md).
-            msg = f"{effect} is not implemented yet"
-            raise NotImplementedError(msg)
+        case DrawIfBases(bases, cards):
+            if len(state.players[state.current].bases) < bases:
+                return state
+            return _resolve(state, Draw(cards), card)
+        case AllyForAllFactions() | ShipsGainCombat():
+            # Always on while the base is in play (`_ship_bonus`, `_allied`):
+            # nothing happens when it is played.
+            return state
+        case ScrapThenDraw(cards):
+            # With nothing to scrap there is nothing to draw.
+            player = state.players[state.current]
+            if not player.hand and not player.discard:
+                return state
+            return state.replace(scrap_to_draw=cards)
+        case CopyShip():
+            # With no other ship in play there is nothing to copy.
+            if not _copy_targets(state.players[state.current].in_play):
+                return state
+            return state.replace(copying=state.copying + 1)
         case _:
             assert_never(effect)
-
-
-def _implemented(effect: Effect) -> bool:
-    """Whether the rules implement `effect` (`catalogue.IMPLEMENTED`, and,
-    for a choice, every effect of its options)."""
-    return implemented_effect(effect)
 
 
 @functools.cache
@@ -236,31 +240,100 @@ def _options(card: Card) -> tuple[tuple[Effect, ...], ...]:
 
 
 @functools.cache
-def _scrappable(card: Card) -> bool:
-    """Whether `card` has a scrap ability whose effects are all implemented
-    (cached by card, which hashes by its name)."""
-    return bool(card.scrap) and all(_implemented(e) for e in card.scrap)
-
-
-@functools.cache
-def _ally_usable(card: Card) -> bool:
-    """Whether `card` has an ally ability whose effects are all implemented."""
-    return bool(card.ally) and all(_implemented(e) for e in card.ally)
-
-
-@functools.cache
 def _primary_usable(card: Card) -> bool:
-    """Whether `card` has a primary ability whose effects are all implemented."""
-    return bool(card.primary) and all(_implemented(e) for e in card.primary)
+    """Whether `card` has a primary ability to use: not none, nor one that is
+    always on (Fleet HQ, Mech World). Cached by card, which hashes by its
+    name."""
+    return bool(card.primary) and not all(
+        isinstance(e, _ALWAYS_ON) for e in card.primary
+    )
+
+
+_ALWAYS_ON = AllyForAllFactions | ShipsGainCombat
+"""The effects that work while their base is in play, without being used."""
+
+
+@functools.cache
+def _ship_bonus(card: Card) -> int:
+    """The combat each ship played gains while `card` is in play (Fleet HQ's
+    `ShipsGainCombat`), cached."""
+    return sum(e.amount for e in card.primary if isinstance(e, ShipsGainCombat))
 
 
 def _allied(card: Card, in_play: tuple[Card, ...]) -> bool:
-    """Whether another card of `card`'s faction is among `in_play`, the cards
-    in play (`card` among them). A scrapped card is no longer in play, so no
-    longer allies anything."""
-    if card.faction is None:
+    """Whether another card that is an ally for `card`'s faction is among
+    `in_play`, the cards in play (`card` among them): one of that faction,
+    or one that is an ally for other factions too (`_OTHER_FACTIONS`: Mech
+    World, and Stealth Needle copying a ship of another faction). A
+    scrapped card is no longer in play, so no longer allies anything."""
+    faction = card.faction
+    if faction is None:
         return False
-    return sum(c.faction is card.faction for c in in_play) >= 2
+    allies = 0
+    for c in in_play:
+        if c.faction is faction or (
+            c.name in _OTHER_FACTIONS and faction in _OTHER_FACTIONS[c.name]
+        ):
+            allies += 1
+    return allies >= 2
+
+
+_OTHER_FACTIONS: dict[str, frozenset[Faction]] = {
+    card.name: frozenset(Faction) - {card.faction}
+    for card in CATALOGUE.values()
+    if any(isinstance(e, AllyForAllFactions) for e in card.primary)
+}
+"""The cards that are allies for factions besides their own, by name (a
+`str` hashes faster than a `Card`), and those factions: Mech World
+(`AllyForAllFactions`), and each copy Stealth Needle makes of a ship of
+another faction (added by `_copy`)."""
+
+_NEEDLES: dict[Card, Card] = {}
+"""Each copy Stealth Needle has made (`_copy`), mapped to the Needle."""
+
+
+@functools.cache
+def _copy(needle: Card, target: Card) -> Card:
+    """`needle` (Stealth Needle) as a copy of `target`: a ship with
+    `target`'s abilities and faction (the Needle's if it has none), named
+    for both, which `original` turns back into the Needle. Cached, so each
+    copy is made once."""
+    copy = Card(
+        name=f"{needle.name} ({target.name})",
+        cost=needle.cost,
+        faction=target.faction or needle.faction,
+        type=CardType.SHIP,
+        primary=target.primary,
+        ally=target.ally,
+        scrap=target.scrap,
+        copies=needle.copies,
+    )
+    _NEEDLES[copy] = needle
+    if needle.faction is not None and needle.faction is not copy.faction:
+        _OTHER_FACTIONS[copy.name] = frozenset((needle.faction,))
+    return copy
+
+
+def original(card: Card) -> Card:
+    """The card `card` is in every pile but in play: Stealth Needle for a copy
+    it has made (`_copy`), else `card` itself."""
+    return _NEEDLES.get(card, card)
+
+
+@functools.cache
+def _copies_ships(card: Card) -> bool:
+    """Whether `card`'s primary ability copies a ship (Stealth Needle)."""
+    return any(isinstance(e, CopyShip) for e in card.primary)
+
+
+def _copy_targets(in_play: tuple[Card, ...]) -> tuple[Card, ...]:
+    """The distinct ships among `in_play` that Stealth Needle may copy: any
+    but itself (or a copy it has made)."""
+    return tuple(
+        card
+        for card in dict.fromkeys(in_play)
+        if not _copies_ships(card) and card not in _NEEDLES
+    )
 
 
 def winner(state: GameState) -> int | None:
@@ -275,12 +348,12 @@ def legal_actions(state: GameState) -> tuple[Action, ...]:
     """The actions open to the current player.
 
     Cards in play include the player's bases. One `PlayCard` per distinct
-    card in hand; one `UseAlly` per distinct card in play with an ally ability
-    the engine implements, another card of its faction in play, and a copy
-    whose ally ability is unused this turn; one `UseBase` per distinct base
-    with a primary ability the engine implements and a copy whose primary is
-    unused this turn; one `Scrap` per distinct card in play with a scrap
-    ability the engine implements; while the player may still scrap from
+    card in hand; one `UseAlly` per distinct card in play with an ally
+    ability, another card in play that is an ally for its faction
+    (`_allied`), and a copy whose ally ability is unused this turn; one
+    `UseBase` per distinct base with a primary ability that isn't always on
+    and a copy whose primary is unused this turn; one `Scrap` per distinct
+    card in play with a scrap ability; while the player may still scrap from
     hand or discard pile (`GameState.may_scrap`), one `ScrapHandCard` per
     distinct card in hand and one `ScrapDiscardCard` per distinct card in
     the discard pile; while the player may still scrap from the Trade Row
@@ -301,8 +374,11 @@ def legal_actions(state: GameState) -> tuple[Action, ...]:
     owed (Machine Base), one `ScrapHandCard` per distinct card in hand;
     while recycling (Recycling Station), one `Recycle` per distinct set of
     cards; while a free ship is owed (Blob Carrier), one `AcquireFreeShip`
-    per distinct ship in the Trade Row; and while an "or" choice is being
-    made, one `Choose` per option.
+    per distinct ship in the Trade Row; while Brain World's scraps are
+    being made, one `ScrapAndDraw` per distinct choice of cards; while
+    Stealth Needle's copy is being made, one `Copy` per distinct other ship
+    in play; and while an "or" choice is being made, one `Choose` per
+    option.
     """
     if winner(state) is not None:
         return ()
@@ -311,7 +387,7 @@ def legal_actions(state: GameState) -> tuple[Action, ...]:
     player = state.players[state.current]
     actions: list[Action] = list(_maybe_automatic(state))
     in_play = player.in_play + player.bases
-    actions.extend(Scrap(card) for card in dict.fromkeys(in_play) if _scrappable(card))
+    actions.extend(Scrap(card) for card in dict.fromkeys(in_play) if card.scrap)
     if state.may_scrap:
         actions.extend(ScrapHandCard(card) for card in dict.fromkeys(player.hand))
         actions.extend(ScrapDiscardCard(card) for card in dict.fromkeys(player.discard))
@@ -345,7 +421,7 @@ def _forced(state: GameState) -> tuple[Action, ...] | None:
     """The actions of a decision the current player must make before any
     other, if one is pending, else `None`.
 
-    Five so far: a pending discard (`PlayerState.to_discard`), one `Discard`
+    A pending discard (`PlayerState.to_discard`), one `Discard`
     per distinct card in hand (`EndTurn` caps the count at the hand's size,
     so while it is positive the hand isn't empty); an owed scrap from
     hand (`GameState.must_scrap`, Machine Base), one `ScrapHandCard` per
@@ -355,10 +431,14 @@ def _forced(state: GameState) -> tuple[Action, ...] | None:
     hand), one `Recycle` per distinct set of one card up to that many from
     hand; a free ship (`GameState.free_ships`, Blob Carrier's
     `AcquireShipFreeOnTop`, owed only while the row holds a ship), one
-    `AcquireFreeShip` per distinct ship in the row; and an "or" choice
-    (`GameState.choosing`), one `Choose` per
-    option of the first card's `Choice`, in the card's order. Later effects
-    that interrupt the turn with a decision belong here too.
+    `AcquireFreeShip` per distinct ship in the row; Brain World's scraps
+    (`GameState.scrap_to_draw`, its `ScrapThenDraw`, only with a card in
+    hand or discard pile), one `ScrapAndDraw` per distinct choice of up to
+    that many cards from both, none included; Stealth Needle's copy
+    (`GameState.copying`, its `CopyShip`, only with another ship in play),
+    one `Copy` per distinct other ship in play; and an "or" choice
+    (`GameState.choosing`), one `Choose` per option of the first card's
+    `Choice`, in the card's order.
     """
     player = state.players[state.current]
     if player.to_discard:
@@ -369,6 +449,15 @@ def _forced(state: GameState) -> tuple[Action, ...] | None:
         return tuple(
             Recycle(cards) for cards in _discard_sets(player.hand, state.recycling)
         )
+    if state.scrap_to_draw:
+        return tuple(
+            ScrapAndDraw(hand, discard)
+            for hand, discard in _scrap_sets(
+                player.hand, player.discard, state.scrap_to_draw
+            )
+        )
+    if state.copying:
+        return tuple(Copy(card) for card in _copy_targets(player.in_play))
     if state.free_ships:
         return tuple(
             AcquireFreeShip(card)
@@ -394,6 +483,25 @@ def _discard_sets(hand: tuple[Card, ...], most: int) -> list[tuple[Card, ...]]:
     )
 
 
+def _scrap_sets(
+    hand: tuple[Card, ...], discard: tuple[Card, ...], most: int
+) -> list[tuple[tuple[Card, ...], tuple[Card, ...]]]:
+    """Each distinct choice of up to `most` cards from `hand` and `discard`
+    together, none included: the cards from each, sorted by name."""
+
+    def subsets(cards: tuple[Card, ...], size: int) -> list[tuple[Card, ...]]:
+        ordered = sorted(cards, key=lambda card: card.name)
+        return list(dict.fromkeys(itertools.combinations(ordered, size)))
+
+    return [
+        (from_hand, from_discard)
+        for total in range(min(most, len(hand) + len(discard)) + 1)
+        for in_hand in range(total + 1)
+        for from_hand in subsets(hand, in_hand)
+        for from_discard in subsets(discard, total - in_hand)
+    ]
+
+
 def _maybe_automatic(state: GameState) -> Iterator[Action]:
     """The legal `PlayCard`, `UseAlly` and `UseBase` actions, the only kinds
     that can be automatic, in `legal_actions` order (they come first there),
@@ -405,7 +513,7 @@ def _maybe_automatic(state: GameState) -> Iterator[Action]:
     in_play = player.in_play + player.bases
     for card in dict.fromkeys(in_play):
         if (
-            _ally_usable(card)
+            card.ally
             and _allied(card, in_play)
             and in_play.count(card) > state.allies_used.count(card)
         ):
@@ -445,6 +553,33 @@ def _pure_gain_ship(card: Card) -> bool:
     """Whether `card` is a ship whose primary effects are pure gain. Cached by
     card, which hashes by its name: cheaper than rescanning its effects."""
     return card.type is CardType.SHIP and _pure_gain(card.primary)
+
+
+@functools.cache
+def _bases_to_draw(card: Card) -> int | None:
+    """For a ship whose primary effects are pure gain but for drawing with
+    enough bases in play (Embassy Yacht's `DrawIfBases`), the fewest bases
+    that draw; else `None` (cached)."""
+    if card.type is not CardType.SHIP:
+        return None
+    thresholds = [e.bases for e in card.primary if isinstance(e, DrawIfBases)]
+    rest = tuple(e for e in card.primary if not isinstance(e, DrawIfBases))
+    if not thresholds or not _pure_gain(rest):
+        return None
+    return min(thresholds)
+
+
+def _cannot_draw(state: GameState, card: Card) -> bool:
+    """Whether `card` is a ship that would be pure gain but for a draw with
+    enough bases in play (`_bases_to_draw`), and the current player can't
+    have that many this turn: the bases in play and in hand fall short.
+    (Like scrappers, bases a later draw might bring aren't counted.)"""
+    bases = _bases_to_draw(card)
+    if bases is None:
+        return False
+    player = state.players[state.current]
+    in_hand = sum(c.type is not CardType.SHIP for c in player.hand)
+    return len(player.bases) + in_hand < bases
 
 
 @functools.cache
@@ -506,14 +641,24 @@ def automatic(state: GameState, action: Action) -> bool:
     cards to discard. A choice with a draw among its options (Blob World,
     Recycling Station) isn't pure gain, so using it is a decision too.
 
-    This is sound only for the effects the engine implements so far, with
-    one accepted gap: a draw may bring a card that scraps from hand, and a
-    ship already played can't be scrapped by it. Every new effect or action
-    must revisit it.
+    Embassy Yacht's draw with two bases (`DrawIfBases`) makes it a
+    decision, unless the player can't have that many bases this turn (in
+    play and in hand): then it is pure gain (`_cannot_draw`). Ships wait in
+    hand while a Fleet HQ is there too (`_bonus_ahead`): played after it,
+    they gain combat. Stealth Needle (`CopyShip`) and Brain World
+    (`ScrapThenDraw`) are decisions, as are `Copy` and `ScrapAndDraw`; Mech
+    World and Fleet HQ have nothing to use once played.
+
+    This is sound for every base-set effect, with accepted gaps: a draw may
+    bring a card that scraps from hand (or a base, for Embassy Yacht, or a
+    Fleet HQ), and a ship already played can't be scrapped by it (or
+    can't use it). Every new effect or action must revisit it.
     """
     match action:
         case PlayCard(card):
-            return _pure_gain_ship(card) and not _hand_scrap_ahead(state, card)
+            if not _pure_gain_ship(card) and not _cannot_draw(state, card):
+                return False
+            return not _bonus_ahead(state) and not _hand_scrap_ahead(state, card)
         case UseAlly(card):
             return _pure_gain_ally(card)
         case UseBase(card):
@@ -531,7 +676,9 @@ def automatic(state: GameState, action: Action) -> bool:
             | ScrapDiscardCard()
             | ScrapTradeRowCard()
             | Choose()
+            | Copy()
             | Recycle()
+            | ScrapAndDraw()
             | EndTurn()
         ):
             return False
@@ -539,9 +686,26 @@ def automatic(state: GameState, action: Action) -> bool:
             assert_never(action)
 
 
+def _bonus_ahead(state: GameState) -> bool:
+    """Whether a ship the current player plays later this turn could gain
+    combat it wouldn't now: a Fleet HQ (`ShipsGainCombat`) is in hand."""
+    return any(card.name in _BOOSTERS for card in state.players[state.current].hand)
+
+
+_BOOSTERS = frozenset(card.name for card in CATALOGUE.values() if _ship_bonus(card))
+"""The names of the cards whose ships played gain combat (Fleet HQ): a
+name is quicker to look up than a `Card`, whose hash is a Python call."""
+
+_COPIERS = frozenset(card.name for card in CATALOGUE.values() if _copies_ships(card))
+"""The names of the cards that copy a ship (Stealth Needle)."""
+
+
 def _scraps_hand(effects: tuple[Effect, ...]) -> bool:
     """Whether `effects` include scrapping a card from hand."""
-    return any(isinstance(e, ScrapHandOrDiscard | ScrapFromHand) for e in effects)
+    return any(
+        isinstance(e, ScrapHandOrDiscard | ScrapFromHand | ScrapThenDraw)
+        for e in effects
+    )
 
 
 @functools.cache
@@ -562,8 +726,10 @@ def _hand_scrap_ahead(state: GameState, card: Card) -> bool:
     turn if they didn't play it: they have a scrap from hand or discard pile
     left (`may_scrap`), another card in hand scraps from hand when played,
     or a card in play has an unused primary (bases) or ally ability that
-    does. Conservative: it doesn't check that an ally ability is allied.
-    Cards a later draw might bring aren't counted (see `automatic`)."""
+    does, or Stealth Needle in hand could copy a ship in play whose primary
+    or ally ability does. Conservative: it doesn't check that an ally
+    ability is allied. Cards a later draw might bring aren't counted (see
+    `automatic`)."""
     if state.may_scrap:
         return True
     player = state.players[state.current]
@@ -580,6 +746,12 @@ def _hand_scrap_ahead(state: GameState, card: Card) -> bool:
             other
         ) > state.allies_used.count(other):
             return True
+    for other in player.hand:
+        if other.name in _COPIERS:
+            return any(
+                _primary_scraps_hand(ship) or _ally_scraps_hand(ship)
+                for ship in player.in_play
+            )
     return False
 
 
@@ -703,6 +875,7 @@ def _apply(state: GameState, action: Action) -> GameState:
                 state = state.replace(
                     players=_players(state, me, player),
                     factions_played=_played(state, card),
+                    combat=state.combat + sum(map(_ship_bonus, player.bases)),
                 )
             else:
                 # Playing a base uses its primary ability for this turn.
@@ -743,7 +916,7 @@ def _apply(state: GameState, action: Action) -> GameState:
                     bases_used=bases_used,
                     allies_used=allies_used,
                 ),
-                card,
+                original(card),
             )
             for effect in card.scrap:
                 state = _resolve(state, effect, card)
@@ -806,6 +979,23 @@ def _apply(state: GameState, action: Action) -> GameState:
             for effect in option:
                 state = _resolve(state, effect, card)
             return state
+        case Copy(target):
+            in_play = player.in_play
+            i = next(i for i, c in enumerate(in_play) if _copies_ships(c))
+            copy = _copy(in_play[i], target)
+            player = player.replace(in_play=(*in_play[:i], copy, *in_play[i + 1 :]))
+            played = state.factions_played
+            if target.faction is not None and target.faction is not in_play[i].faction:
+                # A card of the target's faction too (Blob World counts it).
+                played = _played(state, target)
+            state = state.replace(
+                players=_players(state, me, player),
+                copying=state.copying - 1,
+                factions_played=played,
+            )
+            for effect in copy.primary:
+                state = _resolve(state, effect, copy)
+            return state
         case Recycle(cards):
             hand = player.hand
             for card in cards:
@@ -815,11 +1005,31 @@ def _apply(state: GameState, action: Action) -> GameState:
             return state.replace(
                 players=_players(state, me, player), rng_seed=seed, recycling=0
             )
+        case ScrapAndDraw(from_hand, from_discard):
+            hand, discard = player.hand, player.discard
+            for card in from_hand:
+                hand = _without(hand, card)
+            for card in from_discard:
+                discard = _without(discard, card)
+            scrapped = from_hand + from_discard
+            player, seed = _draw(
+                player.replace(hand=hand, discard=discard),
+                len(scrapped),
+                state.rng_seed,
+            )
+            state = state.replace(
+                players=_players(state, me, player), rng_seed=seed, scrap_to_draw=0
+            )
+            for card in scrapped:
+                state = _to_scrap_heap(state, card)
+            return state
         case EndTurn():
             player = player.replace(
                 hand=(),
                 in_play=(),
-                discard=player.discard + player.in_play + player.hand,
+                discard=player.discard
+                + tuple(map(original, player.in_play))
+                + player.hand,
             )
             player, seed = _draw(player, HAND_SIZE, state.rng_seed)
             # The next player discards no more cards than they hold.

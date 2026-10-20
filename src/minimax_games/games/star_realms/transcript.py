@@ -14,12 +14,14 @@ from minimax_games.games.star_realms.action import (
     AttackBase,
     AttackPlayer,
     Choose,
+    Copy,
     DestroyTarget,
     Discard,
     EndTurn,
     PlayCard,
     Recycle,
     Scrap,
+    ScrapAndDraw,
     ScrapDiscardCard,
     ScrapHandCard,
     ScrapTradeRowCard,
@@ -105,15 +107,16 @@ def _gain(effect: Effect, state: GameState, card: Card) -> str:
             return "1 free ship on top of the deck"
         case Choice(options):
             return " or ".join(_gains(option, state, card) for option in options)
-        case (
-            AllyForAllFactions()
-            | CopyShip()
-            | DrawIfBases()
-            | ScrapThenDraw()
-            | ShipsGainCombat()
-        ):
-            # Not playable yet; later slices give these their own wording.
-            return str(effect)
+        case DrawIfBases(bases, cards):
+            return f"{cards} card{'s' if cards != 1 else ''} with {bases} bases"
+        case ScrapThenDraw(cards):
+            return f"up to {cards} cards scrapped then as many drawn"
+        case CopyShip():
+            return "a copy of another ship"
+        case ShipsGainCombat(amount):
+            return f"{amount} combat per ship played"
+        case AllyForAllFactions():
+            return "an ally for every faction"
         case _:
             assert_never(effect)
 
@@ -175,6 +178,17 @@ def describe(action: Action, state: GameState) -> str:
             discarded = ", ".join(card.name for card in cards)
             drawn = f"{len(cards)} card{'s' if len(cards) != 1 else ''}"
             return f"{player} discards {discarded} and draws {drawn}"
+        case Copy(card):
+            return f"{player} copies {card.name}"
+        case ScrapAndDraw(hand, discard):
+            scrapped = [f"{card.name} from hand" for card in hand] + [
+                f"{card.name} from the discard pile" for card in discard
+            ]
+            n = len(scrapped)
+            if not n:
+                return f"{player} scraps nothing"
+            drawn = f"{n} card{'s' if n != 1 else ''}"
+            return f"{player} scraps {', '.join(scrapped)} and draws {drawn}"
         case EndTurn():
             return f"{player} ends the turn"
         case _:

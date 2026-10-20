@@ -1,7 +1,6 @@
 """What a player can do: the `Action` enum.
 
-Only the variants the implemented cards need exist so far
-(docs/star-realms.md).
+The variants the base set's cards need (docs/star-realms.md).
 """
 
 from superenums import Variant
@@ -194,6 +193,38 @@ class Recycle(Variant):
     cards: tuple[Card, ...]
 
 
+class Copy(Variant):
+    """Make Stealth Needle, just played, a copy of `card`, another ship in
+    play, for its `CopyShip` ability ("copy another ship you've played this
+    turn"): `card`'s primary ability applies, and until the end of the turn
+    the Needle has its ally and scrap abilities and its faction, as well as
+    Machine Cult.
+
+    Offered, as the only legal actions, once the Needle is played
+    (`GameState.copying`): one `Copy` per distinct other ship in play. Like
+    `PlayCard`, the action names the card.
+    """
+
+    card: Card
+
+
+class ScrapAndDraw(Variant):
+    """Scrap `hand` from hand and `discard` from the discard pile, then draw
+    a card for each card scrapped, for a `ScrapThenDraw` ability (Brain
+    World: "scrap up to two cards from your hand and/or discard pile, then
+    draw a card for each card scrapped this way").
+
+    Offered, as the only legal actions, once the player has used the
+    ability (`GameState.scrap_to_draw`): one `ScrapAndDraw` per distinct
+    choice of up to that many cards from hand and discard pile, none
+    included, each tuple sorted by name. The scrapped cards go to the scrap
+    heap (Explorers back to their pile) without their scrap abilities.
+    """
+
+    hand: tuple[Card, ...]
+    discard: tuple[Card, ...]
+
+
 class EndTurn(Variant):
     """Discard the hand and ships in play (bases stay), lose unspent trade and
     combat, draw 5."""
@@ -215,6 +246,8 @@ type Action = (
     | ScrapDiscardCard
     | ScrapTradeRowCard
     | Choose
+    | Copy
     | Recycle
+    | ScrapAndDraw
     | EndTurn
 )

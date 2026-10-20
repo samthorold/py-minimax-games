@@ -56,6 +56,15 @@ turn.
 before anything else, for free from the Trade Row onto their deck (Blob
 Carrier's `AcquireShipFreeOnTop`).
 
+`scrap_to_draw` is how many cards the current player may scrap right now
+from hand and discard pile, before anything else, to draw as many (Brain
+World's `ScrapThenDraw`).
+
+`copying` counts the Stealth Needles the current player has just played
+and must now make a copy of another ship in play, before anything else
+(`CopyShip`). A Needle that copies a ship is, while in play, a card of its
+own (`rules._copy`), turned back into Stealth Needle when it leaves play.
+
 `PlayerState.to_discard` counts the discards an opponent's `OpponentDiscards`
 effects have left a player to make at the start of their next turn. It is
 public, and capped at the hand's size when their turn starts.
@@ -137,6 +146,8 @@ class GameState:
     factions_played: tuple[int, ...] = NO_FACTIONS_PLAYED
     may_on_top: int = 0
     free_ships: int = 0
+    scrap_to_draw: int = 0
+    copying: int = 0
 
     def replace(
         self,
@@ -162,6 +173,8 @@ class GameState:
         factions_played: tuple[int, ...] | None = None,
         may_on_top: int | None = None,
         free_ships: int | None = None,
+        scrap_to_draw: int | None = None,
+        copying: int | None = None,
     ) -> "GameState":
         """`dataclasses.replace(self, ...)`, without its introspection of the
         fields on every call: the search builds several states per node, so
@@ -189,4 +202,6 @@ class GameState:
             self.factions_played if factions_played is None else factions_played,
             self.may_on_top if may_on_top is None else may_on_top,
             self.free_ships if free_ships is None else free_ships,
+            self.scrap_to_draw if scrap_to_draw is None else scrap_to_draw,
+            self.copying if copying is None else copying,
         )
