@@ -34,6 +34,16 @@ budgeted decisions (see `profiling`) at the same positions and in the first
 `--game-turns` turns of a seeded cheat-vs-heuristic game, and writes a report
 (`profile.txt`) and the raw profile (`profile.pstats`) to `--out`
 (`profiles/` by default, which git ignores).
+
+`python -m minimax_games.games.star_realms tune` tunes `evaluate`'s weights
+by tournament (see `tune`): a coordinate search over `--fields` (all by
+default, in order), each weight multiplied and divided by `--factor`, the
+cheat with each candidate playing the heuristic on `--games` games from
+`--base-seed` at `--budget` nodes, a change kept only if its extra wins on
+the same seeds pass `--z` standard deviations of noise. It prints each step.
+`--cache FILE` keeps every trial, so a stopped run resumes. `--screen` runs
+the cheap screen instead: per weight, the share of the cheat's decisions
+(every `--every`-th, in the games from `--base-seed`) its step changes.
 """
 
 import argparse
@@ -42,7 +52,7 @@ from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 
-from minimax_games.games.star_realms import bench, cheat, profiling
+from minimax_games.games.star_realms import bench, cheat, profiling, tune
 from minimax_games.games.star_realms.bots import (
     AnyBot,
     Budgeted,
@@ -131,6 +141,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if argv[:1] == ["profile"]:
         profile(argv[1:])
+        return
+    if argv[:1] == ["tune"]:
+        tuning(argv[1:])
         return
     parser = argparse.ArgumentParser(prog="python -m minimax_games.games.star_realms")
     parser.add_argument("--seed", type=int, default=0, help="the game's seed")
@@ -377,6 +390,111 @@ def profile(argv: list[str]) -> None:
     text.write_text("\n".join(profiling.report(profiled, workload)) + "\n")
     profiled.stats.dump_stats(args.out / "profile.pstats")
     print(f"Wrote {text}")
+
+
+def tuning(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(
+        prog="python -m minimax_games.games.star_realms tune"
+    )
+    parser.add_argument(
+        "--fields",
+        nargs="+",
+        choices=tune.FIELDS,
+        default=list(tune.FIELDS),
+        metavar="WEIGHT",
+        help="the weights to tune, in order (default: all, in Weights' order)",
+    )
+    parser.add_argument(
+        "--base-seed",
+        type=int,
+        default=3000,
+        help="the first seed (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--games", type=int, default=200, help="games per trial (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--budget",
+        type=int,
+        default=cheat.BUDGET,
+        help="the cheat's nodes per decision (default: %(default)s)",
+    )
+    parser.add_argument("--jobs", type=int, default=1, help="processes (same results)")
+    parser.add_argument(
+        "--factor",
+        type=float,
+        default=tune.FACTOR,
+        help="each step multiplies or divides a weight by this (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--z",
+        type=float,
+        default=tune.Z,
+        help="standard deviations of noise a gain must pass (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--passes", type=int, default=1, help="passes over the weights (default: 1)"
+    )
+    parser.add_argument(
+        "--cache", type=Path, help="keep each trial in this file, to resume a run"
+    )
+    parser.add_argument(
+        "--screen",
+        action="store_true",
+        help="screen the weights instead: how often each one's step changes a move",
+    )
+    parser.add_argument(
+        "--every",
+        type=int,
+        default=10,
+        help="with --screen, every EVERY-th decision of the --games games"
+        " (default: %(default)s)",
+    )
+    args = parser.parse_args(argv)
+
+    last = args.base_seed + args.games - 1
+    if args.screen:
+        states = tune.decision_states(
+            range(args.base_seed, last + 1), args.budget, args.every
+        )
+        print(
+            f"Screen: {len(states)} cheat decisions (every {args.every}th, seeds"
+            f" {args.base_seed}-{last}), budget {args.budget}, factor {args.factor:g}"
+        )
+        shares = tune.screen(
+            states, args.budget, args.fields, factor=args.factor, jobs=args.jobs
+        )
+        for field, share in shares.items():
+            print(f"{field}: {100 * share:.1f}% of decisions changed")
+        return
+    print(
+        f"Tuning {', '.join(args.fields)}: cheat vs heuristic, {args.games} games"
+        f" per trial, seeds {args.base_seed}-{last}, budget {args.budget},"
+        f" factor {args.factor:g}, z {args.z:g}, up to {args.passes} passes"
+    )
+    games = partial(
+        tune.play,
+        base_seed=args.base_seed,
+        games=args.games,
+        budget=args.budget,
+        jobs=args.jobs,
+    )
+    played = games
+    if args.cache is not None:
+        cache = tune.TrialCache(
+            args.cache,
+            {"base_seed": args.base_seed, "games": args.games, "budget": args.budget},
+        )
+        played = partial(cache.play, play=games)
+    tuned = tune.search(
+        played,
+        args.fields,
+        factor=args.factor,
+        z=args.z,
+        passes=args.passes,
+        log=lambda line: print(line, flush=True),
+    )
+    print(f"Weights: {tuned}")
 
 
 def report(played: Tournament, names: tuple[str, str]) -> list[str]:

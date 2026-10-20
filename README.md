@@ -35,8 +35,31 @@ task lint                   # ruff check, ruff format --check, ty check
 task fmt                    # ruff fix + format
 task bench                  # Star Realms: the cheat's search speed (nodes/sec)
 task profile                # Star Realms: profile the cheat's search
+task tune                   # Star Realms: tune evaluate's weights by tournament
 task pypy -- tournament ... # Star Realms: a long tournament under PyPy
 ```
+
+### Tuning the Star Realms evaluation
+
+`task tune` (`python -m minimax_games.games.star_realms tune`) tunes
+`evaluate.Weights` by tournament, starting from the current defaults: a
+coordinate search that, for each weight in `--fields` (all by default) in
+order, plays the cheat with the weight doubled and halved (`--factor`)
+against the heuristic, on the same `--games` seeds from `--base-seed` (200
+from 3000 by default; keep them clear of seeds 0-499, the ladder's, and
+1000-1499, milestone 5's confirmation) at `--budget` nodes, and keeps the
+better change only if its extra wins over the incumbent pass `--z` (1.64)
+standard deviations of noise, counted from the seeds whose outcome changed.
+It prints each trial and ends with the tuned `Weights`; copy them into
+`evaluate.Weights` by hand. At the defaults each trial is a 200-game
+tournament (about 10 minutes with `--jobs 3`), so pass `--cache FILE` to keep
+every trial: rerunning the same command replays them from the file and
+carries on where it stopped. `--screen` is the cheap first step: per weight,
+the share of the cheat's decisions (every `--every`-th of the `--games` games)
+that doubling or halving it changes, most first, to pick which weights to
+tune. Tuning is a long run: `task pypy -- tune ...` runs it under PyPy
+(below), faster with the same results. Results: "Milestone 5: tuning" in
+[docs/star-realms-results.md](docs/star-realms-results.md).
 
 ### Long Star Realms tournaments under PyPy
 

@@ -12,6 +12,7 @@ from typing import Self
 
 from minimax_games.games.star_realms import rules
 from minimax_games.games.star_realms.action import Action
+from minimax_games.games.star_realms.evaluate import WEIGHTS, Weights
 from minimax_games.games.star_realms.node import (
     StarRealmsNode,
     ends_turn,
@@ -82,15 +83,18 @@ class Decision:
     not even the 1-turn search did."""
 
 
-def decide(state: GameState, turns: int, budget: int) -> Decision:
-    """The cheat's move in `state`, searching at most `budget` nodes.
+def decide(
+    state: GameState, turns: int, budget: int, weights: Weights = WEIGHTS
+) -> Decision:
+    """The cheat's move in `state`, searching at most `budget` nodes and
+    scoring positions with `evaluate`'s `weights`.
 
     Iterative deepening over turns: search 1 turn, then 2, up to `turns`,
     and play the best move of the deepest search that finished. If not even
     the 1-turn search finished, play the best of the root moves it searched,
     or failing that the first legal action.
     """
-    root = _BudgetedNode(state, state.current)
+    root = _BudgetedNode(state, state.current, weights=weights)
     root.budget = _Budget(budget)
     root.budget.spend()
     move, depth = None, 0
@@ -158,13 +162,15 @@ class CheatBot:
 
     It runs `alphabeta` on the whole state, `turns` turns deep (by default
     2: the rest of its own turn plus the opponent's reply), scores the
-    positions it reaches with `evaluate`, and plays the first move of the
-    best line. Each decision searches at most `budget` nodes, deepening one
-    turn at a time (`decide`). The match runner gives it the true state
-    because it is a `bots.BenchmarkBot`.
+    positions it reaches with `evaluate` (with `weights`), and plays the
+    first move of the best line. Each decision searches at most `budget`
+    nodes, deepening one turn at a time (`decide`). The match runner gives it
+    the true state because it is a `bots.BenchmarkBot`.
     """
 
-    def __init__(self, turns: int = 2, budget: int = BUDGET) -> None:
+    def __init__(
+        self, turns: int = 2, budget: int = BUDGET, weights: Weights = WEIGHTS
+    ) -> None:
         if turns < 1:
             msg = f"the horizon must be at least 1 turn, not {turns}"
             raise ValueError(msg)
@@ -173,6 +179,7 @@ class CheatBot:
             raise ValueError(msg)
         self.turns = turns
         self.budget = budget
+        self.weights = weights
 
     def settings(self) -> str:
         return f"{self.turns}-turn horizon, budget {self.budget} nodes per decision"
@@ -180,7 +187,7 @@ class CheatBot:
     def choose_from_state(
         self, state: GameState, actions: tuple[Action, ...]
     ) -> Action:
-        decision = decide(state, self.turns, self.budget)
+        decision = decide(state, self.turns, self.budget, self.weights)
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("decided %s", decision)
         assert decision.move in actions, (decision.move, actions)

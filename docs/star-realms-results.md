@@ -1163,3 +1163,94 @@ uv pip install --python .venv-pypy --python-version 3.13 --reinstall-package min
 What stays on CPython: the tests and pre-commit, `task profile` (the profiler's breakdown is wrong under PyPy), `bench --budget` and anything short (single games, replays), which PyPy runs slower. Nothing checks that the code still runs on PyPy 3.12: code using a 3.13-only feature would make `task pypy` fail at import, not give different results, and the identical-results check above can be repeated with a short tournament on both.
 
 **Full support is not proposed.** It would mean lowering `requires-python` and ruff's `target-version` to 3.12, a CI matrix with a PyPy entry (renaming the required check, so the `main` ruleset changes with it), and the two profiler tests skipped on PyPy, for a speed-up only tournaments use. Revisit it only if PyPy becomes the main way tournaments run and a silent break becomes a real cost.
+
+## Milestone 5: tuning
+
+- Date: 2026-10-20
+- Commit: the `issue-115-tune` branch (#115): `fed34f7` adds `tune` (`python -m minimax_games.games.star_realms tune`, `task tune`; README, Development) and lets the cheat search with any `Weights` (`CheatBot(weights=...)`, `cheat.decide(..., weights)`). The runs below used that code: the screen and the first two trials on CPython 3.14.0 (`uv run`), everything after on PyPy 3.12.14 (`task pypy`'s `.venv-pypy`, from the merge `f7cb72d`, which only adds `task pypy`). Results are identical on both interpreters (Milestone 5: PyPy re-measured); only the timings differ.
+- Budgets: the cheat at its defaults, a 2-turn horizon and **5,000 nodes per decision**, in every run: no reduced budget, so nothing rests on a ranking transferring from a cheaper search.
+- Machine: Apple M1 MacBook, 8 GB, shared: another job measured PyPy against CPython at the same time for part of the run, and a system process (`ANECompilerService`) took a full core for part of it, so the timings below are contended.
+- Seeds: tuning on **3000-3199** (and 3200-3399 for the replication), confirmation on **1000-1499**, clear of the ladder's 0-499. Seeds 1000-1099 were #114's single check of the untuned values, not used for choosing anything here. Alternating seats, max 300 turns, `--jobs 3`, as in the ladder.
+
+### Method
+
+The budget was about 3-4 hours of machine time, and a 200-game cheat-vs-heuristic run takes about 11 minutes on CPython or 6 on PyPy with `--jobs 3`. A full coordinate pass over all 23 weights, two trials each, would have taken 4.5-8.5 hours, so the search was narrowed in three ways:
+
+1. **A cheap screen picked the weights to tune.** `tune --screen --base-seed 3000 --games 20 --every 10 --jobs 3`: at 138 of the cheat's decisions (every 10th in its games against the heuristic at seeds 3000-3019), the share whose move changes when one weight is doubled or halved. A weight that never changes a decision can't change a game. 7.5 minutes (CPython).
+
+   | Weight | Decisions changed |
+   |---|---|
+   | combat | 15.9% |
+   | trade | 15.2% |
+   | authority, draw, scrap_ability | 6.5% each |
+   | ally_hand | 5.1% |
+   | opponent_discards | 4.3% |
+   | scrap_hand_or_discard | 3.6% |
+   | destroy_base, copy_ship | 2.2% each |
+   | base_defense, outpost_defense, next_ship_on_top, draw_if_bases | 1.4% each |
+   | scrap_trade_row, acquire_ship_free_on_top, discard_then_draw | 0.7% each |
+   | draw_per_faction_card, scrap_then_draw, scrap_from_hand, ships_gain_combat, ally_for_all_factions, starter_card | 0% |
+
+   The six on top were tuned. The rest change a decision in under 5% of positions; the ones at 0% value cards rarely owned (Blob World, Brain World, Machine Base, Fleet HQ, Mech World), and the starter-card penalty (-1 Authority per Scout or Viper) is too small beside the card values (about 20 per card) for doubling it to matter: a bigger step than 2x would be needed to test it.
+2. **Paired comparisons.** Every candidate plays the same 200 seeds as the incumbent. The cheat and the heuristic are deterministic, so a game the weight change doesn't affect is the same game, and only the **discordant** seeds (one won, the other lost) carry information. A change is kept if its extra wins exceed 1.64 standard deviations of noise, `1.64 * sqrt(discordant)` (a one-sided 5% sign test, normal approximation). Pairing removes the luck of the seeds whose game doesn't change: 34-86 of 200 seeds were discordant, so the noise was 6-9 games, against about 10 for two independent 200-game runs.
+3. **Big steps, one pass.** Each weight is doubled and halved (`--factor 2`), since smaller changes would move the win rate by less than 200 games can see; one pass, in the screen's order.
+
+`task pypy -- tune --fields combat trade authority draw scrap_ability ally_hand --base-seed 3000 --games 200 --jobs 3 --cache trials.jsonl` (the first two trials ran on CPython with `uv run` and the same `--cache`; the PyPy run replayed them from the file and carried on):
+
+```
+start: 102/200 wins
+pass 1
+  combat 20 -> 40: 110/200 wins, +8 on 68 discordant (needs > 13.5)
+  combat 20 -> 10: 75/200 wins, -27 on 81 discordant (needs > 14.8)
+  trade 20 -> 40: 58/200 wins, -44 on 86 discordant (needs > 15.2)
+  trade 20 -> 10: 100/200 wins, -2 on 72 discordant (needs > 13.9)
+  authority 8 -> 16: 110/200 wins, +8 on 42 discordant (needs > 10.6)
+  authority 8 -> 4: 97/200 wins, -5 on 43 discordant (needs > 10.8)
+  draw 30 -> 60: 96/200 wins, -6 on 58 discordant (needs > 12.5)
+  draw 30 -> 15: 96/200 wins, -6 on 48 discordant (needs > 11.4)
+  scrap_ability 0.25 -> 0.5: 99/200 wins, -3 on 55 discordant (needs > 12.2)
+  scrap_ability 0.25 -> 0.125: 102/200 wins, +0 on 34 discordant (needs > 9.6)
+  ally_hand 4 -> 8: 107/200 wins, +5 on 53 discordant (needs > 11.9)
+  ally_hand 4 -> 2: 95/200 wins, -7 on 43 discordant (needs > 10.8)
+end: 102/200 wins; unchanged
+```
+
+**No change passed the noise bar**, so the search kept every weight. Two moves hurt clearly: valuing trade at twice combat (-44) or combat at half trade (-27); the cheat does better valuing combat at least as much as trade. The best moves, doubling combat or Authority, gained 8 games each, under the bar.
+
+The two near misses were then **replicated** on 200 fresh tuning seeds (3200-3399), with both changes together, a step the command doesn't take (a scratch script calling `tune.play` and `tune.compare`, PyPy):
+
+```
+incumbent: 89/200 wins
+combat=40: 97/200 wins, +8 on 72 discordant (needs > 13.9)
+authority=16: 96/200 wins, +7 on 51 discordant (needs > 11.7)
+combat=40, authority=16: 102/200 wins, +13 on 71 discordant (needs > 13.8)
+```
+
+The gains repeated, but still under the bar, alone or pooled over the 400 seeds (combat +16 on 140 discordant, needs > 19.4; Authority +15 on 93, needs > 15.8).
+
+Timings: CPython about 11-12 minutes per 200-game trial, PyPy about 6 (one PyPy trial took 33 minutes while the system process above held a core). The whole tuning took about 2.5 hours: screen 7.5 minutes, the pass 85 minutes, the replication 50.
+
+### Confirmation on fresh seeds
+
+The best candidate, `combat=40, authority=16`, against the untuned values, each 500 games at seeds 1000-1499, as two runs of 250 seeds (1000-1249, 1250-1499) combined with `tournament.combine`, on PyPy (`confirm_part.py`, the tournament's own games with the cheat given the weights):
+
+| Weights | Cheat wins | Win% | 95% interval | As 1st | As 2nd | ms/move (PyPy) |
+|---|---|---|---|---|---|---|
+| untuned (#114) | 219/500 | 43.8% | 39.5-48.2% | 132/250 | 87/250 | 62.1 |
+| combat 40, Authority 16 | 231/500 | 46.2% | 41.9-50.6% | 130/250 | 101/250 | 71.8 |
+
+0 unfinished, mean 24.7 and 25.0 turns; 802 s and 876 s of wall time (PyPy, `--jobs 3`). **Paired** on the same seeds: the candidate won 97 seeds the untuned values lost and lost 85 they won, **+12 on 182 discordant, p = 0.41** (exact two-sided sign test), well under the bar (+22.1). Unpaired, +2.4 points, p = 0.45.
+
+**The untuned values do worse on these seeds than on the ladder's**: 43.8% here against 52.0% at seeds 0-499 (p = 0.009, two independent 500-game rates), and #114's check on 1000-1099 gave 44/100. Nothing about the bots differs between the seed ranges, so either the ladder's 52.0% was on the lucky side of its interval (47.6-56.3%) or these seeds' deals favour the heuristic; both runs here were on the same seeds, so the comparison between them is unaffected. Against an even match the untuned cheat is below 50% on these seeds (p = 0.006) and the candidate not clearly (p = 0.09).
+
+### Verdict
+
+**The weights stay as they are.** Tuning by tournament found no change that beats the noise: the six most influential weights, doubled and halved over 200 paired games each, then the two best moves replicated on 200 more seeds and confirmed together on 500 fresh ones. Every comparison of the best moves (more value on combat and Authority) came out positive: combat +8 and +8, Authority +8 and +7 on the two tuning seed sets, both together +13 and then +12 on the fresh seeds, so a real gain of a point or two is plausible; showing it would take a few thousand paired games, and it is small beside what the cheat lacks against the heuristic. So hand-chosen card values were already close to what this evaluation can do at a 2-turn, 5,000-node search: the next lift has to come from the evaluation's form (rollouts, the next contender in docs/star-realms.md) or the search, not its weights. The remaining weights (17 untested) change under 5% of decisions each when doubled or halved, so tuning them would cost hours for less.
+
+Limits: one pass and one step size (2x), the 17 weights screened out untested, the screen measured at the default weights only (an interaction between weights wouldn't show), and the tuning seeds 3000-3399 come from the same distribution as the rest, so nothing beyond the paired noise bar guards against tuning to them.
+
+Raw outputs (not committed): `m5/tune/` (`screen-5000.txt`, `tune-log.txt` (CPython), `tune-log-pypy.txt`, `trials.jsonl` (every trial's per-seed outcomes), `replicate-3200.txt`, `confirm-{untuned,tuned}-{1000,1250}.{txt,pkl}`, `confirm-500.txt`, `bench-{before,after}-1.txt`, `scripts/`).
+
+### Search speed
+
+The cheat's nodes now carry their `Weights`. `bench` (CPython, contended), before (`origin/main`'s `node.py` and `cheat.py`) and after: the same trees (632,643 nodes at horizon 1, 941,416 at horizon 2) at the same speed, 49,600 and 49,200 nodes/s at horizon 1, 39,400 and 39,200 at horizon 2.

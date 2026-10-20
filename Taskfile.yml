@@ -49,6 +49,11 @@ tasks:
     cmds:
       - uv run python -m minimax_games.games.star_realms profile {{.CLI_ARGS}}
 
+  tune:
+    desc: "Tune evaluate's weights by tournament (hours at the defaults): task tune -- [--fields W ...] [--games N] [--jobs N] [--cache FILE] [--screen]"
+    cmds:
+      - uv run python -m minimax_games.games.star_realms tune {{.CLI_ARGS}}
+
   pypy:
     desc: "Run a Star Realms command under PyPy 3.12 in .venv-pypy, for long tournaments: task pypy -- tournament --bots cheat greedy --games 60"
     cmds:
