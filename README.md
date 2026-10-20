@@ -35,7 +35,35 @@ task lint                   # ruff check, ruff format --check, ty check
 task fmt                    # ruff fix + format
 task bench                  # Star Realms: the cheat's search speed (nodes/sec)
 task profile                # Star Realms: profile the cheat's search
+task pypy -- tournament ... # Star Realms: a long tournament under PyPy
 ```
+
+### Long Star Realms tournaments under PyPy
+
+Search-bot tournaments run about 1.5-1.6x faster under PyPy 3.12, with
+identical results (Milestone 5 in `docs/star-realms-results.md`). The project
+supports CPython only (`requires-python = ">=3.13"`, and CI), so PyPy runs from
+its own environment, `.venv-pypy` (git ignores it):
+
+```sh
+task pypy -- tournament --bots sampler heuristic --games 500 --jobs 3
+```
+
+which runs
+
+```sh
+uv venv --allow-existing --python pypy@3.12 .venv-pypy
+uv pip install --python .venv-pypy --python-version 3.13 --reinstall-package minimax-games .
+.venv-pypy/bin/python -m minimax_games.games.star_realms tournament ...
+```
+
+PyPy has no 3.13; `--python-version 3.13` makes uv resolve as if it did, so the
+package installs on 3.12 (nothing in it needs 3.13). The package is installed,
+not editable, and reinstalled from the working tree on every run. Use it only
+for runs of many games: PyPy's JIT needs a few games to warm up, so short runs
+(`bench --budget`, single games, the tests) are slower than on CPython. The
+tests, `task profile` (PyPy's `cProfile` breaks its breakdown) and everything
+else stay on CPython.
 
 ### Profiling the Star Realms search
 

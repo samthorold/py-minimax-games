@@ -1056,3 +1056,72 @@ The budgeted decisions at the same positions, against the milestone-3 table's 5,
 - The bar for a legitimate bot stays the **heuristic**, now 90.6% against greedy and far above the search bots. The result to beat is the **sampler** at K = 4, 5,000 nodes on the full deck: **27.2%** against the heuristic (interval 23.5-31.3%), 62.4% against greedy and 40.0% against the cheat, at these seeds and seats, with equal budgets for ISMCTS (as the design says).
 - **Start with the evaluation, in the cheat.** Milestone 3 already found the evaluation, not the search or the sampling, holds the search bots back; on the full deck that is plainer still. A rollout-based `evaluate` (or one that values the new effects: scraps, draws, discards, choices and ally abilities) should first lift the **cheat** clearly above its **32.8%** against the heuristic, its upper bound; one that doesn't won't lift the sampler or ISMCTS either. Then rerun the sampler, and the budget and K sweeps, since a better evaluation may finally make depth and more worlds pay.
 - **Depth, if it matters again**: canonicalising the order of buys and attacks (#105) is the measured lever, not the new cards' branching.
+
+## Milestone 5: PyPy re-measured
+
+- Date: 2026-10-20
+- Commit: `31d8e97` (#119: measurements, plus `task pypy`; no code change).
+- Interpreters: CPython 3.14.0 (the project's environment) against PyPy 3.12.14 (PyPy 8.0.0), as in Milestone 2e, now after the CPython optimisations (Milestones 2f-2h, 2.6-2.9x) and on the full 80-card deck.
+- Machine: Apple M1 MacBook, 8 GB (4 performance and 4 efficiency cores), macOS (Darwin 25.2). **Shared**: another job ran CPython tournaments with `--jobs 3` throughout (load average 2-6), so **absolute timings are contended and vary by up to 1.5x between runs; read the ratios.** To keep the comparison fair, each CPython run was paired with the same PyPy run back to back, alternating which went first (CPython, PyPy, PyPy, CPython, ...), and only one process of this measurement ran at a time (`--jobs 1`). For scale, the cheat's `bench` ran 35,900 nodes/s here on CPython against 45,400 alone (Milestone 4: the ladder).
+
+PyPy ran as in Milestone 2e, from a copy of the repo (outside it) with `requires-python = ">=3.12"` and its own environment; CPython with plain `uv run` in the repo:
+
+```
+UV_PROJECT_ENVIRONMENT=<copy>/.venv-pypy uv sync --python pypy@3.12
+UV_PROJECT_ENVIRONMENT=<copy>/.venv-pypy uv run --frozen python -m pytest -q
+UV_PROJECT_ENVIRONMENT=<copy>/.venv-pypy uv run --frozen python -m minimax_games.games.star_realms bench [--budget 5000 [--worlds 4]]
+```
+
+The tournaments ran in chunks of consecutive seeds (cheat vs greedy 3 × 20, sampler vs heuristic 4 × 25), each chunk equal to `tournament --bots A B --games <n> --base-seed <first seed> --jobs 1`, combined with `tournament.combine`; results are per seed, so the split changes no win, seat or turn. **Each chunk is a fresh process, so PyPy's JIT warmed up once per chunk**, which slightly understates a single warm process's speed-up. It is also what a `--jobs 3` run sees, since each worker is a separate process warming up on its own: a 60-75 game `--jobs 3` run gives each worker 20-25 games, the size of these chunks. So no separate `--jobs 3` run was made (it would have put three more processes on the shared machine). Warm-up costs PyPy about a second per process (the budgeted benchmark below), 1-2% of a chunk.
+
+### Results
+
+| Workload | CPython 3.14 | PyPy 3.12 | PyPy speed-up |
+|---|---|---|---|
+| Test suite (`pytest -q`) | 1,380 passed, 12.7 s | 1,378 passed, 2 failed, 29.2 s | 0.4x |
+| `bench`, horizon 1 (two pairs) | 17.6 s, 17.7 s (35,900 nodes/s) | 11.1 s, 10.5 s (57,200, 60,300 nodes/s) | 1.6x, 1.7x |
+| `bench`, horizon 2 (two pairs) | 33.1 s, 30.9 s (29,200, 31,300 nodes/s) | 19.5 s, 18.2 s (49,600, 53,100 nodes/s) | 1.7x, 1.7x |
+| `bench --budget 5000` (two pairs) | 101, 94 ms/decision (0.8 s) | 215, 213 ms/decision (1.7 s) | 0.5x |
+| `bench --budget 5000 --worlds 4` | 111 ms/decision (0.9 s) | 249 ms/decision (2.0 s) | 0.4x |
+| `tournament --bots cheat greedy`, 60 games | 129 ms/decision, 612 s | 78.5 ms/decision, 374 s | **1.64x** |
+| `tournament --bots sampler heuristic`, 100 games | 131 ms/decision, 913 s | 86.4 ms/decision, 603 s | **1.52x** |
+
+Per chunk (CPython against PyPy, wall time), showing the contention's spread:
+
+| Chunk | CPython | PyPy | Speed-up |
+|---|---|---|---|
+| cheat vs greedy, seeds 0-19 | 120 ms/decision, 189 s | 88.8 ms/decision, 140 s | 1.35x |
+| cheat vs greedy, seeds 20-39 | 138 ms/decision, 233 s | 83.6 ms/decision, 141 s | 1.65x |
+| cheat vs greedy, seeds 40-59 | 128 ms/decision, 190 s | 62.0 ms/decision, 92 s | 2.05x |
+| sampler vs heuristic, seeds 0-24 | 155 ms/decision, 272 s | 95.2 ms/decision, 167 s | 1.62x |
+| sampler vs heuristic, seeds 25-49 | 106 ms/decision, 172 s | 80.7 ms/decision, 131 s | 1.31x |
+| sampler vs heuristic, seeds 50-74 | 111 ms/decision, 199 s | 81.0 ms/decision, 146 s | 1.37x |
+| sampler vs heuristic, seeds 75-99 | 151 ms/decision, 270 s | 88.3 ms/decision, 158 s | 1.70x |
+
+**Same results on both.** Every `bench` search visits the same number of nodes, every budgeted decision (the cheat's and each sampler world's) finishes the same depth with the same nodes, and every tournament game has the same seed, first player, winner and turns, with the same number of decisions per bot in every chunk. cheat vs greedy: cheat 47/60 (23/30 first, 24/30 second), 25.9 mean turns, 4,740 cheat decisions on both. sampler vs heuristic: sampler 27/100 (18/52 first, 9/48 second), 24.1 mean turns, 6,942 sampler decisions on both. The sampler's random worlds draw from its own seeded `random.Random`, which gives the same sequence on both interpreters.
+
+**The test suite fails the same two profiler tests as in Milestone 2e** (`tests/star_realms/test_profiling.py`: PyPy's `cProfile` has no entry for the dataclass-generated `GameState.__hash__`, and reports `cheat.decide`'s cumulative time, 2 ms, below its children's, 129 ms), so `task profile` still needs CPython. Everything else passes.
+
+**The speed-up held up after the CPython optimisations.** On warm searches PyPy is still **1.6-1.7x** faster (`bench`; 1.5x and 1.9x in Milestone 2e, 1.8x on the largest search now, seed 1's turn 19 at horizon 1), and over long tournaments **1.5-1.65x** (1.7x in Milestone 2e, measured alone). The CPython optimisations cut allocation and hashing that PyPy's JIT couldn't remove either, so they sped up both interpreters by about as much. The two tournaments' combined ratios differ by about what the chunks scatter (1.31-2.05x), so the difference between the cheat and the sampler is not clearly real; both are at or above the 1.5x Milestone 2e set as the bar for using PyPy on long tournaments, the sampler only just. The contention probably costs the ratio a little: a later check of 6 cheat-vs-greedy games, back to back, gave 1.7x (141 against 82 ms/decision).
+
+**Short runs got relatively worse.** CPython's decisions are about 3x faster than in Milestone 2e, so a short run is over before PyPy's JIT has paid back its warm-up: the 8 budgeted decisions take 0.8 s on CPython and 1.7 s on PyPy (0.5x; 0.9x in Milestone 2e), and the test suite runs at 0.4x (0.6x). The non-search bots are slower too (greedy 0.010 → 0.078 ms per move, the heuristic 0.013 → 0.10), negligible beside the search bots' 80+ ms. PyPy also uses more memory: 146 MB peak for a 6-game cheat-vs-greedy run against CPython's 37 MB, fine for `--jobs 3`.
+
+Raw outputs (not committed): `m5/pypy/results/` (`bench*-{cpython,pypy}.txt`, `budget-*`, `sampler-budget-*`, and each chunk's `<bots>-<first seed>-<games>-<interpreter>.txt` and `.pkl`).
+
+### Recommendation
+
+**Run long tournaments under PyPy, from a separate environment, without changing the project's supported Python or CI.** At 1.5-1.65x, the milestone-4 ladder's 23-46 minute pairings would take about 15-30 minutes, and milestone 5 needs many of them. The results are identical, so a tournament can run on either interpreter and be compared with the other's.
+
+`task pypy -- <command>` (README, Development) does it: it creates `.venv-pypy` (git-ignored) with PyPy 3.12, installs the package from the working tree into it, and runs `python -m minimax_games.games.star_realms <command>` there:
+
+```
+uv venv --allow-existing --python pypy@3.12 .venv-pypy
+uv pip install --python .venv-pypy --python-version 3.13 --reinstall-package minimax-games .
+.venv-pypy/bin/python -m minimax_games.games.star_realms tournament --bots sampler heuristic --games 500 --jobs 3
+```
+
+`--python-version 3.13` makes uv resolve as if the interpreter were 3.13, so the project's `requires-python = ">=3.13"` doesn't block the install, without a copy of the repo; only the package and superenums are installed (no dev tools), from the working tree on every run. Checked by running `task pypy -- tournament --bots cheat greedy --games 2 --jobs 2` (`--jobs` works under PyPy) and that a second install rebuilds the package.
+
+What stays on CPython: the tests and pre-commit, `task profile` (the profiler's breakdown is wrong under PyPy), `bench --budget` and anything short (single games, replays), which PyPy runs slower. Nothing checks that the code still runs on PyPy 3.12: code using a 3.13-only feature would make `task pypy` fail at import, not give different results, and the identical-results check above can be repeated with a short tournament on both.
+
+**Full support is not proposed.** It would mean lowering `requires-python` and ruff's `target-version` to 3.12, a CI matrix with a PyPy entry (renaming the required check, so the `main` ruleset changes with it), and the two profiler tests skipped on PyPy, for a speed-up only tournaments use. Revisit it only if PyPy becomes the main way tournaments run and a silent break becomes a real cost.
