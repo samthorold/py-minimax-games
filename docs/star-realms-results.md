@@ -946,3 +946,113 @@ With the 80-card deck the default `bench` positions are different games: horizon
 **Passes.** No crashes, no unfinished games, and the ladder order holds: heuristic beats greedy (90.6%), greedy beats random (100%), cheat beats greedy (76.0%). Every base-set card is now in play.
 
 Raw outputs (not committed): `oneoffs/heuristic-greedy-500.txt`, `oneoffs/greedy-random-500.txt`, `oneoffs/cheat-greedy-100.txt`, `oneoffs/bench-before-{1,2}.txt`, `oneoffs/bench-after-{1,2}.txt`, `oneoffs/bench-new-deck.txt`, `oneoffs/bench-budget-new-deck.txt`, `oneoffs/bench-budget-old-deck.txt`.
+
+## Milestone 4: the ladder (the full base set)
+
+- Date: 2026-10-20
+- Commit: `9cb075b` (#111), no code changes.
+- **The deck**: the whole 80-card base set (`catalogue.PLAYABLE_TRADE_DECK`), where the milestone-3 ladder and the milestone-2 ladder it compares with played the 30-card first slice. Every bot was taught the new decisions by its card slice (#95-#101, the "Milestone 4" sections above); `evaluate` was not changed.
+- Budgets: the defaults, as in the milestone-3 ladder: a **2-turn horizon** and a shared total of **5,000 nodes per decision** (`cheat.BUDGET`) for both search bots, the sampler splitting it over **K = 4 worlds** (`sampler.WORLDS`, 1,250 nodes each). Greedy and heuristic don't search.
+- Machine: Apple M1 MacBook, 8 GB (4 performance and 4 efficiency cores), macOS (Darwin 25.2), CPython 3.14.0.
+
+500 games per pairing, seeds 0-499, alternating seats, max 300 turns, `--jobs 3`. As in the milestone-3 ladder, each search-bot pairing ran as five runs of 100 consecutive seeds (0-99, ..., 400-499), one after another in the foreground with nothing else running, combined with `tournament.combine` (each run equals `tournament ... --games 100 --base-seed <first seed> --jobs 3`; results are per seed, so the split doesn't change wins, seats or turns); heuristic vs greedy ran as one. Wall times are the five runs' sum. **ms/move is contended by the three processes**: the cheat measured 94-102 ms per decision alone at the budgeted benchmark positions below, and 97-122 ms here. All five pairings ran the full 500 games (no departure). No game in any pairing was unfinished.
+
+Intervals are 95% **Wilson** score intervals on the win rate of the finished games; p-values are two-sided, normal approximation. With 500 games a win rate has an interval of about ±4.4 points, one seat's 250 games about ±6.2.
+
+### heuristic vs greedy
+
+`python -m minimax_games.games.star_realms tournament --bots heuristic greedy --games 500 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| heuristic | 453/500 | 90.6% | 227/250 | 226/250 | 0.0104 |
+| greedy | 47/500 | 9.4% | 24/250 | 23/250 | 0.0063 |
+
+500 games, 0 unfinished, mean 23.9 turns, 1.3 s wall time. The first player won 251/500 (50.2%). The heuristic's win rate: 90.6%, interval 87.7-92.9% (the same games as the last card slice's check).
+
+### cheat vs heuristic
+
+`python -m minimax_games.games.star_realms tournament --bots cheat heuristic --games 500 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| cheat | 164/500 | 32.8% | 96/250 | 68/250 | 118 |
+| heuristic | 336/500 | 67.2% | 182/250 | 154/250 | 0.0130 |
+
+500 games, 0 unfinished, mean 24.3 turns, 33,712 cheat decisions (67 per game), 1.1 hours of cheat thinking time, 23.2 minutes of wall time. The first player won 278/500 (55.6%). The cheat's win rate: 32.8%, interval **28.8-37.0%**.
+
+### sampler vs heuristic
+
+`python -m minimax_games.games.star_realms tournament --bots sampler heuristic --games 500 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| sampler | 136/500 | 27.2% | 80/250 | 56/250 | 138 |
+| heuristic | 364/500 | 72.8% | 194/250 | 170/250 | 0.0132 |
+
+500 games, 0 unfinished, mean 24.0 turns, 34,131 sampler decisions (68 per game), 1.3 hours of sampler thinking time, 27.9 minutes of wall time. The first player won 274/500 (54.8%). The sampler's win rate: 27.2%, interval **23.5-31.3%**.
+
+### sampler vs greedy
+
+`python -m minimax_games.games.star_realms tournament --bots sampler greedy --games 500 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| sampler | 312/500 | 62.4% | 167/250 | 145/250 | 152 |
+| greedy | 188/500 | 37.6% | 105/250 | 83/250 | 0.0102 |
+
+500 games, 0 unfinished, mean 27.2 turns, 41,854 sampler decisions (84 per game), 1.8 hours of sampler thinking time, 37.7 minutes of wall time. The first player won 272/500 (54.4%). The sampler's win rate: 62.4%, interval 58.1-66.5%.
+
+### sampler vs cheat
+
+`python -m minimax_games.games.star_realms tournament --bots sampler cheat --games 500 --jobs 3`
+
+| Bot | Wins | Win% | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|---|
+| sampler | 200/500 | 40.0% | 122/250 | 78/250 | 135 |
+| cheat | 300/500 | 60.0% | 172/250 | 128/250 | 102 |
+
+500 games, 0 unfinished, mean 24.0 turns, 34,111 sampler decisions (68 per game) and 31,845 cheat decisions (64 per game), 1.28 and 0.90 hours of thinking time, 46.0 minutes of wall time. The first player won 294/500 (58.8%). The sampler's win rate: 40.0%, interval **35.8-44.4%**.
+
+Raw outputs (not committed): `m4/results/heuristic-greedy-500.txt`, `cheat-heuristic-500.txt`, `sampler-heuristic-500.txt`, `sampler-greedy-500.txt`, `sampler-cheat-500.txt`, and the per-run `*-<first seed>.txt`.
+
+### Against milestone 3
+
+The same pairings, settings and seeds on the 30-card first slice (heuristic vs greedy and cheat vs heuristic from the milestone-2 ladder, whose budgeted decisions are the same as milestone 3's: the optimisations since changed no result). The change's p-value compares two independent 500-game rates.
+
+| Pairing (first bot's win rate) | 30 cards | 80 cards | Change | p |
+|---|---|---|---|---|
+| heuristic vs greedy | 85.4% | 90.6% | +5.2 | 0.01 |
+| cheat vs heuristic | 53.6% | **32.8%** | -20.8 | < 0.0001 |
+| sampler vs heuristic | 52.6% | **27.2%** | -25.4 | < 0.0001 |
+| sampler vs greedy | 81.4% | 62.4% | -19.0 | < 0.0001 |
+| sampler vs cheat | 44.8% | 40.0% | -4.8 | 0.12 |
+
+### Search speed on the full deck
+
+`task bench` (`python -m minimax_games.games.star_realms bench`, the cheat's search at horizons 1 and 2, at most 200,000 nodes per search): horizon 1 5/8 searches finished, 632,643 nodes in 13.9 s (45,400 nodes/s); horizon 2 4/8, 966,570 nodes in 26.2 s (36,900 nodes/s): the same trees as the last card slice measured, at the same speed. The positions are the greedy-vs-greedy games of seeds 1 and 2, so on the full deck they are different games from milestone 3's (32,600 and 37,300 nodes/s on the 30-card deck, Milestone 2h).
+
+The budgeted decisions at the same positions, against the milestone-3 table's 5,000-node row (Milestone 3: budget). Each cell: ms per decision, then how many searches finished 2 turns and at least 1 turn (the cheat's 8 decisions; the sampler's 8 × 4 worlds).
+
+| Budget 5,000 | cheat | sampler K=4 |
+|---|---|---|
+| 30 cards (milestone 3) | 111 ms, 1/8, 6/8 | 118 ms, 4/32, 12/32 |
+| 80 cards | 94 ms, 2/8, 4/8 | 103 ms, 10/32, 12/32 |
+
+`bench --budget 5000` and `bench --budget 5000 --worlds 4`; raw outputs `m4/results/bench.txt`, `bench-cheat-5000.txt`, `bench-sampler-5000-4.txt`. On the full deck the turn starts of mid and late game (seed 1 turns 11, 15, 19 and seed 2 turns 13 and 21) finish not even the 1-turn search, for the cheat at four of the eight positions and for every sampler world at five. Closed issue #105 found why: these unfinished searches are dominated by buys and attacks taken in every order (at positions 1:7 and 2:13 the first turn has no scrap at all), so a canonical order for buys and attacks, not pruning the new scrap and discard decisions, is the lever if depth needs improving.
+
+### Reading the ladder
+
+**heuristic >> cheat > sampler > greedy.** On the full deck both search bots fall far behind the heuristic, which gains on greedy.
+
+- **The heuristic got stronger, the search bots weaker.** The heuristic beats greedy 90.6% (85.4% on the first slice; p ≈ 0.01). The cheat, which sees everything, now loses to the heuristic 32.8% to 67.2%, and the sampler 27.2% to 72.8%: about 21 and 25 points below their milestone-3 results, far outside the noise, and in both seats. Against greedy the sampler wins only 62.4% (81.4% before), 28 points below the heuristic's 90.6%. The milestone-3 regression bar, "a slice regresses if a search bot falls clearly below the heuristic", is now failed, but by the milestone as a whole rather than by any one slice: each slice's check (cheat vs greedy, 100 games) stayed between 74% and 85% (drifting from 80-85% in the first four slices to 74-77% in the last three, within each check's ±9-point interval), and none ran a search bot against the heuristic.
+- **The gap between the search bots barely moved.** The cheat still beats the sampler, 60.0% to 40.0% (interval 35.8-44.4%, p < 0.0001), about 5 points more than on the first slice (44.8%), a change within noise (p ≈ 0.12). Sampling hidden information still costs the sampler a few points at equal compute, and the same against the heuristic (27.2% against the cheat's 32.8%).
+- **The search did not lose depth.** At 5,000 nodes the budgeted benchmark finishes as deep as on the first slice (the cheat 2/8 positions at 2 turns, the sampler 10/32 worlds), and `bench` runs at the same nodes/s. Mid- and late-game turn starts still finish not even 1 turn, as before (#105's finding: buys and attacks in every order).
+- **What changed is what `evaluate` can see.** `evaluate` scores a deck by its cards' average **primary trade and combat** only, plus Authority, bases' defense and a starter-card penalty (Milestone 2, Reading the ladder). On the first slice that covered most of the deck: 19 of the 30 cards' primary abilities were only trade and combat, and the rest added only Draw and Authority. On the full deck only 26 of 80 are; 18 have no primary trade or combat at all (Trading Post, Machine Base, Brain World, Fleet HQ, Mech World, Stealth Needle, Junkyard, ...), and the new primaries, scrapping, opponent discards, "or" choices (10 cards, whose trade or combat counts as nothing), destroying bases, Trade Row scraps and copies, are worth nothing to it, as ally abilities always were. So the search buys and plays the new cards by a score that ignores what they do, while the heuristic was taught each one by its slice (which card to scrap, which option to take, what to copy). This reading is from the evaluation's terms, not an ablation: no run isolated it.
+- **Random against random can stall** on the full deck: both players scrap nearly everything and neither can win (seeds 51, 109, 131, 166, 254 and 274 of 0-299 pass 1,000 turns; Milestone 4: the remaining one-off abilities). No baseline or search bot does this: every game in this ladder finished, in 24-27 turns on average, as on the first slice.
+
+**What milestone 5 should compare against.**
+
+- The bar for a legitimate bot stays the **heuristic**, now 90.6% against greedy and far above the search bots. The result to beat is the **sampler** at K = 4, 5,000 nodes on the full deck: **27.2%** against the heuristic (interval 23.5-31.3%), 62.4% against greedy and 40.0% against the cheat, at these seeds and seats, with equal budgets for ISMCTS (as the design says).
+- **Start with the evaluation, in the cheat.** Milestone 3 already found the evaluation, not the search or the sampling, holds the search bots back; on the full deck that is plainer still. A rollout-based `evaluate` (or one that values the new effects: scraps, draws, discards, choices and ally abilities) should first lift the **cheat** clearly above its **32.8%** against the heuristic, its upper bound; one that doesn't won't lift the sampler or ISMCTS either. Then rerun the sampler, and the budget and K sweeps, since a better evaluation may finally make depth and more worlds pay.
+- **Depth, if it matters again**: canonicalising the order of buys and attacks (#105) is the measured lever, not the new cards' branching.
