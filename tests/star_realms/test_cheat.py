@@ -226,5 +226,5 @@ def test_the_cheat_states_its_evaluator():
     assert (
         CheatBot(evaluator=Rollout(rollouts=3))
         .settings()
-        .endswith(", rollout evaluation (3 x 2 turns, epsilon 0.1, scale 16)")
+        .endswith(", rollout evaluation (3 x 2 turns, epsilon 0, scale 16)")
     )

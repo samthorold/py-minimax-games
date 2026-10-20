@@ -37,6 +37,12 @@ fitted by maximum likelihood to who won from 7,141 turn starts of 300
 heuristic-vs-heuristic games (docs/star-realms-results.md, Milestone 5:
 rollouts)."""
 
+ROLLOUT_BUDGET = 700
+"""The search bots' nodes per decision with `Rollout()` (the tournament
+command's default with `--eval rollout`): about the linear cheat's time per
+decision at its 5,000 nodes, on CPython (docs/star-realms-results.md,
+Milestone 5: rollouts)."""
+
 MAX_TURNS = 300
 """A playout stops after this many turns of the game, whatever `turns`
 says, as a tournament's games do: random moves could make it go on."""
@@ -85,13 +91,18 @@ def win_probability(
 @dataclass(frozen=True, slots=True)
 class Rollout:
     """The rollout evaluation: an evaluator a search scores its leaves with
-    (`evaluator(state, perspective) -> int`), as it would with `Linear`."""
+    (`evaluator(state, perspective) -> int`), as it would with `Linear`.
+
+    The defaults, one greedy playout of 2 turn ends, were the best of the
+    settings tried at equal compute (docs/star-realms-results.md, Milestone
+    5: rollouts). With `epsilon` 0 the playouts are deterministic, so more
+    than one is the same playout again."""
 
     rollouts: int = 1
     """Playouts per state, averaged."""
     turns: int = 2
     """Turn ends each playout plays (the rest of this turn counts as one)."""
-    epsilon: float = 0.1
+    epsilon: float = 0.0
     """The chance each playout move is random instead of greedy's."""
     scale: float = SCALE
     """`evaluate` points per unit of log-odds of winning."""

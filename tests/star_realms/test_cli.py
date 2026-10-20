@@ -5,7 +5,7 @@ from minimax_games.games.star_realms.bots import GreedyBot, HeuristicBot
 from minimax_games.games.star_realms.cheat import BUDGET, CheatBot
 from minimax_games.games.star_realms.cli import BOTS, configured, main
 from minimax_games.games.star_realms.evaluate import LINEAR
-from minimax_games.games.star_realms.rollout import Rollout
+from minimax_games.games.star_realms.rollout import ROLLOUT_BUDGET, Rollout
 from minimax_games.games.star_realms.sampler import WORLDS, SamplerBot
 from minimax_games.games.star_realms.state import GameState
 from minimax_games.games.star_realms.view import observe
@@ -176,6 +176,13 @@ def test_tournament_can_give_the_search_bots_the_rollout_evaluation(capsys):
     ) in out
     main([*argv, *tail, *rollout, "--jobs", "2"])  # it reaches the workers
     assert capsys.readouterr().out.splitlines()[:4] == out[:4]
+
+
+def test_with_rollouts_the_search_bots_budget_defaults_to_equal_compute(capsys):
+    argv = ["tournament", "--bots", "cheat", "greedy", "--games", "1"]
+    main([*argv, "--max-turns", "1", "--eval", "rollout"])
+    out = capsys.readouterr().out.splitlines()
+    assert out[1].startswith(f"cheat: 2-turn horizon, budget {ROLLOUT_BUDGET} nodes")
 
 
 def test_the_rollout_evaluation_is_seeded_per_game():

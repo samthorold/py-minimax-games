@@ -17,7 +17,7 @@ move. `--jobs N` spreads the games over N processes, with the same results.
 sampler's worlds (both default to the bots' own defaults). `--eval rollout`
 has them score positions by rollouts (`rollout.Rollout`: `--rollouts`,
 `--rollout-turns`, `--epsilon`, seeded per game) instead of the linear
-evaluation.
+evaluation, with `rollout.ROLLOUT_BUDGET` nodes unless `--budget` says.
 Game `seed` replays on its own with `--seed` and its bots in seat order,
 first player first: bot A moves first in games `base_seed`,
 `base_seed + 2`, ...
@@ -67,7 +67,7 @@ from minimax_games.games.star_realms.bots import (
 from minimax_games.games.star_realms.cheat import CheatBot
 from minimax_games.games.star_realms.evaluate import LINEAR, Evaluator
 from minimax_games.games.star_realms.match import play_match
-from minimax_games.games.star_realms.rollout import Rollout
+from minimax_games.games.star_realms.rollout import ROLLOUT_BUDGET, Rollout
 from minimax_games.games.star_realms.sampler import WORLDS, SamplerBot
 from minimax_games.games.star_realms.tournament import (
     MAX_TURNS,
@@ -225,7 +225,8 @@ def tournament(argv: list[str]) -> None:
         "--budget",
         type=int,
         help="the search bots' nodes per decision, shared by the sampler's"
-        f" worlds (default: {cheat.BUDGET})",
+        f" worlds (default: {cheat.BUDGET}, or {ROLLOUT_BUDGET} with --eval"
+        " rollout, about the same time per decision)",
     )
     parser.add_argument(
         "--worlds",
@@ -262,13 +263,16 @@ def tournament(argv: list[str]) -> None:
     args = parser.parse_args(argv)
 
     evaluator: Evaluator = LINEAR
+    budget = args.budget
     if args.eval == "rollout":
         evaluator = Rollout(
             rollouts=args.rollouts, turns=args.rollout_turns, epsilon=args.epsilon
         )
+        if budget is None:
+            budget = ROLLOUT_BUDGET
     a, b = args.bots
     factories = {
-        name: configured(name, args.budget, args.worlds, evaluator)
+        name: configured(name, budget, args.worlds, evaluator)
         for name in dict.fromkeys(args.bots)
     }
     played = play_tournament(
