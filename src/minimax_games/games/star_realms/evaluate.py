@@ -6,7 +6,7 @@ scores `WIN` or `-WIN`, beyond any score of a game still going on.
 """
 
 from dataclasses import dataclass
-from typing import assert_never
+from typing import Protocol, assert_never
 
 from minimax_games.games.star_realms import rules
 from minimax_games.games.star_realms.card import Card, CardType, Faction
@@ -261,3 +261,34 @@ def evaluate(state: GameState, perspective: int, weights: Weights = WEIGHTS) -> 
     me, them = state.players[perspective], state.players[1 - perspective]
     score = round(_value(me, weights) - _value(them, weights))
     return max(-WIN + 1, min(WIN - 1, score))
+
+
+class Evaluator(Protocol):
+    """How a search scores a state from `perspective`'s side: `WIN` or
+    `-WIN` for a finished game, scores strictly inside them otherwise.
+    `Linear` (the default) and `rollout.Rollout` are the two."""
+
+    def __call__(self, state: GameState, perspective: int) -> int: ...
+
+    def describe(self) -> str:
+        """The evaluator and its settings, as a phrase."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class Linear:
+    """The linear evaluation, `evaluate` with `weights`, as an `Evaluator`."""
+
+    weights: Weights = WEIGHTS
+
+    def __call__(self, state: GameState, perspective: int) -> int:
+        return evaluate(state, perspective, self.weights)
+
+    def describe(self) -> str:
+        if self.weights == WEIGHTS:
+            return "linear evaluation"
+        return f"linear evaluation ({self.weights})"
+
+
+LINEAR = Linear()
+"""The evaluator searches use unless given another."""

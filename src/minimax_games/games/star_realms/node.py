@@ -13,13 +13,13 @@ from typing import Self
 
 from minimax_games.games.star_realms import rules
 from minimax_games.games.star_realms.action import Action, EndTurn
-from minimax_games.games.star_realms.evaluate import WEIGHTS, WIN, Weights, evaluate
+from minimax_games.games.star_realms.evaluate import LINEAR, WIN, Evaluator
 from minimax_games.games.star_realms.state import GameState
 
 
 class StarRealmsNode:
     """`state` seen from `perspective`, reached by `moves` from the root,
-    scored by `evaluate` with `weights` (its children's too)."""
+    scored by `evaluator` (its children's too): by default `evaluate`."""
 
     def __init__(
         self,
@@ -28,10 +28,10 @@ class StarRealmsNode:
         moves: list[Action] | None = None,
         *,
         score: int | None = None,
-        weights: Weights = WEIGHTS,
+        evaluator: Evaluator = LINEAR,
     ) -> None:
         self.state = state
-        self.weights = weights
+        self.evaluator = evaluator
         self.perspective = perspective
         self.moves: list[Action] = [] if moves is None else moves
         self._score = score
@@ -49,13 +49,13 @@ class StarRealmsNode:
         return self.score() <= other.score()
 
     def score(self) -> int:
-        """`evaluate` from `perspective`, computed once.
+        """The evaluator's score from `perspective`, computed once.
 
         A finished game scores `WIN` (or `-WIN`) less one per move it took,
         so the search prefers the quickest win and the slowest loss.
         """
         if self._score is None:
-            score = evaluate(self.state, self.perspective, self.weights)
+            score = self.evaluator(self.state, self.perspective)
             if abs(score) == WIN:
                 score -= len(self.moves) if score > 0 else -len(self.moves)
             self._score = score
@@ -73,19 +73,19 @@ class StarRealmsNode:
                 rules.advance_legal(self.state, action),
                 self.perspective,
                 [*self.moves, action],
-                weights=self.weights,
+                evaluator=self.evaluator,
             )
 
     def minimum(self) -> Self:
         """A sentinel scoring below every real node, even a lost game."""
         return type(self)(
-            self.state, self.perspective, score=-WIN - 1, weights=self.weights
+            self.state, self.perspective, score=-WIN - 1, evaluator=self.evaluator
         )
 
     def maximum(self) -> Self:
         """A sentinel scoring above every real node, even a won game."""
         return type(self)(
-            self.state, self.perspective, score=WIN + 1, weights=self.weights
+            self.state, self.perspective, score=WIN + 1, evaluator=self.evaluator
         )
 
 
