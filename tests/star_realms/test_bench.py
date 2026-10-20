@@ -115,7 +115,9 @@ def test_the_bench_command_with_a_budget_times_the_cheats_decisions(capsys):
     start = lines.index("") + 2
     rows = [line.split() for line in lines[start : start + 2]]
     assert [row[:3] for row in rows] == [["0", "1", "2"], ["1", "7", "1"]]
-    assert rows[0][3] == "154"
+    assert (
+        rows[0][3] == "224"
+    )  # The full 2-turn search, under the card-value evaluation.
     assert int(rows[1][3]) <= 1000
     assert "Depth finished: 2 turns 1/2, 1 turn 1/2, none 0/2" in lines
 

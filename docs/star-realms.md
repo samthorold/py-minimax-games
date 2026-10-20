@@ -69,8 +69,10 @@ The ladder of baselines:
 - **Evaluation**: `evaluate(state, perspective) -> int`, where bigger is better for `perspective`. It starts as a hand-written linear function of:
   - the Authority difference;
   - base defense in play, with Outposts weighted higher;
-  - deck economy: average primary trade and combat per card over every card the player owns (deck, hand, in play, discard and bases);
+  - deck economy: the average **card value** over every card the player owns (deck, hand, in play, discard and bases). A card's value counts everything it does: its primary abilities, its ally abilities times the chance one fires (`1 - (1 - share)^4`, where `share` is the fraction of the player's other cards of its faction, and 4 is the rest of a hand), and its scrap abilities at a quarter (used once, and they cost the card). An ability is worth the sum of its effects, each valued per effect kind (trade, combat, Authority, draws, opponent discards, scraps, destroying a base, Trade Row scraps, the next ship on top, a free ship, copying, Fleet HQ's bonus, Mech World's allies, ...; an exhaustive `match`, so a new `Effect` variant must be given a value), and a choice is worth its best option. The values are in `evaluate.Weights` with the other weights, untuned (issue #114 chose them by hand; #115 tunes them). Each card's value is precomputed once per `Weights`, keyed by name, since `evaluate` is in the search's hot path;
   - a penalty per Scout/Viper still owned.
+
+  The paragraphs below are about state *during* a turn, which the card values don't change: they value the cards a player owns, not the abilities being resolved.
 
   Pending discards aren't scored (Milestone 4 left `evaluate` alone): a 2-turn search sees them made in the opponent's turn, and the plays that cause them are automatic, except scrapping a Survey Ship, which a 1-turn search undervalues.
 
@@ -82,7 +84,7 @@ The ladder of baselines:
 
   Ships the player may still put on top of their deck (`may_on_top`) and free ships owed (`free_ships`) aren't scored either (the next-ship-on-top slice left `evaluate` alone): lost at the end of the turn or resolved at once, and `evaluate` already counts every card the player owns, wherever it is.
 
-  Brain World's scraps and Stealth Needle's copy being made (`scrap_to_draw`, `copying`) aren't scored either (the last slice left `evaluate` alone): both are resolved at once, before anything else. Nor are Fleet HQ's bonus and Mech World's allies: their defense counts like any base's.
+  Brain World's scraps and Stealth Needle's copy being made (`scrap_to_draw`, `copying`) aren't scored either (the last slice left `evaluate` alone): both are resolved at once, before anything else. Fleet HQ's bonus and Mech World's allies are valued as their cards' effects in the card values (#114), not by whether the base is in play.
 
   Scraps the player may still make (`may_scrap`) aren't scored either (the scrap-from-hand slice left `evaluate` alone too): they are lost at the end of the turn, and the search sees them made within it; the starter-card penalty already rewards scrapping Scouts and Vipers.
 
