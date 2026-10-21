@@ -1,0 +1,5 @@
+candidate,hidden,extra,parameters,train_log_loss,held_out_log_loss,wins,finished,wins_as_first,ms_per_plan,fit_seconds,match_seconds,timing_seconds,win_pct,wilson_low,wilson_high,only_it,only_baseline,sign_z
+w32,32,0,24580,0.5056,0.5294,122,300,75,10.26,3.8,40.6,11.9,40.7,35.3,46.3,0,0,0.0
+w64,64,0,49156,0.5053,0.5278,127,300,75,17.77,5.3,58.6,22.1,42.3,36.9,48.0,39,34,0.59
+w128,128,0,98308,0.5064,0.5263,117,300,67,27.7,7.5,96.4,33.9,39.0,33.7,44.6,43,48,-0.52
+f32,32,28,28164,0.4897,0.5157,151,300,86,14.92,4.4,58.9,18.3,50.3,44.7,56.0,64,35,2.91

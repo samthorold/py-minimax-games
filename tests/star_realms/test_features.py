@@ -86,3 +86,51 @@ def test_encode_all_stacks_rows():
     assert matrix.shape == (4, len(features.NAMES))
     for row, state in zip(matrix, states, strict=True):
         assert np.array_equal(row, features.encode(state))
+
+
+def _extra(state: GameState) -> dict[str, float]:
+    row = features.extra(features.encode(state)[None, :])[0]
+    return dict(zip(features.EXTRA, row, strict=True))
+
+
+def test_extra_features_are_computed_from_the_counts_one_column_per_name():
+    rows = features.encode_all(boundary_states(range(2)))
+    extra = features.extra(rows)
+    assert extra.shape == (len(rows), len(features.EXTRA))
+    assert len(set(features.EXTRA)) == len(features.EXTRA)
+    assert not set(features.EXTRA) & set(features.NAMES)
+    # a float32 dataset's rows give the same columns
+    np.testing.assert_allclose(features.extra(rows.astype(np.float32)), extra)
+
+
+def test_combat_per_hand_and_the_kill_threat_of_a_starting_deck():
+    state = rules.auto_play(rules.new_game(0))
+    ended = rules.apply(state, EndTurn())
+    extra = _extra(ended)
+    # 8 Scouts and 2 Vipers: 5 cards of 10 hold 1 combat on average
+    assert extra["next: combat per hand"] == 1.0
+    assert extra["next: kill threat"] == 1.0 - 50
+    assert extra["ended: kill threat"] == 1.0 - 50
+    assert extra["next: Blob density"] == 0.0
+    assert extra["next: Blob pairs"] == 0.0
+
+
+def test_faction_counts_and_bases_add_to_combat_and_threat():
+    state = rules.auto_play(rules.new_game(0))
+    ended = rules.apply(state, EndTurn())
+    fighter = CATALOGUE["Blob Fighter"]  # 3 combat
+    base = CATALOGUE["The Hive"]  # a Blob base: 3 combat
+    nxt = ended.players[ended.current]
+    nxt = nxt.replace(discard=(*nxt.discard, fighter, fighter), bases=(base,))
+    other = ended.players[1 - ended.current].replace(bases=(CATALOGUE["Trading Post"],))
+    players = [other, other]
+    players[ended.current] = nxt
+    extra = _extra(ended.replace(players=(players[0], players[1])))
+    # 12 cards: 2 Vipers and 2 Fighters, 8 combat in all, 5 drawn, and the Hive
+    assert extra["next: combat per hand"] == 5 * 8 / 12 + 3
+    assert extra["next: kill threat"] == 5 * 8 / 12 + 3 - (50 + 4)
+    assert extra["next: Blob density"] == 2 / 12
+    assert extra["next: Blob pairs"] == 10 * 2 * 1 / (12 * 11)
+    assert extra["next: Blob bases"] == 1
+    assert extra["ended: Trade Federation bases"] == 1
+    assert extra["next: Star Empire density"] == 0.0

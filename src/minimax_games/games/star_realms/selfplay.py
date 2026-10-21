@@ -62,7 +62,9 @@ type Pairing = tuple[int, Player, Player]
 
 def native_model(model: Model) -> dict[str, Any]:
     """`model` as the Rust forward pass takes it: its form, its
-    standardisation and each member's parameters, as float64 arrays."""
+    standardisation and each member's parameters, as float64 arrays, and
+    for a model reading the extra features, the card tables they read
+    (`features.extra_tables`)."""
 
     def arrays(params: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         return {
@@ -70,11 +72,14 @@ def native_model(model: Model) -> dict[str, Any]:
             for name, a in params.items()
         }
 
-    return {
+    crossing: dict[str, Any] = {
         "form": model.form,
         **arrays({"mean": model.mean, "std": model.std}),
         "members": [arrays(params) for params in model.members],
     }
+    if model.extra:
+        crossing["extra"] = features.extra_tables()
+    return crossing
 
 
 def _native_player(player: Player) -> dict[str, Any]:

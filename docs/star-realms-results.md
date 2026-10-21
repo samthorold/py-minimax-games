@@ -1934,6 +1934,59 @@ Records: [policy-iteration/run-3/](policy-iteration/run-3/), holding `state.json
 - **The offline gate filtered rounds 1 and 2 again**, as in run 2: the candidates fitted to one or two rounds had a higher log-loss than pi03 on its own states.
 - **`pi03` stays the current best**, after three runs and 16 candidates. TD targets stay an option (`--targets td`), and `iterate` still defaults to Monte Carlo. Per the design's stopping rule, the run is not resumed. The plateau now points away from the targets and the fit's seed, and toward the form (a wider network, richer features) or toward a gate that tracks play (the planner's off-policy ends), as run 1's reading suggested.
 
+## Milestone 8: value capacity and hand-made features, tested offline
+
+- Date: 2026-10-21
+- Commit: this PR (#173; on `2bf5c61`): `features.extra` and `features.EXTRA`, `value.Model.extra` and `fit(..., extra=)`, and the Rust forward pass reading them (`value::Extra`).
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0, numpy 2.5.4; no other agent running. 8 self-play threads.
+- Seeds: the match 7,000,000-7,000,299, clear of every earlier range (`iterate.Settings`, below 4,000,000 for up to 100 rounds; 4,000,000-4,000,499; 5,000,000-5,000,299; 6,000,000-6,200,299). Planner cost: seeds 600-639 against the heuristic, as in the ensemble measurement.
+
+Sixteen candidates over three runs reached the same plateau below `pi03`, and the design says a plateau points at the value's form or its features. This tests both offline, as the design asks of a new idea: #165's fixed dataset of pi03's games (`runs/td-165/dataset.npz`, reused, not regenerated: 4,000 training games, **92,596 states**, from seed 6,000,000; 1,000 held out, **22,858 states**, from 6,100,000), one candidate per form, and a short fixed-seed match of each against pi03.
+
+```sh
+uv run python docs/capacity/capacity.py runs/capacity-173 runs/td-165/dataset.npz
+```
+
+- **Every candidate** is a 4-member mlp ensemble (`value.fit_ensemble`, seeds 0-3, the `value.fit` defaults but for the width: 10 epochs, batch 256, Adam at 0.001, `l2` 0.003), fitted to the training states' game results (Monte Carlo targets).
+- **The baseline**, `w32`, is today's form (32 hidden units), refitted and replayed on the new seeds so every comparison is paired. It is the same fit as #165's Monte Carlo candidate (held-out log-loss 0.5294 again); on #165's seeds it won 118/300, here 122/300.
+- **The hand-made features** (`features.EXTRA`, 28 of them, computed by `features.extra` from the 190 counts alone, so the dataset needn't be regenerated): per player, *combat per hand* (5 × the pool's primary combat / the pool's size, plus the bases in play's combat), the *kill threat* (that less the other player's Authority plus base defense), and per faction the pool's *density* of it, the *expected same-faction pairs* in a hand of 5 (10 · n(n − 1) / (N(N − 1)); ally abilities fire on pairs), and the faction's *bases in play*. A model reading them (`value.Model.extra`) appends them to each row before standardising; both forward passes compute them identically (the Rust one from card tables Python hands over, `features.extra_tables`), checked on real rows and on whole planner games against the Python planner.
+- **The match**: each candidate's planner against pi03's (4 worlds, 20,000 states per plan, both in Rust), on the same 300 seeds, seats alternating. **Planner cost**: ms per plan of the candidate's planner, on one thread, against the heuristic over seeds 600-639.
+
+Script, log, summary and per-seed results (seed, first, second, winner, turns) of every match: [capacity/](capacity/).
+
+### Step 1: is today's form underfitting?
+
+| | Training log-loss | Held-out log-loss | Gap |
+|---|---|---|---|
+| `w32` (4 members, today's form) | 0.5056 | 0.5294 | 0.024 |
+| pi03 (fitted to other games, for reference) | 0.5280 | 0.5161 | - |
+
+**No.** The training loss is well below the held-out loss: the fit already finds more in its training states than carries over to new games, so more capacity has little to work with. The gap, 0.024, is four times the spread between the widths below.
+
+### Steps 2 and 3: width and features
+
+| Candidate | Width | Extra features | Parameters (4 members) | Training log-loss | Held-out log-loss (pi03 0.5161) | Wins against pi03 (300) | Win% | 95% interval | As 1st | Paired with `w32`: won only by it / only by `w32` (sign z) | ms per plan | Fit / match (s) |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `w32` (baseline) | 32 | - | 24,580 | 0.5056 | 0.5294 | 122 | 40.7% | 35.3-46.3% | 75/150 | - | 10.3 | 3.8 / 41 |
+| `w64` | 64 | - | 49,156 | 0.5053 | 0.5278 | 127 | 42.3% | 36.9-48.0% | 75/150 | 39 / 34 (0.59) | 17.8 | 5.3 / 59 |
+| `w128` | 128 | - | 98,308 | 0.5064 | 0.5263 | 117 | 39.0% | 33.7-44.6% | 67/150 | 43 / 48 (−0.52) | 27.7 | 7.5 / 96 |
+| `f32` | 32 | 28 | 28,164 | **0.4897** | **0.5157** | **151** | **50.3%** | 44.7-56.0% | 86/150 | **64 / 35 (2.91)** | 14.9 | 4.4 / 59 |
+
+(Wilson intervals. The sign z is (only it − only `w32`) / √(their sum).)
+
+**Step 4 (two hidden layers) did not run.** Its condition was that width helped or step 1 showed underfitting, and neither holds. The note on #173 about tinygrad for training it therefore doesn't apply.
+
+**Nothing is promoted.** `f32` drew level with pi03 (50.3%, interval 44.7-56.0%) but did not clearly beat it, so there was no confirmation on fresh seeds or against the heuristic. `pi03` stays the current best.
+
+6.1 minutes of compute in all: 4.7 for the widths (281 s wall; fits 17 s, matches 3.3 minutes, timing 1.1 minutes) and 1.4 for the features (82 s), plus about a minute of tests and builds. No dataset was played.
+
+### Reading it
+
+- **Width doesn't help.** 64 and 128 hidden units won 42.3% and 39.0% against the baseline's 40.7%, both within the noise of the paired comparison (z 0.6 and −0.5), at 1.7× and 2.7× the planner's cost. Their held-out log-loss fell a little (0.5294, 0.5278, 0.5263), but their training loss didn't move (0.5056, 0.5053, 0.5064): at the fit's settings (10 epochs, `l2` 0.003) the extra units add no fit at all. With the training loss already well below the held-out one, the limit isn't the network's size.
+- **The hand-made features help, clearly.** At width 32 they lowered both losses by about 0.015, the largest change in either measure this milestone has seen (TD targets gave 0.006), took the held-out log-loss below pi03's own on its states for the first time with one round of data, and won 29 more games than the baseline on the same seeds (64 against 35, sign test z ≈ 2.9). That is the strongest candidate fitted to one round's data so far: 50.3% against pi03, where the same data with today's features gives 40.7% and with TD targets gave at best 48.0%. They cost 1.45× the planner's time per move (the extra features and 28 more inputs per row).
+- **Why features and not width**: the extra features are ratios and differences of counts (combat over the pool's size, pairs over the pool's size squared, combat against Authority). A tanh network over standardised counts can only approximate a division, and with this much data and regularisation it doesn't learn one; given the ratios directly, it uses them.
+- **Not enough to promote**, by the design's bar: level with pi03 is not beating it. But pi03 was fitted to three times as much data (279,000 states), and in run 2 one round's data gave candidates 35-40% where three rounds gave 53%. Whether the features at the window's size beat pi03 is what a policy-iteration run would test; per the design, that run is a separate decision, not part of this issue.
+
 ## Milestone 7: Rust tracer bullet (toolchain and first-slice engine)
 
 2026-10-21, #137 (tracked by #127), CPython 3.14, Apple M1 (8 GB) shared with three other agents' builds and tests. The first end-to-end path through Rust: maturin builds `minimax_games._native` from `rust/`, and its Star Realms engine plays the starter decks and the 30-card first slice (design, Compiled engine).
