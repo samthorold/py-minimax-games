@@ -1,0 +1,19 @@
+{
+  "train_seeds": [
+    6000000,
+    6003999
+  ],
+  "held_out_seeds": [
+    6100000,
+    6100999
+  ],
+  "pool": [
+    "mlp",
+    "pi03"
+  ],
+  "games": 5000,
+  "unfinished": 0,
+  "train_states": 92596,
+  "held_out_states": 22858,
+  "seconds": 516.7
+}
