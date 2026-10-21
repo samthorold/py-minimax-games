@@ -1,13 +1,16 @@
 """The tournament: seeded games between two bots, alternating seats."""
 
 import time
-from collections.abc import Callable, Sequence
-from concurrent.futures import ProcessPoolExecutor
+from collections import deque
+from collections.abc import Callable, Generator, Sequence
+from concurrent.futures import Future, ProcessPoolExecutor
+from contextlib import closing
 from dataclasses import dataclass, replace
 
 from minimax_games.games.star_realms.action import Action
 from minimax_games.games.star_realms.bots import AnyBot, BenchmarkBot, Bot, Planning
 from minimax_games.games.star_realms.match import MatchTooLong, play_match
+from minimax_games.games.star_realms.sprt import Hypothesis, Sprt
 from minimax_games.games.star_realms.state import GameState
 from minimax_games.games.star_realms.view import View
 
@@ -190,10 +193,22 @@ def play_tournament(
         raise ValueError(msg)
     if jobs > 1 and games > 0:
         return _play_parallel(bots, games, base_seed, max_turns, jobs)
-    start = time.perf_counter()
+    return _play_games(bots, 0, games, base_seed, max_turns)
+
+
+def _play_games(
+    bots: tuple[BotFactory, BotFactory],
+    start: int,
+    stop: int,
+    base_seed: int,
+    max_turns: int,
+) -> Tournament:
+    """Games `start` to `stop - 1` of a tournament from `base_seed`, in one
+    process: game `i` from seed `base_seed + i`, bot A first if `i` is even."""
+    began = time.perf_counter()
     clocks = (_Clock(), _Clock())
     played = []
-    for i in range(games):
+    for i in range(start, stop):
         seed = base_seed + i
         first = i % 2
         players = (bots[first](seed), bots[1 - first](seed + 1))
@@ -212,7 +227,7 @@ def play_tournament(
     timing = Timing(
         decisions=(clocks[0].decisions, clocks[1].decisions),
         seconds=(clocks[0].seconds, clocks[1].seconds),
-        wall_seconds=time.perf_counter() - start,
+        wall_seconds=time.perf_counter() - began,
         plans=(clocks[0].plans, clocks[1].plans),
         turns=(clocks[0].turns, clocks[1].turns),
     )
@@ -274,3 +289,93 @@ def combine(parts: Sequence[Tournament]) -> Tournament:
             turns=(sum(t.turns[0] for t in timings), sum(t.turns[1] for t in timings)),
         ),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class SprtTournament:
+    """A tournament stopped by a sequential probability ratio test."""
+
+    tournament: Tournament
+    """The games up to the one that decided (or the limit), in seed order."""
+    test: Sprt
+    verdict: Hypothesis | None
+    """The hypothesis accepted, or None if the game limit came first."""
+
+
+def play_sprt(
+    bots: tuple[BotFactory, BotFactory],
+    test: Sprt,
+    max_games: int,
+    base_seed: int = 0,
+    max_turns: int = MAX_TURNS,
+    jobs: int = 1,
+) -> SprtTournament:
+    """`play_tournament`'s games, stopped as soon as `test` decides on bot
+    A's wins and losses (unfinished games count as neither), or after
+    `max_games`.
+
+    With `jobs` above 1 games are played ahead in up to `jobs` processes,
+    but the decision is taken on completed games in seed order and the
+    games past the deciding one are dropped, so the result is one
+    process's. Their decisions are dropped from the timing too; the wall
+    time includes them.
+    """
+    if jobs < 1:
+        msg = f"jobs must be at least 1, not {jobs}"
+        raise ValueError(msg)
+    start = time.perf_counter()
+    parts = []
+    wins = [0, 0]
+    verdict = None
+    with closing(_one_by_one(bots, max_games, base_seed, max_turns, jobs)) as games:
+        for part in games:
+            parts.append(part)
+            winner = part.result.games[0].winner
+            if winner is not None:
+                wins[winner] += 1
+            verdict = test.decide(*wins)
+            if verdict is not None:
+                break
+    combined = combine(parts)
+    timing = replace(combined.timing, wall_seconds=time.perf_counter() - start)
+    return SprtTournament(
+        tournament=Tournament(result=combined.result, timing=timing),
+        test=test,
+        verdict=verdict,
+    )
+
+
+def _one_by_one(
+    bots: tuple[BotFactory, BotFactory],
+    games: int,
+    base_seed: int,
+    max_turns: int,
+    jobs: int,
+) -> Generator[Tournament]:
+    """Each of `games` games as a tournament of its own, in seed order.
+    With `jobs` above 1, up to twice `jobs` games are played ahead in
+    separate processes; those still waiting are cancelled on close."""
+    if jobs == 1:
+        for i in range(games):
+            yield _play_games(bots, i, i + 1, base_seed, max_turns)
+        return
+    pool = ProcessPoolExecutor(max_workers=jobs)
+    try:
+        ahead: deque[Future[Tournament]] = deque()
+        submitted = 0
+        while submitted < games or ahead:
+            while submitted < games and len(ahead) < 2 * jobs:
+                ahead.append(
+                    pool.submit(
+                        _play_games,
+                        bots,
+                        submitted,
+                        submitted + 1,
+                        base_seed,
+                        max_turns,
+                    )
+                )
+                submitted += 1
+            yield ahead.popleft().result()
+    finally:
+        pool.shutdown(cancel_futures=True)
