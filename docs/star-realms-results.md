@@ -1520,3 +1520,22 @@ The same pairings, seeds and seats in the milestone-4 ladder (the full deck, `ev
 - **A learned evaluation** stays deferred: tuning the linear weights (#115) and greedy rollouts (#116) didn't beat the hand-chosen card values, and the cheat, the upper bound for the legitimate bots, is already level with the heuristic; the gap to close is in the legitimate bots' search, not the cheat's evaluation.
 
 Raw outputs (not committed): `m5/ladder/` (`fin-ismcts-greedy-<first seed>.{txt,pkl}`, `fin-sampler-cheat-<first seed>.{txt,pkl}` and the combined `fin-*-all.txt`; `check-cheat-heuristic-400.{txt,pkl}`, the replay checking the reused cheat run; `paired-cheat-vs-{sampler,ismcts}-heuristic.txt`; `scripts/` (`run_part.py`, `all.sh`, `combine_all.py`, `paired.py`)); the reused runs in `m5/cardvalue/` and `m5/ismcts/`.
+
+## After milestone 5: a leaf-bias check for ISMCTS
+
+2026-10-21, `main` at 71a6f6c, PyPy. "What should come next" above is superseded by the reviews of #127 and #128: the plan is now the design doc's Milestones 6-8 (a whole-turn planner, a Rust engine, a learned value).
+
+ISMCTS scores its leaves at different turn boundaries: a leaf inside the bot's own turn is scored at that turn's end, and one past `EndTurn` after the opponent's reply. If being the side to move is worth a lot of `evaluate` points, that mixes two scales in one tree, and could explain why 4x the iterations gained nothing.
+
+**The size of the bias.** Over the turn starts of 300 heuristic-vs-heuristic games (seeds 5000-5299, 7,441 states), a grid-search maximum-likelihood fit of `P(player 0 wins) = sigmoid((evaluate(s, 0) + t·m) / s)`, with `m` = +1 when player 0 is to move and -1 otherwise, gives **s = 14 and t = 6**: being the side to move is worth about 6 `evaluate` points each way.
+
+**The effect of correcting it.** ISMCTS (450 iterations, defaults otherwise) with the term added to its leaf value (`(evaluate + 6·m) / 14`), against the heuristic on seeds 4000-4199, `--jobs 3`:
+
+| ISMCTS leaf | Wins of 200 |
+|---|---|
+| baseline (reproduces the recorded run exactly) | 68 |
+| with the side-to-move term | 72 |
+
+Paired by seed: +4 on 70 discordant seeds, p = 0.72. **No measurable effect at the default budget.** Whether the correction makes ISMCTS gain from more iterations wasn't tested (4x, about 1-1.5 hours). The flat budget curve is better explained by the leaf evaluation itself than by this bias. A whole-turn planner scores every candidate at the same boundary, so the bias can't affect its choices (design, Search).
+
+Raw outputs and scripts (not committed): `tempo/` (`fit_tempo.py <first seed> <games>`; `run_tempo.py <base|tempo> <first seed> <games> <iterations>`, which subclasses `ismcts.StarRealms` to override its leaf value; `{base,tempo}-450-4000-200.pkl`).

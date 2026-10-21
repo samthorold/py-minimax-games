@@ -1,10 +1,14 @@
 # minimax-games
 
-Minimax (alpha-beta) search applied to games. src layout: the package is `src/minimax_games/` (`search/` holds the generic `alphabeta` and the `Node` protocol, `games/` the tic-tac-toe and Wordle implementations), tests are in `tests/`. Distribution name `minimax-games`, Python >= 3.13.
+Search applied to games, in the broad sense: game-tree search (alpha-beta, ISMCTS), planning, constraint search, and learned values and policies. Parts that need speed are ported to Rust inside this repo, with Python orchestrating. src layout: the package is `src/minimax_games/` (`search/` holds the generic `alphabeta` and the `Node` protocol, `games/` the tic-tac-toe and Wordle implementations), tests are in `tests/`. Distribution name `minimax-games`, Python >= 3.13.
 
 A Star Realms game is planned: its agreed design is in [docs/star-realms.md](docs/star-realms.md). Follow it, and update it in the same PR as any change that departs from it.
 
 How learned play and search compare, and where each is strong, is in [docs/learning-and-search.md](docs/learning-and-search.md); research notes behind open proposals (#127 a compiled engine, #128 a learned evaluation) are in `docs/research/`.
+
+## Keep the feedback loop tight
+
+Iterating on ideas quickly matters more than any single experiment. When a tournament, a benchmark, a training run or anything else in the loop is heading for tens of minutes, stop and ask what could make it cheaper before running it: a smaller or sequential test (stop a match as soon as its result is clear), an offline metric in place of a tournament, a cheaper opponent, a measurement that replaces a guess, or moving the hot path to Rust. Don't measure what is already known (for example, that CPython is too slow for self-play at scale).
 
 ## Tooling
 
