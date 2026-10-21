@@ -1600,6 +1600,44 @@ Over the 450 complete turns: 739,789 ends, 258,292 up to pile order, and 984,080
 
 **2.58 plans per turn, 157 ms per plan** (all the planner's time per decision over its plans), 22.0 turns per game, 29 s wall time. Plans per turn include the plans made again when automatic play went otherwise than in the sampled worlds (design, Search: the whole-turn planner). A plan costs far less than the 1 s the turn-size measurement put on a 20,000-state plan: most plans are of small turns, or of the part of a turn after a draw, and merging states up to pile order visits a third fewer (on the turns of 4 seeded heuristic games at the default budget, 406,100 states instead of 611,227, and 87 of 100 turn-start plans finish instead of 78, at the same time). Not measured on PyPy: numpy, a core dependency since #135, publishes no PyPy wheels, and `task pypy` is gone (#148); the Rust engine is the route to speed.
 
+## Milestone 6: planner vs heuristic
+
+- Date: 2026-10-21
+- Commit: `071deb4` (main after #155), no code changes. The planner at its defaults: 4 worlds, 20,000 states per plan shared by the worlds, the linear `evaluate`, the Python enumeration (the Rust one needs a learned value).
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0, **shared** with another agent's builds and tests (load average 4-4.5 by the end), so the timings are contended.
+- Seeds: from 0, the seeds of ISMCTS's recorded run against the heuristic (Milestone 5: the ladder, seeds 0-499). Alternating seats, max 300 turns, `--jobs 2`.
+
+Two sequential tests on the same seeds, each a question about the planner's win rate against the heuristic. Games are deterministic, so the second test's first 112 games are the first test's.
+
+1. **Is it above ISMCTS?** H0 35% (ISMCTS's 34.6%) against H1 45%, a gain of 10 points, which would say the micro-action tree, not the leaf, held ISMCTS back.
+2. **Is it above the heuristic?** H0 45% against H1 55%, around level.
+
+```sh
+uv run python -m minimax_games.games.star_realms tournament --bots planner heuristic \
+    --games 500 --base-seed 0 --jobs 2 --sprt --h0 0.35 --h1 0.45
+uv run python -m minimax_games.games.star_realms tournament --bots planner heuristic \
+    --games 500 --base-seed 0 --jobs 2 --sprt --h0 0.45 --h1 0.55
+```
+
+alpha and beta 0.05 both (bounds ±2.94). No game was unfinished.
+
+| Test | Decision | Games | Planner wins | Win% | 95% interval | As 1st | As 2nd | ms/move | Plans per turn, ms per plan | Wall time |
+|---|---|---|---|---|---|---|---|---|---|---|
+| H0 35% vs H1 45% | **H1 accepted** (LLR 3.05) | 112 (seeds 0-111) | 52/112 | 46.4% | 37.5-55.6% | 33/56 | 19/56 | 68.1 | 2.52, 154 | 4.3 min |
+| H0 45% vs H1 55% | **H0 accepted** (LLR -3.01) | 445 (seeds 0-444) | 215/445 | **48.3%** | **43.7-53.0%** | 121/223 | 94/222 | 80.1 | 2.52, 178 | 20.0 min |
+
+Mean 21.9 and 22.5 turns. The first player won 70/112 and 249/445. The heuristic's moves take 0.01 ms.
+
+**Against ISMCTS**: its recorded per-seed results weren't committed (the pickles of Milestone 5: ISMCTS stayed in a scratch directory that no longer exists), so the comparison is of rates, not paired by seed: the planner's 215/445 (48.3%) on seeds 0-444 against ISMCTS's 173/500 (34.6%) on seeds 0-499, a gain of 13.7 points (two-proportion z = 4.3, p < 0.0001). The seeds overlap almost entirely, so the seed range isn't the difference (it moved the cheat by 8 points between ranges, Milestone 5: the ladder). For scale on the same seeds, the cheat, which searches the true state, won 52.0% and the sampler 33.4%.
+
+**Time per decision**: 68-80 ms per decision over all decisions, 154-178 ms per plan, 2.52 plans per turn (contended, Python enumeration): about ISMCTS's and the sampler's 90-110 ms per decision (on PyPy, contended), so the planner isn't buying its gain with more compute. No cut in worlds or budget was needed: the first test took 4 minutes, the second 20.
+
+### Reading it
+
+- **The tree wasted the budget; the leaf was not the main limit.** With the same hand-valued `evaluate` that ISMCTS's leaves and the sampler's searches used, scoring whole ends of turn lifts a legitimate bot from 34.6% to 48.3% against the heuristic, at about the same time per decision. So most of the gap was the micro-action search spending its budget on orderings within a turn, not the evaluation being too weak to judge a position.
+- **The planner plays level with the heuristic, within a few points of the cheat.** H0 at 45% vs 55% says it is nearer 45% than 55%; its interval, 43.7-53.0%, includes 50%. It is the strongest legitimate bot on the ladder, and the cheat's 52.0% on the same seeds, with the true state and a 2-turn horizon, is now only about 4 points ahead.
+- **For milestone 8**: planner plus `evaluate` at about 48% is the bar a learned value has to beat, and since the leaf is now what's left to improve, the learned values' better held-out log-loss (0.550 and 0.562 against `evaluate`'s 0.607, Milestone 8: offline value fit) is the right lever to try next: the planner with each value against the planner with `evaluate` (#136), with the Rust enumeration, which the learned values can use, about 14 times faster.
+
 ## Milestone 8: offline value fit
 
 - Date: 2026-10-21
