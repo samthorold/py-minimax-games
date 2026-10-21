@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 
 /// A card, by name, or Stealth Needle as a copy of another ship
 /// (`NeedleAs`, `rules._copy`). `Copy` and two bytes, so piles are plain
-/// vectors.
+/// lists of plain data (`state::Pile`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Card {
     Scout,

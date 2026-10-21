@@ -25,7 +25,7 @@ use crate::star_realms::rules::{
     Action, Few, advance, advance_legal, auto_play, legal_actions, new_game, winner,
 };
 use crate::star_realms::selfplay::{Game as SelfPlayGame, Player, play_games};
-use crate::star_realms::state::{GameState, PlayerState};
+use crate::star_realms::state::{GameState, Pile, PlayerState};
 use crate::star_realms::value::{Form, Value};
 use crate::star_realms::view::{PlayerView, View, observe, sample_world};
 
@@ -156,11 +156,17 @@ fn item<'py, T: FromPyObjectOwned<'py>>(d: &Bound<'py, PyDict>, key: &str) -> Py
         .map_err(Into::into)
 }
 
-fn pile(d: &Bound<'_, PyDict>, key: &str) -> PyResult<Vec<Card>> {
-    item::<Vec<String>>(d, key)?
+fn pile<const N: usize>(d: &Bound<'_, PyDict>, key: &str) -> PyResult<Pile<N>> {
+    let cards = item::<Vec<String>>(d, key)?
         .iter()
         .map(|name| card_named(name))
-        .collect()
+        .collect::<PyResult<Vec<Card>>>()?;
+    Pile::from_slice(&cards).ok_or_else(|| {
+        PyValueError::new_err(format!(
+            "{} cards in {key:?}, which holds at most {N}",
+            cards.len()
+        ))
+    })
 }
 
 fn player_from_dict(d: &Bound<'_, PyDict>) -> PyResult<PlayerState> {

@@ -9,7 +9,7 @@
 //! budget; the rest split evenly among the worlds; each world listing the
 //! ends through each candidate in turn, depth first, the greedy policy's move
 //! first; states merged up to the order of every pile but the decks
-//! (`merge_key`); and a world stopping at its share, its last candidate worth
+//! (`merged`, `planner.merge_key`); and a world stopping at its share, its last candidate worth
 //! the best end found through it so far. The enumeration never reads a
 //! value, so it can run before the scoring, and the ends come out in the
 //! order the Python planner scores them.
@@ -17,18 +17,23 @@
 //! Then the choice (`plan`, `planner._choose`), scoring the ends with a
 //! learned value's forward pass (`value.rs`), and the bot that plays the
 //! plans (`PlannerBot`, `planner.PlannerBot`), for self-play in Rust.
+//!
+//! The states it lists are kept once each, in lists, and its tables hold
+//! their indices (#156): a play's state is made in place, a copy of its
+//! parent's, and dropped again if it merges with one listed before.
 
 use std::collections::VecDeque;
 use std::collections::hash_map::Entry;
+use std::hash::{Hash, Hasher};
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxHashMap, FxHasher};
 
 use super::bots::greedy_move;
 use super::card::Card;
 use super::features;
 use super::rng::Random;
-use super::rules::{Action, advance_legal, apply_legal, legal_actions, winner};
-use super::state::{GameState, PlayerState};
+use super::rules::{Action, advance_legal, apply_legal, auto_play, legal_actions, winner};
+use super::state::{GameState, PlayerState, capacity};
 use super::value::Value;
 use super::view::{PlayerView, View, observe, sample_world};
 
@@ -43,25 +48,342 @@ pub fn reveals(before: &GameState, after: &GameState) -> bool {
         || now.deck.len() - now.known_top != was.deck.len() - was.known_top
 }
 
-fn sort_player(player: &mut PlayerState) {
-    player.hand.sort_unstable();
-    player.in_play.sort_unstable();
-    player.discard.sort_unstable();
-    player.bases.sort_unstable();
+/// States are merged up to the order of every pile but the decks (and the
+/// pending choices, which are ordered), as `planner.merge_key` merges them:
+/// `merged` says whether two states merge, and `merge_hash` hashes a state
+/// so that merged states hash alike. Neither copies a state or sorts a copy
+/// of one, as the merge key used to: a pile whose order doesn't matter is
+/// hashed as a sum over its cards, which no order changes, and compared as
+/// a multiset.
+mod merge {
+    use super::*;
+
+    /// A card's hash, before mixing.
+    fn key(card: Card) -> u64 {
+        let mut hasher = FxHasher::default();
+        card.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// SplitMix64's finaliser: a bijection that spreads every input bit, so
+    /// sums of mixed keys collide no more than chance.
+    fn mix(mut x: u64) -> u64 {
+        x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        x ^ (x >> 31)
+    }
+
+    /// A pile's hash, whatever its order.
+    fn unordered(cards: &[Card]) -> u64 {
+        cards
+            .iter()
+            .fold(0u64, |sum, &card| sum.wrapping_add(mix(key(card))))
+    }
+
+    /// A pile's hash, in its order.
+    fn ordered(cards: &[Card]) -> u64 {
+        cards.iter().enumerate().fold(0u64, |sum, (i, &card)| {
+            let place = (i as u64 + 1).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+            sum.wrapping_add(mix(key(card) ^ place))
+        })
+    }
+
+    /// How many cards of a deck its hash reads.
+    const TOP: usize = 4;
+
+    /// A deck's hash: its length and its top cards, in order. Merged states
+    /// have equal decks, so equal hashes. Within a world's turn a deck only
+    /// changes at the top (draws, and cards put on top; the Trade Deck as the
+    /// Trade Row refills), so the cards below would cost more time than they
+    /// save in comparisons; `merged` compares whole decks.
+    fn deck(cards: &[Card]) -> u64 {
+        ordered(&cards[..cards.len().min(TOP)]) ^ mix(cards.len() as u64)
+    }
+
+    fn hash_player(player: &PlayerState, h: &mut FxHasher) {
+        let PlayerState {
+            authority,
+            deck,
+            hand,
+            in_play,
+            discard,
+            bases,
+            to_discard,
+            known_top,
+        } = player;
+        h.write_u64(self::deck(deck));
+        h.write_u64(unordered(hand));
+        h.write_u64(unordered(in_play));
+        h.write_u64(unordered(discard));
+        h.write_u64(unordered(bases));
+        (authority, to_discard, known_top).hash(h);
+    }
+
+    /// `state`'s hash, the same for every state it merges with.
+    pub fn merge_hash(state: &GameState) -> u64 {
+        // Every field, by name, so a field added to `GameState` must be
+        // placed here (and in `merged`) before this compiles.
+        let GameState {
+            players,
+            rng_seed,
+            trade_deck,
+            trade_row,
+            explorers,
+            scrap_heap,
+            current,
+            turn,
+            trade,
+            combat,
+            allies_used,
+            bases_used,
+            may_scrap,
+            must_scrap,
+            may_destroy,
+            may_scrap_row,
+            choosing,
+            recycling,
+            factions_played,
+            may_on_top,
+            free_ships,
+            scrap_to_draw,
+            copying,
+        } = state;
+        let mut h = FxHasher::default();
+        hash_player(&players[0], &mut h);
+        hash_player(&players[1], &mut h);
+        h.write_u64(deck(trade_deck));
+        h.write_u64(unordered(trade_row));
+        h.write_u64(unordered(scrap_heap));
+        h.write_u64(unordered(allies_used));
+        h.write_u64(unordered(bases_used));
+        h.write_u64(ordered(choosing));
+        (rng_seed, explorers, current, turn, trade, combat).hash(&mut h);
+        (may_scrap, must_scrap, may_destroy, may_scrap_row, recycling).hash(&mut h);
+        (
+            factions_played,
+            may_on_top,
+            free_ships,
+            scrap_to_draw,
+            copying,
+        )
+            .hash(&mut h);
+        h.finish()
+    }
+
+    /// The largest pile whose order doesn't matter.
+    const LARGEST: usize = capacity::OWNED;
+    const _: () = assert!(
+        capacity::SCRAP_HEAP <= LARGEST
+            && capacity::IN_PLAY <= LARGEST
+            && capacity::SHIPS <= LARGEST
+            && capacity::BASES <= LARGEST
+    );
+
+    fn count(cards: &[Card], card: Card) -> usize {
+        cards.iter().filter(|&&c| c == card).count()
+    }
+
+    /// Whether `a` and `b` hold the same cards, in any order.
+    fn same_cards(a: &[Card], b: &[Card]) -> bool {
+        if a.len() != b.len() {
+            return false;
+        }
+        if a == b {
+            return true;
+        }
+        let n = a.len();
+        if n <= 16 {
+            // Each card as often in both: quicker than sorting copies.
+            return a
+                .iter()
+                .enumerate()
+                .all(|(i, c)| a[..i].contains(c) || count(a, *c) == count(b, *c));
+        }
+        let mut x = [Card::Scout; LARGEST];
+        let mut y = [Card::Scout; LARGEST];
+        x[..n].copy_from_slice(a);
+        y[..n].copy_from_slice(b);
+        x[..n].sort_unstable();
+        y[..n].sort_unstable();
+        x[..n] == y[..n]
+    }
+
+    fn players_merged(a: &PlayerState, b: &PlayerState) -> bool {
+        let PlayerState {
+            authority,
+            deck,
+            hand,
+            in_play,
+            discard,
+            bases,
+            to_discard,
+            known_top,
+        } = a;
+        *authority == b.authority
+            && *to_discard == b.to_discard
+            && *known_top == b.known_top
+            && *deck == b.deck
+            && same_cards(hand, &b.hand)
+            && same_cards(in_play, &b.in_play)
+            && same_cards(discard, &b.discard)
+            && same_cards(bases, &b.bases)
+    }
+
+    /// Whether `a` and `b` merge: equal up to the order of every pile but
+    /// the decks and the pending choices (`planner.merge_key`).
+    pub fn merged(a: &GameState, b: &GameState) -> bool {
+        let GameState {
+            players,
+            rng_seed,
+            trade_deck,
+            trade_row,
+            explorers,
+            scrap_heap,
+            current,
+            turn,
+            trade,
+            combat,
+            allies_used,
+            bases_used,
+            may_scrap,
+            must_scrap,
+            may_destroy,
+            may_scrap_row,
+            choosing,
+            recycling,
+            factions_played,
+            may_on_top,
+            free_ships,
+            scrap_to_draw,
+            copying,
+        } = a;
+        (
+            rng_seed,
+            explorers,
+            current,
+            turn,
+            trade,
+            combat,
+            may_scrap,
+            must_scrap,
+            may_destroy,
+            may_scrap_row,
+        ) == (
+            &b.rng_seed,
+            &b.explorers,
+            &b.current,
+            &b.turn,
+            &b.trade,
+            &b.combat,
+            &b.may_scrap,
+            &b.must_scrap,
+            &b.may_destroy,
+            &b.may_scrap_row,
+        ) && (
+            recycling,
+            factions_played,
+            may_on_top,
+            free_ships,
+            scrap_to_draw,
+            copying,
+        ) == (
+            &b.recycling,
+            &b.factions_played,
+            &b.may_on_top,
+            &b.free_ships,
+            &b.scrap_to_draw,
+            &b.copying,
+        ) && *choosing == b.choosing
+            && *trade_deck == b.trade_deck
+            && players_merged(&players[0], &b.players[0])
+            && players_merged(&players[1], &b.players[1])
+            && same_cards(trade_row, &b.trade_row)
+            && same_cards(scrap_heap, &b.scrap_heap)
+            && same_cards(allies_used, &b.allies_used)
+            && same_cards(bases_used, &b.bases_used)
+    }
+
+    /// `state` with every pile but the decks and the pending choices sorted:
+    /// equal for two states exactly when `merged` says they merge. The
+    /// reference `merged` and `merge_hash` are tested against.
+    #[cfg(test)]
+    pub fn merge_key(state: &GameState) -> GameState {
+        let mut key = state.clone();
+        for player in &mut key.players {
+            player.hand.sort_unstable();
+            player.in_play.sort_unstable();
+            player.discard.sort_unstable();
+            player.bases.sort_unstable();
+        }
+        key.trade_row.sort_unstable();
+        key.scrap_heap.sort_unstable();
+        key.allies_used.sort_unstable();
+        key.bases_used.sort_unstable();
+        key
+    }
 }
 
-/// `state` with every pile but the decks (and the pending choices, which are
-/// ordered) sorted: equal for two states exactly when `planner.merge_key` is.
-pub fn merge_key(state: &GameState) -> GameState {
-    let mut key = state.clone();
-    for player in &mut key.players {
-        sort_player(player);
+pub use merge::{merge_hash, merged};
+
+const NONE: u32 = u32::MAX;
+
+/// The states listed so far, merged, as entries `0..len()` whose states the
+/// caller keeps (`at`): the table holds only indices, chained by hash.
+#[derive(Default)]
+struct Table {
+    /// The latest entry of each hash.
+    heads: FxHashMap<u64, u32>,
+    /// Each entry's predecessor of the same hash, or `NONE`.
+    next: Vec<u32>,
+}
+
+/// What `Table::claim` found.
+enum Claim {
+    Seen(usize),
+    New(usize),
+}
+
+/// A world's share of the budget ran out.
+struct OverBudget;
+
+impl Table {
+    fn len(&self) -> usize {
+        self.next.len()
     }
-    key.trade_row.sort_unstable();
-    key.scrap_heap.sort_unstable();
-    key.allies_used.sort_unstable();
-    key.bases_used.sort_unstable();
-    key
+
+    /// The entry `state` merges with: `Seen` if listed, else `New`, a new
+    /// entry the caller keeps `state` as, or `OverBudget` if `limit` entries
+    /// are listed already. One lookup of the hash either way.
+    fn claim<'s>(
+        &mut self,
+        state: &GameState,
+        limit: usize,
+        at: impl Fn(usize) -> &'s GameState,
+    ) -> Result<Claim, OverBudget> {
+        let id = self.next.len();
+        let spent = id >= limit;
+        match self.heads.entry(merge_hash(state)) {
+            Entry::Occupied(mut head) => {
+                let mut entry = *head.get();
+                while entry != NONE {
+                    if merged(at(entry as usize), state) {
+                        return Ok(Claim::Seen(entry as usize));
+                    }
+                    entry = self.next[entry as usize];
+                }
+                if spent {
+                    return Err(OverBudget);
+                }
+                self.next.push(head.insert(id as u32));
+            }
+            Entry::Vacant(_) if spent => return Err(OverBudget),
+            Entry::Vacant(head) => {
+                head.insert(id as u32);
+                self.next.push(NONE);
+            }
+        }
+        Ok(Claim::New(id))
+    }
 }
 
 /// The legal actions in `state` with their indices in `legal_actions`, the
@@ -78,30 +400,19 @@ fn ordered(state: &GameState) -> Vec<(usize, Action)> {
     found
 }
 
-/// Where `action` leads from `state` (`planner._end`): an end of turn
-/// (`EndTurn` without the next player's automatic play, or a play that
-/// wins) or a state within the turn.
-enum Step {
-    End(GameState),
-    Within(GameState),
-}
-
-fn step(state: &GameState, action: Action) -> Step {
+/// Where `action` leads from `state` (`planner._end`), and whether it is an
+/// end of turn (`EndTurn` without the next player's automatic play, or a
+/// play that wins) rather than a state within the turn.
+fn step(state: &GameState, action: Action) -> (GameState, bool) {
     if action == Action::EndTurn {
         let mut end = state.clone();
         apply_legal(&mut end, action);
-        return Step::End(end);
+        return (end, true);
     }
     let child = advance_legal(state, action);
-    if winner(&child).is_some() {
-        Step::End(child)
-    } else {
-        Step::Within(child)
-    }
+    let end = winner(&child).is_some();
+    (child, end)
 }
-
-/// A world's share of the budget ran out.
-struct OverBudget;
 
 /// The result of an enumeration.
 #[derive(Debug, Default)]
@@ -124,22 +435,31 @@ pub struct Enumeration {
     pub complete: bool,
 }
 
-enum Claim {
-    Seen(usize),
-    New(usize),
-}
-
+/// A node of a world's graph of plays: an end (its row), or a state within
+/// the turn (its index among the world's states within the turn) and its
+/// children (`edges[start..start + len]`).
+#[derive(Clone, Copy)]
 enum Node {
     End(usize),
-    Within(Vec<usize>),
+    Within {
+        state: usize,
+        start: usize,
+        len: usize,
+    },
 }
 
 /// One world's enumeration after the shared part (`planner._World`): the
 /// states it has listed, as nodes of the graph of plays between them, and
 /// the rows found through the current candidate.
 struct World<'a> {
-    keys: FxHashMap<GameState, usize>,
+    table: Table,
     nodes: Vec<Node>,
+    /// The states within the turn, the nodes' that aren't ends.
+    within: Vec<GameState>,
+    /// The nodes' children, each node's together.
+    edges: Vec<usize>,
+    /// The children found so far of the nodes being expanded, innermost last.
+    pending: Vec<usize>,
     limit: usize,
     /// The candidate a node was last noted for, to note each once.
     stamp: Vec<usize>,
@@ -151,23 +471,6 @@ struct World<'a> {
 }
 
 impl World<'_> {
-    /// The node of `key`: `Seen` if listed, else `New` and claimed (the
-    /// caller pushes it), or `OverBudget` if the share is spent
-    /// (`_World._seen`). One hash of the key either way.
-    fn claim(&mut self, key: GameState) -> Result<Claim, OverBudget> {
-        let next = self.nodes.len();
-        let spent = self.keys.len() >= self.limit;
-        match self.keys.entry(key) {
-            Entry::Occupied(entry) => Ok(Claim::Seen(*entry.get())),
-            Entry::Vacant(_) if spent => Err(OverBudget),
-            Entry::Vacant(entry) => {
-                entry.insert(next);
-                self.stamp.push(self.candidate);
-                Ok(Claim::New(next))
-            }
-        }
-    }
-
     /// Note every end reachable from `node`, listed before: they are the
     /// ends `_World._note` takes the best of when it reuses `node`'s value.
     fn note(&mut self, node: usize) {
@@ -175,63 +478,107 @@ impl World<'_> {
             return;
         }
         self.stamp[node] = self.candidate;
-        let children = match &self.nodes[node] {
-            Node::End(row) => {
-                self.noted.push(*row);
-                return;
+        match self.nodes[node] {
+            Node::End(row) => self.noted.push(row),
+            Node::Within { start, len, .. } => {
+                for i in start..start + len {
+                    self.note(self.edges[i]);
+                }
             }
-            Node::Within(children) => children.len(),
+        }
+    }
+
+    /// The state a play just reached, the last of `ends` if it is an end,
+    /// else the last of `within`, and every end reachable from it, depth
+    /// first, the greedy policy's moves first (`_World.end`, `_World.best`):
+    /// its node, if listed, the ends it reaches noted and the state dropped
+    /// (`_World._seen`), else a new node. Claimed before its children, so
+    /// the budget counts it.
+    fn settle(&mut self, end: bool) -> Result<usize, OverBudget> {
+        let (nodes, within, ends) = (&self.nodes, &self.within, &*self.ends);
+        let state = if end { ends.last() } else { within.last() };
+        let at = |node: usize| match nodes[node] {
+            Node::End(row) => &ends[row],
+            Node::Within { state, .. } => &within[state],
         };
-        for i in 0..children {
-            let Node::Within(children) = &self.nodes[node] else {
-                unreachable!("a node within the turn stays one");
+        let claim = self
+            .table
+            .claim(state.expect("a state just reached"), self.limit, at);
+        let id = match claim {
+            Ok(Claim::New(id)) => id,
+            Ok(Claim::Seen(_)) | Err(OverBudget) => {
+                if end {
+                    self.ends.pop();
+                } else {
+                    self.within.pop();
+                }
+                let Ok(Claim::Seen(node)) = claim else {
+                    return Err(OverBudget);
+                };
+                self.note(node);
+                return Ok(node);
+            }
+        };
+        self.stamp.push(self.candidate);
+        if end {
+            let row = self.ends.len() - 1;
+            self.world_of.push(self.index);
+            self.noted.push(row);
+            self.nodes.push(Node::End(row));
+            return Ok(id);
+        }
+        let at = self.within.len() - 1;
+        self.nodes.push(Node::Within {
+            state: at,
+            start: 0,
+            len: 0,
+        });
+        let first = self.pending.len();
+        for (_, action) in ordered(&self.within[at]) {
+            // The play's state is made in place, a copy of its parent's, so
+            // a state is copied once, and kept only if new.
+            let end = if action == Action::EndTurn {
+                self.ends
+                    .extend_from_slice(std::slice::from_ref(&self.within[at]));
+                let end = self.ends.last_mut().expect("just pushed");
+                apply_legal(end, action);
+                true
+            } else {
+                self.within.extend_from_within(at..=at);
+                let child = self.within.last_mut().expect("just pushed");
+                apply_legal(child, action);
+                auto_play(child);
+                if winner(child).is_some() {
+                    let won = self.within.pop().expect("just pushed");
+                    self.ends.push(won);
+                    true
+                } else {
+                    false
+                }
             };
-            self.note(children[i]);
+            let child = self.settle(end)?;
+            self.pending.push(child);
         }
-    }
-
-    /// `state`, an end of turn (`_World.end`).
-    fn end(&mut self, state: GameState) -> Result<usize, OverBudget> {
-        let id = match self.claim(merge_key(&state))? {
-            Claim::Seen(node) => {
-                self.note(node);
-                return Ok(node);
-            }
-            Claim::New(id) => id,
+        let start = self.edges.len();
+        self.edges.extend(self.pending.drain(first..));
+        self.nodes[id] = Node::Within {
+            state: at,
+            start,
+            len: self.edges.len() - start,
         };
-        let row = self.ends.len();
-        self.ends.push(state);
-        self.world_of.push(self.index);
-        self.noted.push(row);
-        self.nodes.push(Node::End(row));
         Ok(id)
     }
 
-    /// Every end reachable from `state`, depth first, the greedy policy's
-    /// moves first (`_World.best`).
-    fn best(&mut self, state: &GameState) -> Result<usize, OverBudget> {
-        // Claimed before its children, so the budget counts it.
-        let id = match self.claim(merge_key(state))? {
-            Claim::Seen(node) => {
-                self.note(node);
-                return Ok(node);
-            }
-            Claim::New(id) => id,
-        };
-        self.nodes.push(Node::Within(Vec::new()));
-        let mut children = Vec::new();
-        for (_, action) in ordered(state) {
-            children.push(self.through(state, action)?);
-        }
-        self.nodes[id] = Node::Within(children);
-        Ok(id)
-    }
-
+    /// The ends through `action` from `state`, the current candidate's.
     fn through(&mut self, state: &GameState, action: Action) -> Result<usize, OverBudget> {
-        match step(state, action) {
-            Step::End(end) => self.end(end),
-            Step::Within(child) => self.best(&child),
+        self.pending.clear();
+        let (child, end) = step(state, action);
+        if end {
+            self.ends.push(child);
+        } else {
+            self.within.push(child);
         }
+        self.settle(end)
     }
 }
 
@@ -240,49 +587,62 @@ struct Shared {
     /// Each shared state's parent and the play (as its index in
     /// `legal_actions`, and itself) that reaches it; the root's is unused.
     parents: Vec<(usize, usize, Action)>,
+    /// The shared states, the table's entries.
     states: Vec<GameState>,
-    seen: FxHashSet<GameState>,
+    table: Table,
     candidates: Vec<(usize, usize, Action)>,
     limit: usize,
 }
 
 impl Shared {
     fn walk(&mut self, index: usize) -> Result<(), OverBudget> {
-        let state = self.states[index].clone();
-        for (at, action) in ordered(&state) {
+        for (at, action) in ordered(&self.states[index]) {
             if action == Action::EndTurn {
                 self.candidates.push((index, at, action));
                 continue;
             }
-            let child = advance_legal(&state, action);
-            if winner(&child).is_some() || reveals(&state, &child) {
+            // Made in place, as in `World::settle`.
+            self.states.extend_from_within(index..=index);
+            let child = self.states.last_mut().expect("just pushed");
+            apply_legal(child, action);
+            auto_play(child);
+            let states = &self.states;
+            let child = &states[states.len() - 1];
+            if winner(child).is_some() || reveals(&states[index], child) {
+                self.states.pop();
                 self.candidates.push((index, at, action));
                 continue;
             }
-            let key = merge_key(&child);
-            if self.seen.contains(&key) {
-                continue;
+            match self.table.claim(child, self.limit, |i| &states[i]) {
+                Ok(Claim::New(_)) => {}
+                Ok(Claim::Seen(_)) => {
+                    self.states.pop();
+                    continue;
+                }
+                Err(OverBudget) => {
+                    self.states.pop();
+                    return Err(OverBudget);
+                }
             }
-            if self.seen.len() >= self.limit {
-                return Err(OverBudget);
-            }
-            self.seen.insert(key);
             self.parents.push((index, at, action));
-            self.states.push(child);
             self.walk(self.states.len() - 1)?;
         }
         Ok(())
     }
 
-    /// Shared state `index` in a world, replayed along its line and cached.
-    fn replay(&self, cache: &mut Vec<Option<GameState>>, index: usize) -> GameState {
-        if let Some(state) = &cache[index] {
-            return state.clone();
+    /// Shared state `index` in another world, replayed along its line: its
+    /// index in `replayed`, where `slots` keeps each shared state's (or
+    /// `NONE`), the world's own state in slot 0.
+    fn replay(&self, slots: &mut [u32], replayed: &mut Vec<GameState>, index: usize) -> usize {
+        if slots[index] != NONE {
+            return slots[index] as usize;
         }
         let (parent, _, action) = self.parents[index];
-        let state = advance_legal(&self.replay(cache, parent), action);
-        cache[index] = Some(state.clone());
-        state
+        let from = self.replay(slots, replayed, parent);
+        let state = advance_legal(&replayed[from], action);
+        slots[index] = replayed.len() as u32;
+        replayed.push(state);
+        replayed.len() - 1
     }
 
     fn line(&self, candidate: usize) -> Vec<usize> {
@@ -298,6 +658,15 @@ impl Shared {
     }
 }
 
+/// Room for `states` states and the one being tried, so the lists of states
+/// rarely grow: memory not written to is never touched.
+fn reserved(states: usize) -> Vec<GameState> {
+    Vec::with_capacity(states.min(RESERVED) + 1)
+}
+
+/// The most states `reserved` makes room for, about 60 MB.
+const RESERVED: usize = 25_000;
+
 /// The planner's enumeration over `worlds` (sampled worlds of one view, or
 /// one true state), at most `budget` states visited in all.
 pub fn enumerate(worlds: &[GameState], budget: usize) -> Enumeration {
@@ -305,31 +674,44 @@ pub fn enumerate(worlds: &[GameState], budget: usize) -> Enumeration {
     let first = &worlds[0];
     let mut shared = Shared {
         parents: vec![(0, 0, Action::EndTurn)],
-        states: vec![first.clone()],
-        seen: FxHashSet::from_iter([merge_key(first)]),
+        states: reserved(budget / 2),
+        table: Table::default(),
         candidates: Vec::new(),
         limit: budget / 2,
     };
+    shared.states.push(first.clone());
+    let states = &shared.states;
+    let root = shared.table.claim(first, usize::MAX, |i| &states[i]);
+    assert!(
+        matches!(root, Ok(Claim::New(0))),
+        "the root is the first entry"
+    );
     let mut found = Enumeration {
+        ends: reserved(budget),
         complete: shared.limit >= 1,
         ..Enumeration::default()
     };
     if found.complete && shared.walk(0).is_err() {
         found.complete = false;
     }
-    let share = (budget - shared.seen.len()) / worlds.len();
-    found.states = shared.seen.len();
+    let share = (budget - shared.table.len()) / worlds.len();
+    found.states = shared.table.len();
     for (index, world) in worlds.iter().enumerate() {
-        let mut cache: Vec<Option<GameState>> = if index == 0 {
-            shared.states.iter().cloned().map(Some).collect()
-        } else {
-            let mut cache = vec![None; shared.states.len()];
-            cache[0] = Some(world.clone());
-            cache
-        };
+        // The first world's shared states are `shared.states`; the others'
+        // are replayed as their candidates need them.
+        let mut slots = Vec::new();
+        let mut replayed = Vec::new();
+        if index > 0 {
+            slots = vec![NONE; shared.states.len()];
+            slots[0] = 0;
+            replayed.push(world.clone());
+        }
         let mut search = World {
-            keys: FxHashMap::default(),
+            table: Table::default(),
             nodes: Vec::new(),
+            within: reserved(share),
+            edges: Vec::new(),
+            pending: Vec::new(),
             limit: share,
             stamp: Vec::new(),
             candidate: 0,
@@ -342,8 +724,13 @@ pub fn enumerate(worlds: &[GameState], budget: usize) -> Enumeration {
         for (candidate, &(at, _, action)) in shared.candidates.iter().enumerate() {
             search.candidate = candidate + 1;
             search.noted.clear();
-            let state = shared.replay(&mut cache, at);
-            let result = search.through(&state, action);
+            let state = if index == 0 {
+                &shared.states[at]
+            } else {
+                let slot = shared.replay(&mut slots, &mut replayed, at);
+                &replayed[slot]
+            };
+            let result = search.through(state, action);
             if result.is_err() {
                 found.complete = false;
                 if !search.noted.is_empty() {
@@ -353,7 +740,7 @@ pub fn enumerate(worlds: &[GameState], budget: usize) -> Enumeration {
             }
             reached.push(std::mem::take(&mut search.noted));
         }
-        found.states += search.keys.len();
+        found.states += search.table.len();
         found.reached.push(reached);
     }
     found.lines = (0..shared.candidates.len())
@@ -587,6 +974,73 @@ mod tests {
         for budget in [1, 2, 3, 5, 8, 50] {
             let found = enumerate(std::slice::from_ref(&state), budget);
             assert!(found.states <= budget, "budget {budget}");
+        }
+    }
+
+    /// States along greedy games, with every play from each.
+    fn positions() -> Vec<GameState> {
+        let mut states = Vec::new();
+        for seed in 0..6 {
+            let mut state = new_game(seed);
+            auto_play(&mut state);
+            while winner(&state).is_none() && state.turn <= 40 {
+                let actions = legal_actions(&state);
+                states.extend(actions.iter().map(|&a| step(&state, a).0));
+                states.push(state.clone());
+                state = advance_legal(&state, greedy_move(state.must_scrap, &actions));
+            }
+        }
+        states
+    }
+
+    #[test]
+    fn states_merge_as_their_sorted_keys_are_equal() {
+        let states = positions();
+        let keys: Vec<GameState> = states.iter().map(merge::merge_key).collect();
+        let mut merges = 0;
+        for (i, a) in states.iter().enumerate() {
+            // Neighbours, which often merge, and a stride across the games.
+            for j in (i.saturating_sub(12)..i).chain((0..i).step_by(97)) {
+                let b = &states[j];
+                let same = keys[i] == keys[j];
+                assert_eq!(merged(a, b), same, "{i} {j}");
+                assert_eq!(merged(b, a), same, "{j} {i}");
+                if same {
+                    merges += 1;
+                    assert_eq!(merge_hash(a), merge_hash(b), "{i} {j}");
+                }
+            }
+        }
+        assert!(merges > 100, "only {merges} merges tested");
+    }
+
+    #[test]
+    fn a_pile_s_order_matters_only_in_the_decks_and_the_choices() {
+        for state in positions().into_iter().step_by(7) {
+            let mut other = state.clone();
+            for player in &mut other.players {
+                player.hand.reverse();
+                player.in_play.reverse();
+                let half = player.discard.len() / 2;
+                player.discard.rotate_left(half);
+                player.bases.reverse();
+            }
+            other.trade_row.reverse();
+            other.scrap_heap.reverse();
+            other.allies_used.reverse();
+            other.bases_used.reverse();
+            assert!(merged(&state, &other));
+            assert_eq!(merge_hash(&state), merge_hash(&other));
+            let deck = &mut other.players[state.current].deck;
+            if deck.iter().any(|&c| c != deck[0]) {
+                deck.reverse();
+                if deck[..] != state.players[state.current].deck[..] {
+                    assert!(!merged(&state, &other));
+                }
+            }
+            other = state.clone();
+            other.trade_deck.swap(0, 1);
+            assert_eq!(merged(&state, &other), other.trade_deck == state.trade_deck);
         }
     }
 }

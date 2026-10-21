@@ -10,7 +10,9 @@ use rustc_hash::FxHashMap;
 
 use super::card::{Card, CardType, EXPLORER_PILE, Effect, STARTING_DECK, pure_gain, trade_deck};
 use super::rng::Random;
-use super::state::{FIRST_HAND_SIZE, GameState, HAND_SIZE, PlayerState, TRADE_ROW_SIZE};
+use super::state::{
+    FIRST_HAND_SIZE, GameState, HAND_SIZE, Pile, PlayerState, TRADE_ROW_SIZE, capacity,
+};
 
 /// The most cards a `Recycle` or `ScrapAndDraw` names: Recycling Station
 /// discards and Brain World scraps up to two.
@@ -123,7 +125,7 @@ impl std::error::Error for IllegalAction {}
 
 /// `cards` shuffled from `seed`, and the seed for the next shuffle
 /// (`rules._shuffle`).
-fn shuffle(cards: &[Card], seed: u64) -> (Vec<Card>, u64) {
+fn shuffle<const N: usize>(cards: &[Card], seed: u64) -> (Pile<N>, u64) {
     SHUFFLES.with_borrow_mut(|cache| {
         if cache.len() >= SHUFFLES_KEPT {
             cache.clear();
@@ -178,9 +180,9 @@ fn draw(player: &mut PlayerState, n: usize, mut seed: u64) -> u64 {
 /// Deal a game from `seed` (`rules.new_game` with the whole Trade Deck),
 /// before automatic play.
 pub fn new_game(seed: u64) -> GameState {
-    let (shuffled, mut seed) = shuffle(&trade_deck(), seed);
-    let trade_row = shuffled[..TRADE_ROW_SIZE].to_vec();
-    let rest = shuffled[TRADE_ROW_SIZE..].to_vec();
+    let (shuffled, mut seed) = shuffle::<{ capacity::TRADE_DECK }>(&trade_deck(), seed);
+    let trade_row = Pile::from_slice(&shuffled[..TRADE_ROW_SIZE]).expect("a row of cards");
+    let rest = Pile::from_slice(&shuffled[TRADE_ROW_SIZE..]).expect("the Trade Deck");
     let mut deal = |hand_size: usize| {
         let (deck, next) = shuffle(&STARTING_DECK, seed);
         let mut player = PlayerState::new(deck);
@@ -195,18 +197,18 @@ pub fn new_game(seed: u64) -> GameState {
         trade_deck: rest,
         trade_row,
         explorers: EXPLORER_PILE,
-        scrap_heap: Vec::new(),
+        scrap_heap: Pile::new(),
         current: 0,
         turn: 1,
         trade: 0,
         combat: 0,
-        allies_used: Vec::new(),
-        bases_used: Vec::new(),
+        allies_used: Pile::new(),
+        bases_used: Pile::new(),
         may_scrap: 0,
         must_scrap: 0,
         may_destroy: 0,
         may_scrap_row: 0,
-        choosing: Vec::new(),
+        choosing: Pile::new(),
         recycling: 0,
         factions_played: [0; 4],
         may_on_top: 0,
@@ -226,7 +228,7 @@ pub fn winner(state: &GameState) -> Option<usize> {
 }
 
 /// Remove one copy of `card`, which `cards` holds.
-fn remove_one(cards: &mut Vec<Card>, card: Card) {
+fn remove_one<const N: usize>(cards: &mut Pile<N>, card: Card) {
     let i = cards
         .iter()
         .position(|&c| c == card)
@@ -354,7 +356,7 @@ pub fn legal_actions(state: &GameState) -> Vec<Action> {
                 .map(|&card| Action::AcquireOnTop(card)),
         );
     }
-    let targets = &state.players[1 - state.current].bases;
+    let targets: &[Card] = &state.players[1 - state.current].bases;
     if state.may_destroy > 0 {
         actions.extend(
             distinct(targets.iter().copied())
@@ -1047,7 +1049,7 @@ mod tests {
     #[test]
     fn an_outpost_guards_the_player_and_the_other_bases() {
         let mut state = dealt(0);
-        state.players[1].bases = vec![Card::BlobWheel, Card::SpaceStation];
+        state.players[1].bases = [Card::BlobWheel, Card::SpaceStation].into_iter().collect();
         state.combat = 10;
         let actions = legal_actions(&state);
         assert!(actions.contains(&Action::AttackBase(Card::SpaceStation)));
@@ -1071,7 +1073,7 @@ mod tests {
         let mut state = dealt(0);
         state.players[0].hand.push(Card::PatrolMech);
         auto_play(&mut state);
-        assert_eq!(state.choosing, [Card::PatrolMech]);
+        assert_eq!(state.choosing[..], [Card::PatrolMech]);
         assert_eq!(
             legal_actions(&state),
             [
