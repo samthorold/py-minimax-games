@@ -37,6 +37,8 @@ Managed with uv. See the README's Development section for commands.
 
 ## Workflow
 
-- Work on a branch, open a PR against `main`. (The old `dev` branch predates this flow.)
-- **PRs with passing CI may be squash-merged** (`gh pr merge <n> --squash --delete-branch`) without asking, except version bumps. Confirm CI is green (`gh pr checks <n> --watch`) first; never merge with failing or pending checks.
-- The `main` ruleset requires PRs to be up to date. If a PR falls behind, run `gh pr update-branch <n>` and wait for CI again.
+The PR workflow (branch, PR, squash-merge when green, merging `main` in) is the Commons' Agentic development Guide. Here specifically:
+
+- The required status check is the CI job `pre-commit`; the `main` ruleset requires PRs to be up to date.
+- Version-bump PRs publish a release (Versioning, above): ask before merging them.
+- The old `dev` branch predates this flow.
