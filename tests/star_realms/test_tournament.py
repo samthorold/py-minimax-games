@@ -3,10 +3,13 @@ import pytest
 from minimax_games.games.star_realms import transcript
 from minimax_games.games.star_realms.action import Action, EndTurn
 from minimax_games.games.star_realms.bots import GreedyBot, RandomBot
+from minimax_games.games.star_realms.cli import BOTS
 from minimax_games.games.star_realms.match import play_match
+from minimax_games.games.star_realms.sprt import Hypothesis, Sprt
 from minimax_games.games.star_realms.tournament import (
     TournamentResult,
     combine,
+    play_sprt,
     play_tournament,
 )
 from minimax_games.games.star_realms.view import View
@@ -106,3 +109,37 @@ def test_games_in_parallel_give_the_serial_result():
 def test_jobs_must_be_positive():
     with pytest.raises(ValueError, match="jobs"):
         play_tournament((RandomBot, RandomBot), games=2, jobs=0)
+    with pytest.raises(ValueError, match="jobs"):
+        play_sprt((RandomBot, RandomBot), Sprt(), max_games=2, jobs=0)
+
+
+heuristic = BOTS["heuristic"]
+"""A module function, so worker processes can unpickle it."""
+
+
+def test_sprt_stops_a_lopsided_match_on_the_game_that_decides_it():
+    played = play_sprt((heuristic, RandomBot), Sprt(p0=0.5, p1=0.7), max_games=100)
+    assert played.verdict is Hypothesis.H1
+    result = played.tournament.result
+    assert len(result.games) < 30
+    wins, losses = result.wins(0), result.wins(1)
+    assert played.test.decide(wins, losses) is Hypothesis.H1
+    last = result.games[-1]
+    before = (wins - (last.winner == 0), losses - (last.winner == 1))
+    assert played.test.decide(*before) is None
+
+
+def test_sprt_is_undecided_at_the_game_limit():
+    played = play_sprt((RandomBot, RandomBot), Sprt(), max_games=4)
+    assert played.verdict is None
+    assert played.tournament.result == play_tournament((RandomBot, RandomBot), 4).result
+
+
+def test_sprt_decides_the_same_in_parallel():
+    def run(jobs: int) -> tuple[Hypothesis | None, TournamentResult]:
+        played = play_sprt(
+            (heuristic, RandomBot), Sprt(p0=0.5, p1=0.7), 100, base_seed=5, jobs=jobs
+        )
+        return played.verdict, played.tournament.result
+
+    assert run(3) == run(1)

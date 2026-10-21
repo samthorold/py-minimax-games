@@ -15,6 +15,11 @@ and node budget, the sampler's worlds too, the ISMCTS bot's iterations
 and leaf settings) if it plays,
 win rates overall and by seat, unfinished games and each bot's mean time per
 move. `--jobs N` spreads the games over N processes, with the same results.
+`--sprt` stops as soon as a sequential probability ratio test (`sprt.Sprt`)
+decides between bot A winning `--h0` and `--h1` of its finished games, with
+error rates `--alpha` and `--beta`, `--games` then being the most it plays;
+it prints the decision, the games played, A's win rate and its 95%
+interval, and the log-likelihood ratio and its bounds.
 `--budget N` sets the search bots' nodes per decision and `--worlds K` the
 sampler's worlds (both default to the bots' own defaults). `--eval rollout`
 has them score positions by rollouts (`rollout.Rollout`: `--rollouts`,
@@ -58,6 +63,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
+from typing import assert_never
 
 from minimax_games.games.star_realms import bench, cheat, profiling, tune
 from minimax_games.games.star_realms.bots import (
@@ -73,9 +79,12 @@ from minimax_games.games.star_realms.ismcts import ITERATIONS, IsmctsBot
 from minimax_games.games.star_realms.match import play_match
 from minimax_games.games.star_realms.rollout import ROLLOUT_BUDGET, Rollout
 from minimax_games.games.star_realms.sampler import WORLDS, SamplerBot
+from minimax_games.games.star_realms.sprt import Hypothesis, Sprt, wilson
 from minimax_games.games.star_realms.tournament import (
     MAX_TURNS,
+    SprtTournament,
     Tournament,
+    play_sprt,
     play_tournament,
 )
 
@@ -222,7 +231,12 @@ def tournament(argv: list[str]) -> None:
         metavar="BOT",
         help=f"bots A and B (A moves first in even games): {_names()}",
     )
-    parser.add_argument("--games", type=int, default=500, help="how many games")
+    parser.add_argument(
+        "--games",
+        type=int,
+        default=500,
+        help="how many games (with --sprt, the most it plays)",
+    )
     parser.add_argument("--base-seed", type=int, default=0, help="the first seed")
     parser.add_argument(
         "--max-turns",
@@ -260,6 +274,39 @@ def tournament(argv: list[str]) -> None:
         help="how the search bots score positions: the linear evaluation, or"
         " rollouts (playouts with the greedy policy; default: %(default)s)",
     )
+    parser.add_argument(
+        "--sprt",
+        action="store_true",
+        help="stop as soon as a sequential probability ratio test decides"
+        " between --h0 and --h1",
+    )
+    test = Sprt()
+    parser.add_argument(
+        "--h0",
+        type=float,
+        default=test.p0,
+        help="with --sprt, bot A's win rate under H0 (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--h1",
+        type=float,
+        default=test.p1,
+        help="with --sprt, bot A's win rate under H1 (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=test.alpha,
+        help="with --sprt, the chance of accepting H1 if H0 is true"
+        " (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--beta",
+        type=float,
+        default=test.beta,
+        help="with --sprt, the chance of accepting H0 if H1 is true"
+        " (default: %(default)s)",
+    )
     defaults = Rollout()
     parser.add_argument(
         "--rollouts",
@@ -295,23 +342,35 @@ def tournament(argv: list[str]) -> None:
         name: configured(name, budget, args.worlds, evaluator, args.iterations)
         for name in dict.fromkeys(args.bots)
     }
-    played = play_tournament(
-        (factories[a], factories[b]),
-        args.games,
-        args.base_seed,
-        args.max_turns,
-        args.jobs,
-    )
+    names = (a, b) if a != b else (f"{a}-A", f"{b}-B")
+    bots = (factories[a], factories[b])
+    sprt = None
+    if args.sprt:
+        try:
+            test = Sprt(p0=args.h0, p1=args.h1, alpha=args.alpha, beta=args.beta)
+        except ValueError as error:
+            parser.error(str(error))
+        sprt = play_sprt(
+            bots, test, args.games, args.base_seed, args.max_turns, args.jobs
+        )
+        played = sprt.tournament
+    else:
+        played = play_tournament(
+            bots, args.games, args.base_seed, args.max_turns, args.jobs
+        )
     last = args.base_seed + args.games - 1
     print(
-        f"{a} vs {b}: {args.games} games, seeds {args.base_seed}-{last},"
-        f" max {args.max_turns} turns"
+        f"{a} vs {b}: {'SPRT, at most ' if args.sprt else ''}{args.games} games,"
+        f" seeds {args.base_seed}-{last}, max {args.max_turns} turns"
     )
     for name, factory in factories.items():
         bot = factory(args.base_seed)
         if isinstance(bot, Budgeted):
             print(f"{name}: {bot.settings()}")
-    for line in report(played, (a, b) if a != b else (f"{a}-A", f"{b}-B")):
+    if sprt is not None:
+        for line in sprt_report(sprt, names[0], args.games):
+            print(line)
+    for line in report(played, names):
         print(line)
 
 
@@ -582,6 +641,33 @@ def tuning(argv: list[str]) -> None:
         log=lambda line: print(line, flush=True),
     )
     print(f"Weights: {tuned}")
+
+
+def sprt_report(played: SprtTournament, name: str, max_games: int) -> list[str]:
+    """The test, its decision and the evidence for it, as plain-text lines:
+    `name` is bot A's."""
+    test, result = played.test, played.tournament.result
+    games = len(result.games)
+    match played.verdict:
+        case Hypothesis.H0 | Hypothesis.H1 as verdict:
+            decision = f"{verdict.value} accepted after {games} games"
+        case None:
+            limit = " (the limit)" if games == max_games else ""
+            decision = f"undecided after {games} games{limit}"
+        case _:
+            assert_never(played.verdict)
+    wins, losses = result.wins(0), result.wins(1)
+    low, high = wilson(wins, result.finished)
+    rate = wins / result.finished if result.finished else 0.0
+    return [
+        f"SPRT: H0 {name} wins {test.p0:.1%}, H1 {test.p1:.1%};"
+        f" alpha {test.alpha}, beta {test.beta}",
+        f"Decision: {decision}",
+        f"LLR {test.llr(wins, losses):.2f}, bounds [{test.lower:.2f},"
+        f" {test.upper:.2f}]",
+        f"{name} win rate {rate:.1%} (95% interval {low:.1%}-{high:.1%})"
+        f" of {result.finished} finished games",
+    ]
 
 
 def report(played: Tournament, names: tuple[str, str]) -> list[str]:

@@ -64,6 +64,26 @@ def test_tournament_jobs_split_the_games_without_changing_the_results(capsys):
     assert results("--jobs", "3") == results()
 
 
+def test_tournament_with_sprt_stops_once_decided_and_says_why(capsys):
+    argv = ["tournament", "--bots", "heuristic", "random", "--games", "100"]
+    main([*argv, "--sprt", "--h0", "0.5", "--h1", "0.7"])
+    out = capsys.readouterr().out
+    assert "heuristic vs random: SPRT, at most 100 games, seeds 0-99" in out
+    assert "SPRT: H0 heuristic wins 50.0%, H1 70.0%; alpha 0.05, beta 0.05" in out
+    decision = next(line for line in out.splitlines() if line.startswith("Decision"))
+    assert decision.startswith("Decision: H1 accepted after ")
+    assert "LLR " in out
+    assert "bounds [-2.94, 2.94]" in out
+    assert "95% interval" in out
+
+
+def test_tournament_with_sprt_reports_an_undecided_limit(capsys):
+    argv = ["tournament", "--bots", "random", "random", "--games", "2", "--sprt"]
+    main(argv)
+    out = capsys.readouterr().out
+    assert "Decision: undecided after 2 games (the limit)" in out
+
+
 def test_tournament_lists_unfinished_games_and_tells_same_bots_apart(capsys):
     argv = ["tournament", "--bots", "random", "random", "--games", "2"]
     main([*argv, "--max-turns", "5"])
