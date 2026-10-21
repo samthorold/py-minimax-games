@@ -6,3 +6,4 @@ pub mod card;
 pub mod rng;
 pub mod rules;
 pub mod state;
+pub mod view;

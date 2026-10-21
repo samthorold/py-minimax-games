@@ -1,25 +1,32 @@
-"""The Rust Star Realms engine (rust/src/star_realms/), for the first slice.
+"""The Rust Star Realms engine (rust/src/star_realms/), for the whole base set.
 
-Actions are `(kind, card name or None)` pairs named as the Python `Action`
-variants, and states dicts of the `GameState` fields the first slice uses,
-piles as lists of card names.
+Actions are tuples `(kind, *fields)` named as the Python `Action` variants
+and their fields: a card as its name, a tuple of cards as a tuple of names,
+and a `Choose`'s option as its index among the card's options. States and
+views are dicts of the `GameState` and `View` fields, piles as lists of card
+names.
 """
 
 from typing import Any
 
-type NativeAction = tuple[str, str | None]
+type NativeAction = tuple[Any, ...]
 
 class Game:
-    """A first-slice game dealt from `seed` and auto-played to its first
-    decision, as `rules.auto_play(rules.new_game(seed, deck))`."""
+    """A game dealt from `seed` and auto-played to its first decision, as
+    `rules.auto_play(rules.new_game(seed))`."""
 
     def __init__(self, seed: int) -> None: ...
     def legal_actions(self) -> list[NativeAction]: ...
-    def advance(self, kind: str, card: str | None = None) -> None:
+    def advance(self, action: NativeAction) -> None:
         """Take a decision, then auto-play. Raises `ValueError` if illegal."""
     def state(self) -> dict[str, Any]: ...
     def winner(self) -> int | None: ...
     def greedy_move(self) -> NativeAction: ...
+    def observe(self, observer: int) -> dict[str, Any]:
+        """What `observer` knows (`view.observe`)."""
+    def sample_world(self, observer: int, seed: int) -> Game:
+        """A world consistent with `observer`'s view, as
+        `view.sample_world(view, random.Random(seed))` samples it."""
 
 def cards() -> list[dict[str, Any]]:
     """Each card's data, in catalogue order."""

@@ -68,7 +68,7 @@ tasks:
       - uv run python -m minimax_games.games.star_realms fit {{.CLI_ARGS}}
 
   native-bench:
-    desc: "Time the Rust engine: first-slice greedy games/s and advance calls/s: task native-bench -- [--games N]"
+    desc: "Time the Rust engine: full-deck greedy games/s and advance calls/s: task native-bench -- [--games N]"
     cmds:
       - uv run python -m minimax_games.games.star_realms native-bench {{.CLI_ARGS}}
 
