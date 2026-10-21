@@ -3,7 +3,10 @@
 //! reference: the differential tests (`tests/star_realms/test_native.py`)
 //! compare states, legal actions and views after every action.
 
+use std::cell::RefCell;
 use std::fmt;
+
+use rustc_hash::FxHashMap;
 
 use super::card::{Card, CardType, EXPLORER_PILE, Effect, STARTING_DECK, pure_gain, trade_deck};
 use super::rng::Random;
@@ -121,9 +124,34 @@ impl std::error::Error for IllegalAction {}
 /// `cards` shuffled from `seed`, and the seed for the next shuffle
 /// (`rules._shuffle`).
 fn shuffle(cards: &[Card], seed: u64) -> (Vec<Card>, u64) {
-    let mut rng = Random::new(seed);
-    let shuffled = rng.sample(cards);
-    (shuffled, rng.next_u64())
+    SHUFFLES.with_borrow_mut(|cache| {
+        if cache.len() >= SHUFFLES_KEPT {
+            cache.clear();
+        }
+        let (order, next) = cache.entry((seed, cards.len())).or_insert_with(|| {
+            let mut rng = Random::new(seed);
+            let positions: Vec<usize> = (0..cards.len()).collect();
+            let order = rng.sample(&positions);
+            (order, rng.next_u64())
+        });
+        (order.iter().map(|&i| cards[i]).collect(), *next)
+    })
+}
+
+/// A shuffle: the positions it takes the cards from, and the next seed.
+type Shuffle = (Vec<usize>, u64);
+
+/// How many shuffles `SHUFFLES` keeps before it starts again.
+const SHUFFLES_KEPT: usize = 256;
+
+thread_local! {
+    /// Shuffles made, by seed and pile size, as the positions they take the
+    /// cards from and the next seed: a shuffle moves cards by positions drawn
+    /// from the seed alone, never by what the cards are. The planner
+    /// reshuffles a world's discard pile, from the same seed, at most ends of
+    /// a turn, and seeding the Mersenne Twister was a fifth of its time.
+    static SHUFFLES: RefCell<FxHashMap<(u64, usize), Shuffle>> =
+        RefCell::new(FxHashMap::default());
 }
 
 /// Draw `n` cards, shuffling the discard pile into the deck if it runs out
