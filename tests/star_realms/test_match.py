@@ -37,6 +37,7 @@ from minimax_games.games.star_realms.bots import (
 )
 from minimax_games.games.star_realms.catalogue import CATALOGUE, EXPLORER, SCOUT, VIPER
 from minimax_games.games.star_realms.effect import Authority, Combat, Draw
+from minimax_games.games.star_realms.ismcts import IsmctsBot
 from minimax_games.games.star_realms.match import MatchTooLong, play_match
 from minimax_games.games.star_realms.sampler import SamplerBot
 from minimax_games.games.star_realms.state import GameState
@@ -455,6 +456,15 @@ def test_the_sampler_is_only_ever_given_its_own_view():
     for seed in range(2):
         sampler = SamplerBot(seed, worlds=2, turns=1, budget=60)
         bots = (OnlyViews(sampler, 0), OnlyViews(GreedyBot(), 1))
+        with pytest.raises(MatchTooLong):
+            play_match(bots, seed, max_turns=4)
+        assert bots[0].calls > 0
+
+
+def test_the_ismcts_bot_is_only_ever_given_its_own_view():
+    assert not isinstance(IsmctsBot(0), BenchmarkBot)
+    for seed in range(2):
+        bots = (OnlyViews(IsmctsBot(seed, iterations=10), 0), OnlyViews(GreedyBot(), 1))
         with pytest.raises(MatchTooLong):
             play_match(bots, seed, max_turns=4)
         assert bots[0].calls > 0

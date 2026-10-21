@@ -5,6 +5,7 @@ from minimax_games.games.star_realms.bots import GreedyBot, HeuristicBot
 from minimax_games.games.star_realms.cheat import BUDGET, CheatBot
 from minimax_games.games.star_realms.cli import BOTS, configured, main
 from minimax_games.games.star_realms.evaluate import LINEAR
+from minimax_games.games.star_realms.ismcts import ITERATIONS, IsmctsBot
 from minimax_games.games.star_realms.rollout import ROLLOUT_BUDGET, Rollout
 from minimax_games.games.star_realms.sampler import WORLDS, SamplerBot
 from minimax_games.games.star_realms.state import GameState
@@ -222,3 +223,26 @@ def test_tune_screen_ranks_the_weights_by_decisions_changed(capsys):
     assert out[0].startswith("Screen: ")
     assert len(out) == 3
     assert all("% of decisions changed" in line for line in out[1:])
+
+
+def test_a_single_game_plays_the_ismcts_bot(capsys, monkeypatch):
+    # Whole games at the default budget are too slow: check the registered
+    # bot is the default one, then play a small-budget one.
+    bot = BOTS["ismcts"](7)
+    assert isinstance(bot, IsmctsBot)
+    assert bot.iterations == ITERATIONS
+    monkeypatch.setitem(BOTS, "ismcts", lambda seed: IsmctsBot(seed, iterations=5))
+    main(["--seed", "7", "--bots", "ismcts", "greedy"])
+    assert "wins on turn" in capsys.readouterr().out
+
+
+def test_tournament_plays_the_ismcts_bot_and_states_its_iterations(capsys):
+    argv = ["tournament", "--bots", "ismcts", "greedy", "--games", "2"]
+    main([*argv, "--max-turns", "2", "--iterations", "7"])
+    out = capsys.readouterr().out.splitlines()
+    assert f"ismcts: {IsmctsBot(0, iterations=7).settings()}" in out
+    assert out[1].startswith("ismcts: 7 iterations per decision")
+    ismcts = next(line for line in out if line.split()[:2] == ["ismcts", "0/0"])
+    assert float(ismcts.split()[-1]) > 0  # it made timed decisions
+    main([*argv, "--max-turns", "2", "--iterations", "7", "--jobs", "2"])
+    assert capsys.readouterr().out.splitlines()[:3] == out[:3]

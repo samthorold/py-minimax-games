@@ -3,14 +3,16 @@
 `python -m minimax_games.games.star_realms --seed 7 --log` prints the game's
 transcript; without `--log` it prints only who won. `--bots greedy random`
 picks the bots, first player first (both random by default): `random`,
-`greedy`, `heuristic` or `sampler` (search over worlds sampled from its
-view). `cheat` is a benchmark, not a legitimate player: it searches the true
-state.
+`greedy`, `heuristic`, `sampler` (search over worlds sampled from its
+view) or `ismcts` (information-set Monte Carlo tree search from its
+view). `cheat` is a benchmark, not a legitimate player: it searches the
+true state.
 
 `python -m minimax_games.games.star_realms tournament --bots greedy random
 --games 500` plays seeded games with alternating seats (`--base-seed`,
 `--max-turns`) and prints each search bot's settings (the cheat's horizon
-and node budget, the sampler's worlds too) if it plays,
+and node budget, the sampler's worlds too, the ISMCTS bot's iterations
+and leaf settings) if it plays,
 win rates overall and by seat, unfinished games and each bot's mean time per
 move. `--jobs N` spreads the games over N processes, with the same results.
 `--budget N` sets the search bots' nodes per decision and `--worlds K` the
@@ -18,6 +20,7 @@ sampler's worlds (both default to the bots' own defaults). `--eval rollout`
 has them score positions by rollouts (`rollout.Rollout`: `--rollouts`,
 `--rollout-turns`, `--epsilon`, seeded per game) instead of the linear
 evaluation, with `rollout.ROLLOUT_BUDGET` nodes unless `--budget` says.
+`--iterations N` sets the ISMCTS bot's iterations per decision.
 Game `seed` replays on its own with `--seed` and its bots in seat order,
 first player first: bot A moves first in games `base_seed`,
 `base_seed + 2`, ...
@@ -66,6 +69,7 @@ from minimax_games.games.star_realms.bots import (
 )
 from minimax_games.games.star_realms.cheat import CheatBot
 from minimax_games.games.star_realms.evaluate import LINEAR, Evaluator
+from minimax_games.games.star_realms.ismcts import ITERATIONS, IsmctsBot
 from minimax_games.games.star_realms.match import play_match
 from minimax_games.games.star_realms.rollout import ROLLOUT_BUDGET, Rollout
 from minimax_games.games.star_realms.sampler import WORLDS, SamplerBot
@@ -108,15 +112,20 @@ def _sampler(
     )
 
 
+def _ismcts(seed: int, iterations: int = ITERATIONS) -> IsmctsBot:
+    return IsmctsBot(seed, iterations=iterations)
+
+
 BOTS: dict[str, Callable[[int], AnyBot]] = {
     "random": RandomBot,
     "greedy": _greedy,
     "heuristic": _heuristic,
     "cheat": _cheat,
     "sampler": _sampler,
+    "ismcts": _ismcts,
 }
-"""Each bot by name, built from a seed (which only `random` and `sampler`
-use). Module
+"""Each bot by name, built from a seed (which only `random`, `sampler` and
+`ismcts` use). Module
 functions, not lambdas, so `tournament --jobs` can send them to workers."""
 
 
@@ -125,9 +134,11 @@ def configured(
     budget: int | None = None,
     worlds: int | None = None,
     evaluator: Evaluator = LINEAR,
+    iterations: int | None = None,
 ) -> Callable[[int], AnyBot]:
     """`BOTS[name]`, with `budget` nodes per decision and `evaluator` if it is
-    a search bot, and `worlds` worlds if it is the sampler (each left at its
+    an alpha-beta search bot, `worlds` worlds if it is the sampler, and
+    `iterations` per decision if it is the ISMCTS bot (each left at its
     default if None). A rollout evaluator's seed is set to each game's. A
     `partial` of a module function, so `--jobs` can still send it to
     workers."""
@@ -143,6 +154,10 @@ def configured(
             budget=cheat.BUDGET if budget is None else budget,
             worlds=WORLDS if worlds is None else worlds,
             evaluator=evaluator,
+        )
+    if name == "ismcts":
+        return partial(
+            _ismcts, iterations=ITERATIONS if iterations is None else iterations
         )
     return BOTS[name]
 
@@ -234,6 +249,11 @@ def tournament(argv: list[str]) -> None:
         help=f"the sampler's worlds per decision (default: {WORLDS})",
     )
     parser.add_argument(
+        "--iterations",
+        type=int,
+        help=f"the ISMCTS bot's iterations per decision (default: {ITERATIONS})",
+    )
+    parser.add_argument(
         "--eval",
         choices=("linear", "rollout"),
         default="linear",
@@ -272,7 +292,7 @@ def tournament(argv: list[str]) -> None:
             budget = ROLLOUT_BUDGET
     a, b = args.bots
     factories = {
-        name: configured(name, budget, args.worlds, evaluator)
+        name: configured(name, budget, args.worlds, evaluator, args.iterations)
         for name in dict.fromkeys(args.bots)
     }
     played = play_tournament(
