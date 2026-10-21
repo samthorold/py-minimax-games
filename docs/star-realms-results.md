@@ -1642,3 +1642,28 @@ Scratch runs on 8,000 training games (seeds 10000-17999, 189,914 states) and 2,0
 | 64 units | 20 | 0.003 | 0.5191 | 0.5430 |
 
 The network overfits easily: with `l2` 0.0001 and 30 epochs it scored 0.684 on 1,000 held-out games, worse than `evaluate`, and with half the training data (95,000 states) its best was 0.561, behind the logistic regression's 0.559. `l2` 0.003 is the best penalty tried, and the width matters little; 10 epochs were adopted, as good as 20 at half the time, for both models (the logistic regression barely changes with `l2`). More games would likely help the network most, and cost only seconds per thousand.
+
+## Milestone 7: Rust tracer bullet (toolchain and first-slice engine)
+
+2026-10-21, #137 (tracked by #127), CPython 3.14, Apple M1 (8 GB) shared with three other agents' builds and tests. The first end-to-end path through Rust: maturin builds `minimax_games._native` from `rust/`, and its Star Realms engine plays the starter decks and the 30-card first slice (design, Compiled engine).
+
+**Speed**, `task native-bench -- --games 5000` (seeds 0-4999, greedy vs greedy, release build, three runs):
+
+| Measure | Result |
+|---|---|
+| Greedy games | 5,210-5,270 games/s (0.19 ms per game) |
+| Decisions in those games | 582,000-588,000/s (112 per game) |
+| `advance` alone, over the 558,237 recorded decisions | 819,000-825,000 calls/s (1.2 µs per call) |
+
+The games figure includes legal actions and the greedy bot's choice; the `advance` figure replays each recorded (state, action) pair through `advance_legal` (clone the state, apply, auto-play), as a search would. The engine is unoptimised: piles are `Vec`s cloned whole on every `advance`, as the Python engine copies tuples. These are absolute numbers on the first slice only, with no CPython comparison (design, Compiled engine).
+
+**Differential tests**, `tests/star_realms/test_native.py`: 200 greedy-vs-greedy and 100 seeded random games (up to 300 turns, 8 of them reach it), comparing the whole state and the list of legal actions with the Python engine after every action, plus the Rust greedy bot's choice at every decision and its whole-game result. Random play covers every first-slice action (scrapping ships and bases, attacking bases, and the Trade Deck running out). They take about 3.5 s.
+
+**Bugs differential testing caught: none.** The engine matched the Python one on the first run of the differential tests. Two deliberately injected bugs (refilling the Trade Row at its end rather than in place; not freeing a scrapped base's used primary) each failed the tests on the first affected seed, so the harness does catch divergence. The likely reasons the port went cleanly: the slice is small, the Python rules are already written as an explicit, documented reference, and the RNG port was checked on its own first (`cargo test` against values from CPython).
+
+**Effort.** About an hour of agent time end to end, roughly a third on the engine (RNG, cards, rules, greedy bot) and the rest on the toolchain (maturin, pre-commit, CI, release), the differential tests and these docs. The extension builds in about 15 s from clean on the M1 (two build jobs) and in about 1 s incrementally; `uv run pre-commit run --all-files` takes about 20 s.
+
+**Surprises.**
+
+- `rust-toolchain.toml` pinning `1.95.0` made rustup download that toolchain although the installed `stable` was the same 1.95.0: rustup treats the names as different toolchains. A one-time download.
+- `task pypy` no longer installs: maturin builds a PyPy-specific wheel (`pp312`), which uv refuses under the task's `--python-version 3.13` workaround for PyPy having no 3.13. The compiled engine is the path to speed now, so the task is left broken pending a decision (drop it, or install PyPy's copy another way).

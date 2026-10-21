@@ -12,3 +12,6 @@ pyrightconfig.json
 .DS_Store
 .claude/settings.local.json
 profiles/
+rust/target
+# The extension module maturin builds into the source tree for editable installs.
+src/minimax_games/*.so

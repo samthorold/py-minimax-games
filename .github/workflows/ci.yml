@@ -2,11 +2,12 @@ name: CI
 
 on:
   # PRs must be up to date and pass before merging, so re-running on main adds
-  # nothing, except when uv.lock changes: PRs can only restore caches saved on
-  # main, so this keeps the uv cache warm for them.
+  # nothing, except when a lock file or the Rust toolchain changes: PRs can
+  # only restore caches saved on main, so this keeps the uv and cargo caches
+  # warm for them.
   push:
     branches: [main]
-    paths: [uv.lock]
+    paths: [uv.lock, rust/Cargo.lock, rust-toolchain.toml]
   pull_request:
 
 permissions:
@@ -26,9 +27,19 @@ jobs:
         with:
           enable-cache: true
 
+      # The toolchain rust-toolchain.toml pins, before `uv sync` builds the
+      # extension module with it.
+      - name: Install Rust
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          workspaces: rust
+
       - name: Install dependencies
         run: uv sync --locked
 
-      # Same hooks as local commits: ruff, ty, pytest and the file hygiene checks.
+      # Same hooks as local commits: ruff, ty, cargo fmt, clippy and test,
+      # pytest and the file hygiene checks.
       - name: Run pre-commit
         run: uv run --locked pre-commit run --all-files --show-diff-on-failure

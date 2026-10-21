@@ -1,0 +1,9 @@
+# The Rust toolchain, pinned as uv is by `required-version` in pyproject.toml.
+# rustup installs it on first use, locally and in CI. It sits at the repo root,
+# not in rust/, because rustup finds it from the working directory, and cargo,
+# maturin and the pre-commit hooks run from here. Upgrade it deliberately in
+# its own PR, fixing whatever new clippy lints it brings.
+[toolchain]
+channel = "1.95.0"
+profile = "minimal"
+components = ["clippy", "rustfmt"]

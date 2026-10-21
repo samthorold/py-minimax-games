@@ -18,11 +18,18 @@ concurrency:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    # Apple silicon: `uv build` makes the sdist and the macOS arm64 wheel (abi3,
+    # so one wheel for every Python from 3.13) with the Rust extension module.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
 
       - uses: astral-sh/setup-uv@v10.3.0
+
+      # The toolchain rust-toolchain.toml pins (the sdist carries it, so the
+      # wheel built from it uses it too).
+      - name: Install Rust
+        run: rustup toolchain install
 
       - name: Fetch PR base
         if: github.event_name == 'pull_request'
@@ -34,9 +41,15 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: .github/scripts/release-check.sh
 
+      # On every PR too, as the dry run: a change that breaks the build fails
+      # here, not after merging a version bump.
       - name: Build
-        if: steps.version.outputs.release == 'true'
-        run: uv build
+        if: steps.version.outputs.release == 'true' || github.event_name == 'pull_request'
+        run: |
+          uv build
+          ls dist
+          ls dist/*.tar.gz dist/*-macosx_*_arm64.whl > /dev/null
+          echo "Built: $(cd dist && echo *)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Create GitHub Release
         if: steps.version.outputs.release == 'true' && github.event_name == 'push'

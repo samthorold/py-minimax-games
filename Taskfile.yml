@@ -13,17 +13,20 @@ tasks:
       - uv run pytest {{.CLI_ARGS}}
 
   lint:
-    desc: Lint, check formatting and type check
+    desc: Lint, check formatting and type check (Python and Rust)
     cmds:
       - uv run ruff check .
       - uv run ruff format --check .
       - uv run ty check
+      - cargo fmt --manifest-path rust/Cargo.toml --check
+      - uv run cargo clippy --manifest-path rust/Cargo.toml --all-targets --all-features -- -D warnings
 
   fmt:
-    desc: Apply lint fixes and format
+    desc: Apply lint fixes and format (Python and Rust)
     cmds:
       - uv run ruff check --fix .
       - uv run ruff format .
+      - cargo fmt --manifest-path rust/Cargo.toml
 
   version:
     desc: Print the current package version
@@ -71,3 +74,13 @@ tasks:
       - uv venv --quiet --allow-existing --python pypy@3.12 .venv-pypy
       - uv pip install --quiet --python .venv-pypy --python-version 3.13 --reinstall-package minimax-games .
       - .venv-pypy/bin/python -m minimax_games.games.star_realms {{.CLI_ARGS}}
+
+  native-bench:
+    desc: "Time the Rust engine: first-slice greedy games/s and advance calls/s: task native-bench -- [--games N]"
+    cmds:
+      - uv run python -m minimax_games.games.star_realms native-bench {{.CLI_ARGS}}
+
+  cargo-test:
+    desc: Run the Rust engine's own tests (cargo test)
+    cmds:
+      - cargo test --manifest-path rust/Cargo.toml {{.CLI_ARGS}}
