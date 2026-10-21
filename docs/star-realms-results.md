@@ -1350,3 +1350,99 @@ Limits: one seed set for choosing settings (200 games, so a small difference bet
 The linear path now calls its evaluator through `Linear.__call__`. `bench` (CPython, contended), before (`93589cf`, main) and after: the same trees (632,643 nodes at horizon 1, 941,416 at horizon 2), 47,500 against 47,500 and 46,400 nodes/s at horizon 1, 38,100 against 37,900 and 37,700 at horizon 2: within noise.
 
 Raw outputs (not committed): `m5/rollout/` (`cost-*.txt`, the CPython costs; `cpu-*-4000-10.txt`, the equal-compute timings; `sel-*-4000.{txt,pkl}`, the selection runs; `fin-*-<first seed>.{txt,pkl}` and the combined `fin-*-500.txt`, the final runs; `fin-paired-*.txt`; `bench-{before,after,after-2}.txt`; `scripts/` (`fit_scale.py`, `cost.sh`, `run_part.py`, `paired.py`, `combine_all.py`)).
+
+## Milestone 5: ISMCTS
+
+- Date: 2026-10-21
+- Commit: the `issue-117-ismcts` branch (#117): `d84cdcf` adds `search.ismcts` (generic SO-ISMCTS with availability counts) and `ismcts.IsmctsBot` (`--bots ismcts`, `tournament --iterations N`); `c79a672` adds the `horizon` leaf option, `32cdffb` the heuristic playout policy (`policy="heuristic"`), and `7aaf99b` makes epsilon 0.25 the default. Design: [ismcts.md](ismcts.md). The selection runs used `d84cdcf` to `32cdffb` with explicit settings (the defaults' behaviour didn't change between them); the final runs used `7aaf99b`.
+- Interpreters: the tournaments ran on **PyPy 3.12.14** (`task pypy`'s `.venv-pypy`, installed from each commit above; a scratch script, `run_part.py`, calling `tournament.play_tournament` with the bots, `--jobs 3`, in foreground-equivalent chunks of consecutive seeds combined with `tournament.combine`), the ms/decision used to match compute on **CPython 3.14.0** (`uv run`), alone. Results are identical on both (Milestone 5: PyPy re-measured).
+- Machine: Apple M1 MacBook, 8 GB. Nothing else ran during the CPython timings marked "alone"; the machine slept for part of some tournament chunks, which the reported wall times (a monotonic clock that stops in sleep) don't include.
+- Seeds: settings chosen on **4000-4199**, measured once on **0-499**, the ladder's seeds. Alternating seats, max 300 turns, `--jobs 3`.
+
+### The bot
+
+`IsmctsBot(seed, iterations=450, exploration=0.7, epsilon=0.25, extra_turns=0)`: single-observer ISMCTS from its view, a fresh `sample_world` per iteration, nodes keyed by the actions from the root, UCB1 over the actions legal in the iteration's world with availability counts, one random untried action expanded per iteration, and the most visited root action played (a lone legal action without searching). A leaf is valued by finishing the turn in progress with the greedy policy read from the state (`rollout.playout`), each move replaced with probability epsilon by a random one other than `EndTurn`, then `sigmoid(evaluate / 16)` for player 0, or 1 or 0 if the game ended (`rollout.win_probability`).
+
+**`scale` = 16, adopted from #116, not refitted**: it was fitted by maximum likelihood on 7,141 turn starts of 300 heuristic-vs-heuristic games for the current default `Weights` (Milestone 5: rollouts), which #115's tuning left unchanged, and this leaf is the same `sigmoid(evaluate / scale)` at a turn boundary.
+
+### Cost, and matching compute
+
+Every decision of the bot's games against the heuristic at seeds 4000-4003 (bot first in even seeds), CPython 3.14.0, alone, single process (`probe.py`: a wrapper timing `choose` and counting `rules.advance_legal` calls). "All" averages every decision, as the tournament's ms/move does (the sampler searches lone actions too, ISMCTS doesn't); "searched" only those with more than one legal action.
+
+| Bot | Decisions | ms/decision (all, searched) | `advance_legal` per decision (all, searched) |
+|---|---|---|---|
+| sampler, 5,000 nodes, 4 worlds (default) | 363 | 94.3, 99.9 | 3,748, 3,967 |
+| ISMCTS 300, epsilon 0.1 | 249 | 63.1, 69.8 | 1,929, 2,135 |
+| ISMCTS 450, epsilon 0.1 | 218 | 93.6, 106 | 2,927, 3,324 |
+| ISMCTS 600, epsilon 0.1 | 223 | 128, 146 | 3,974, 4,521 |
+| **ISMCTS 450, epsilon 0.25 (default)** | 244 | **97.2** | **3,071**, 3,469 |
+| ISMCTS 1,800, epsilon 0.25 (4x) | 205 | 384 | 13,524, 15,068 |
+
+So **450 iterations** matches the sampler's time per decision (97 against 94 ms; rechecked back to back after the tournaments, 91.9 against 90.9 ms, with the 4x setting at 384 ms, 4.2x), about 0.2 ms per iteration, with about 80% of the sampler's `advance_legal` calls (3,071 against 3,748; a playout's moves are `advance_legal` calls, as the sampler's nodes are). The research expected 100-250 iterations: the state-level greedy policy, without `observe`, made playouts cheaper than its estimate. The leaf variants were given the iterations that bring them to about the same time (alone, CPython, seeds 4000-4003): `extra_turns=1` 290 (300 took 95.8 ms), `horizon=2` 390 (300 took 70.5 ms), the heuristic policy 350 (88.8 ms). Epsilon barely changes the cost (0.5: 93.4 ms).
+
+Under PyPy the sampler gains more than ISMCTS: in the final runs ISMCTS took 87-107 ms per decision against the sampler's 71-90 (contended, `--jobs 3`), so at the CPython-matched budget ISMCTS spends about 20% more time on PyPy.
+
+Diagnostics at the default (the same games): the tree holds 445 nodes on average (one per iteration, minus finished playouts), the root has 6.4 legal actions, the most visited line passes 0.68 turn ends on average, and 54% of iterations reach the opponent's turn. At 4x: 1,715 nodes, 0.98 and 63%. So at this budget the search mostly covers the current turn's next few decisions, as the research expected.
+
+### Choosing the settings (seeds 4000-4199)
+
+200 games each against the heuristic, PyPy, `--jobs 3` (`run_part.py <name> ismcts heuristic 4000 200 <iterations> <c> <epsilon> <extra turns> [<horizon>|none [<policy>]]`). Each is compared with the research's defaults (c 0.7, epsilon 0.1, greedy, 450 iterations) on the same seeds, by the seeds one won and the other lost (exact two-sided sign test). ISMCTS is stochastic, so unlike the cheat's, a game a setting doesn't affect isn't replayed identically: every seed can be discordant, and the pairing removes less noise than it did for the cheat.
+
+| ISMCTS | Iterations | Wins | Against c 0.7, epsilon 0.1 (paired) |
+|---|---|---|---|
+| c 0.7, epsilon 0.1 | 450 | 55/200 (27.5%) | |
+| c 0.35 | 450 | 57/200 (28.5%) | +2 on 56 discordant, p = 0.89 |
+| c 1.0 | 450 | 51/200 (25.5%) | -4 on 56, p = 0.69 |
+| epsilon 0 | 450 | 59/200 (29.5%) | +4 on 54, p = 0.68 |
+| **epsilon 0.25** | 450 | **68/200 (34.0%)** | **+13 on 57, p = 0.11** |
+| epsilon 0.5 | 450 | 61/200 (30.5%) | +6 on 52, p = 0.49 |
+| `extra_turns` 1 | 290 | 31/200 (15.5%) | **-24 on 58, p = 0.002** |
+| `horizon` 2 | 390 | 41/200 (20.5%) | -14 on 54, p = 0.08 |
+| heuristic policy, epsilon 0.1 | 350 | 61/200 (30.5%) | +6 on 46, p = 0.46 |
+| heuristic policy, epsilon 0.25 | 350 | 56/200 (28.0%) | +1 on 49, p = 1.0 |
+| *sampler (default), for reference* | | 75/200 (37.5%) | ISMCTS c 0.7 / epsilon 0.1: -20 on 72, p = 0.02; epsilon 0.25: -7 on 77, p = 0.49 |
+
+0 unfinished in every run; 6-9 minutes of wall time each (PyPy, `--jobs 3`).
+
+- **The exploration constant doesn't matter** in 0.35-1.0, as Cowling et al. found; 0.7 stays.
+- **Some randomness in the playouts helps a little**: epsilon 0.25 was the best (+13, not significant on its own; 0 and 0.5 between). It is the default: the playout's greedy policy never scraps, never destroys bases and buys only by cost, so a deterministic one scores every leaf by the same weak continuation. In the cheat epsilon made no difference (Milestone 5: rollouts), but there the playout ran on the true state.
+- **Longer playouts lose at equal compute.** One more whole turn (`extra_turns` 1) cost 35% of the iterations and lost clearly. So did the fixed horizon (`horizon` 2: every leaf played out to the end of the opponent's reply, so siblings reached by ending the turn and by playing on are scored at the same boundary, a bias of "finish the turn" that this was to remove): -14, nearly significant. A longer greedy playout adds the greedy policy's misjudgements of a whole turn to the leaf's value, and here they cost more than the bias.
+- **The heuristic as the playout policy didn't help** at equal compute (+6 and +1): its better moves cost a view per move (`observe`), about 1.3x per iteration, so 350 iterations.
+- Not tried: playouts to the end of the game (3.5-7.5 ms each, the research's §2.8: about 15-30 per decision) and the enhancements the research ranks as follow-ups.
+
+Chosen: c 0.7, epsilon 0.25, the greedy policy, 0 extra turns, no horizon, 450 iterations.
+
+### ISMCTS against the heuristic and the sampler (seeds 0-499)
+
+At the chosen defaults, PyPy, `--jobs 3`, each pairing as five chunks of 100 consecutive seeds (0-99, ..., 400-499) combined with `tournament.combine`; each chunk equals `task pypy -- tournament --bots <A> <B> --games 100 --base-seed <first seed> --jobs 3` (`run_part.py fin-<A>-<B> <A> <B> <first seed> 100`). The sampler was rerun against the heuristic on the same seeds so the two compare paired: its last 500-game result (27.2%, Milestone 4: the ladder) predates the card values (#114).
+
+| Pairing (first bot's results) | Wins | Win% | 95% interval | As 1st | As 2nd | ms/move (PyPy, contended) | Wall time |
+|---|---|---|---|---|---|---|---|
+| ismcts vs heuristic | 173/500 | 34.6% | 30.6-38.9% | 99/250 | 74/250 | 107 | 17.8 min |
+| sampler vs heuristic | 167/500 | 33.4% | 29.4-37.6% | 89/250 | 78/250 | 89.6 | 19.4 min |
+| **ismcts vs sampler** | 243/500 | **48.6%** | 44.2-53.0% | 125/250 | 118/250 | 86.8 (sampler 71.1) | 28.6 min |
+| ismcts at 4x (1,800 iterations) vs heuristic, **seeds 0-199 only** | 76/200 | 38.0% | 31.6-44.9% | 46/100 | 30/100 | 362 | 23.4 min |
+
+0 unfinished in every run; mean 24.1-24.5 turns; 55-73 search-bot decisions per game. The first player won 275/500, 261/500 and 257/500 of the 500-game pairings.
+
+**Paired**, on the same seeds (exact two-sided sign test):
+
+| Comparison | Result |
+|---|---|
+| ismcts vs sampler, each against the heuristic (seeds 0-499) | +6 on 184 discordant (95 won, 89 lost), p = 0.71 |
+| ismcts 4x vs ismcts at the default, against the heuristic (seeds 0-199) | +1 on 61 (31, 30), p = 1.0 |
+| ismcts 4x vs the sampler, against the heuristic (seeds 0-199) | +2 on 64 (33, 31), p = 0.90 |
+
+The 4x setting ran only 200 games: its chunks ran at a fraction of full speed on the shared machine (memory pressure: about an hour of clock time each where 12 minutes were expected), so it was stopped after seeds 0-199, enough to see it gains nothing measurable over the default on those seeds (the default won 75/200 there).
+
+### Verdict
+
+**ISMCTS plays level with the sampler at equal compute, and no better.** Against the heuristic it wins 34.6% to the sampler's 33.4% on the same seeds (+6 on 184 discordant, p = 0.71), and head to head 48.6% (interval 44.2-53.0%). On the selection seeds the sampler was ahead (75/200 against 68/200 at the chosen settings, -7 on 77, p = 0.49), so over 700 seeds the two are within a few games of each other. Both remain far below the heuristic, the bar for a legitimate bot.
+
+This is what the research predicted (docs/ismcts.md, §1): in Star Realms the hidden information is almost all chance and the opponent's fresh hand, so removing the sampler's clairvoyance gains little. And at about 450 iterations ISMCTS is close to a bandit over the next few micro-actions with an epsilon-greedy completion of the turn: its tree passes 0.68 turn ends on average along the most visited line, against the sampler's 2-turn alpha-beta searches.
+
+**More iterations didn't help** (4x: +1 on 61 seeds), unlike the cheat, which gained clearly from 4x the nodes (Milestone 5: rollouts). The tree goes a little deeper at 4x (0.98 turn ends on the most visited line), but the leaf (greedy completion of the turn, then `evaluate`) limits it, and the settings sweep agrees: changes to the leaf moved the result far more than the exploration constant did (longer playouts -14 and -24, epsilon +13, `c` ±4). So the next lever for ISMCTS is the leaf or priors on the micro-actions (progressive bias, implicit minimax backups with `evaluate`: the research's §5, items 4 and 5) and collapsing orderings of a turn's buys and attacks (§5, item 3), not budget.
+
+`IsmctsBot`'s defaults stay as chosen: 450 iterations, `c` 0.7, epsilon 0.25, the greedy playout, the leaf at the end of its turn.
+
+Raw outputs (not committed): `m5/ismcts/` (`cost-*.txt`, the CPython costs (`cost-sampler-5000-4000-4.txt`, `cost-ismcts-<N>-4000-4.txt`, `cost-variants-idle.txt`, `cost-policy-idle.txt`, `cost-4x-idle.txt`; `cost-leaf-settings.txt`, `cost-horizon.txt` contended); `diag-ismcts-{450,1800}.txt`, the tree diagnostics; `sel-*-4000.{txt,pkl}`, the selection runs; `fin-*-<first seed>.{txt,pkl}` and the combined `fin-*-all.txt`, the final runs; `fin-paired-*.txt`; `scripts/` (`probe.py`, `probe_extra.py`, `run_part.py`, `paired.py`, `combine_all.py`)).

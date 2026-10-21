@@ -2,13 +2,17 @@
 
 Research notes for issue #117 (generic ISMCTS in `search/`, and an ISMCTS bot for Star Realms), written 2026-10-20 and committed with the implementation (`src/minimax_games/search/ismcts.py`, `src/minimax_games/games/star_realms/ismcts.py`). Every claim about the literature cites a source in [References](#6-references); anything not checked against the source itself is marked **(unverified)**. Claims about this repo cite its docs or code. Measurements are in [star-realms-results.md](star-realms-results.md), "Milestone 5: ISMCTS".
 
+**Outcome** (results, Milestone 5: ISMCTS): at the sampler's time per decision, ISMCTS plays level with it, as §1 predicted: 34.6% against the heuristic to the sampler's 33.4% on seeds 0-499 (+6 on 184 discordant seeds, p = 0.71), and 48.6% head to head. 4x the iterations gained nothing on seeds 0-199. The leaf settings mattered more than the exploration constant.
+
 **Where the implementation departs from these notes** (each also marked in place below):
 
 - `sample` takes no argument (`Callable[[], S]`): it is a closure over its own rng, so the worlds' random numbers are separate from the expansions' and playouts' (the search's `rng`), and changing a playout setting never changes which worlds are sampled (§2.9).
 - `Result` carries the tree's root (`tree`, a `Node` with `children`, `visits`, `reward`, `available`, `mover`) instead of a node count, so tests and diagnostics can read availability counts, tree size and depth. Nodes don't store their action: a node is its parent's `children[action]`.
 - The single-legal-action shortcut lives in the bot (`IsmctsBot.choose`), not in the generic search, which needs at least one iteration.
 - A legal action that is never expanded is not counted as available: availability is counted for existing children, as in [1, Algorithm 1], so a new child starts at 1.
-- The leaf value is #116's `rollout.Rollout(turns=1 + extra_turns, epsilon, scale).value(state, 0, rng)`: `rollout.playout` (greedy moves read from the state, each replaced with probability ε by a random move other than `EndTurn`) then `rollout.win_probability`. Its `scale` (16) was fitted by #116 for the current default weights, so it was adopted, not refitted. #116's rollout *evaluator* inside alpha-beta did not beat the linear one, so the default plan of §2.5 was kept.
+- The leaf value reuses #116's pieces: `rollout.playout(state, 1 + extra_turns, epsilon, rng, policy)` (the policy's moves read from the state, each replaced with probability ε by a random move other than `EndTurn`; a playout ends after that many turn ends, the rest of the leaf's turn counting as one), then `rollout.win_probability` for player 0. Its `scale` (16) was fitted by #116 for the current default weights (#115's tuning left them unchanged), so it was adopted, not refitted. #116's rollout *evaluator* inside alpha-beta did not beat the linear one, so the default plan of §2.5 was kept.
+- **Default ε is 0.25**, not 0.1: the best of 0, 0.1, 0.25 and 0.5 on the tuning seeds. `c` stays 0.7 (0.35 and 1.0 were no different) and `extra_turns` 0 (1 lost clearly at equal compute).
+- Two leaf options were added and measured, and lost or tied, so they are off by default: `policy="heuristic"` (`rollout.heuristic`: `HeuristicBot` on the mover's view, about 1.3x the cost per iteration; §2.5 suggested it), and `horizon` (play every leaf out to the end of the same turn from the root, at least to the end of its own). The second answers a bias in "finish the current turn": an `EndTurn` leaf is scored after the opponent's whole reply, its siblings before it.
 - The default budget is **450 iterations**, not 100-250: the state-level greedy playout (no `observe`) made iterations cheaper than §2.8's estimate, about 0.2 ms each on CPython.
 
 ## 1. Summary and recommendation
@@ -166,7 +170,7 @@ Evaluate only at **turn boundaries**. The cheat's search only stops at turn ends
 |---|---|---|
 | Variant | SO-ISMCTS, availability counts | equivalent to the others for fully observable moves [1, §VII-B]; availability counts [1, §IV-B] |
 | Exploration `c` | 0.7 | used for every algorithm in [1]; they found the algorithms "not particularly sensitive" to it, with strength falling outside a range **(the exact range didn't survive text extraction: unverified)**. A squashed evaluation has lower variance than win/loss, so smaller `c` may do better: sweep 0.35, 0.7, 1.0 |
-| Leaf | finish the turn with ε-greedy, then `sigmoid(evaluate/scale)` | turn boundaries as in the cheat; full games cost too much (§2.8); some randomness in playouts [4] |
+| Leaf | finish the turn with ε-greedy, then `sigmoid(evaluate/scale)` (as built: ε = 0.25) | turn boundaries as in the cheat; full games cost too much (§2.8); some randomness in playouts [4] |
 | `extra_turns` | 0 (sweep 0, 1) | each extra turn roughly doubles the cost of an iteration (§2.8) |
 | Expansion | random untried action (seeded) | as in [1, Algorithm 1]; progressive bias in §5 |
 | Final move | most visits | [1][5] |
