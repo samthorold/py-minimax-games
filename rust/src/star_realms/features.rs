@@ -48,7 +48,7 @@ fn base_index(card: Card) -> usize {
 }
 
 fn player(row: &mut [f64], player: &PlayerState) {
-    let pool = [&player.deck, &player.hand, &player.discard, &player.in_play];
+    let pool: [&[Card]; 4] = [&player.deck, &player.hand, &player.discard, &player.in_play];
     for card in pool.into_iter().flatten() {
         row[index(card.original())] += 1.0;
     }

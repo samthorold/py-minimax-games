@@ -8,7 +8,7 @@
 
 use super::card::Card;
 use super::rng::Random;
-use super::state::{GameState, PlayerState};
+use super::state::{GameState, Pile, PlayerState};
 
 /// One player as the observer sees them (`view.PlayerView`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -80,9 +80,9 @@ fn player_view(player: &PlayerState, hand_seen: bool) -> PlayerView {
         deck_size: player.deck.len(),
         hand,
         unseen,
-        in_play: player.in_play.clone(),
-        discard: player.discard.clone(),
-        bases: player.bases.clone(),
+        in_play: player.in_play.to_vec(),
+        discard: player.discard.to_vec(),
+        bases: player.bases.to_vec(),
         to_discard: player.to_discard,
         deck_top: deck_top.to_vec(),
     }
@@ -97,20 +97,20 @@ pub fn observe(state: &GameState, observer: usize) -> View {
             player_view(&state.players[1], observer == 1),
         ],
         trade_deck: multiset(state.trade_deck.iter().copied()),
-        trade_row: state.trade_row.clone(),
+        trade_row: state.trade_row.to_vec(),
         explorers: state.explorers,
-        scrap_heap: state.scrap_heap.clone(),
+        scrap_heap: state.scrap_heap.to_vec(),
         current: state.current,
         turn: state.turn,
         trade: state.trade,
         combat: state.combat,
-        allies_used: state.allies_used.clone(),
-        bases_used: state.bases_used.clone(),
+        allies_used: state.allies_used.to_vec(),
+        bases_used: state.bases_used.to_vec(),
         may_scrap: state.may_scrap,
         must_scrap: state.must_scrap,
         may_destroy: state.may_destroy,
         may_scrap_row: state.may_scrap_row,
-        choosing: state.choosing.clone(),
+        choosing: state.choosing.to_vec(),
         recycling: state.recycling,
         factions_played: state.factions_played,
         may_on_top: state.may_on_top,
@@ -120,20 +120,26 @@ pub fn observe(state: &GameState, observer: usize) -> View {
     }
 }
 
+/// A view's pile in a state: a view consistent with a game holds no more
+/// cards than the state's pile can.
+fn pile<const N: usize>(cards: &[Card]) -> Pile<N> {
+    Pile::from_slice(cards).expect("no more cards than the game has")
+}
+
 fn sample_player(player: &PlayerView, rng: &mut Random) -> PlayerState {
     let unseen = rng.sample(&player.unseen);
     let dealt = player.hand_size - player.hand.len();
-    let mut hand = player.hand.clone();
+    let mut hand = pile(&player.hand);
     hand.extend_from_slice(&unseen[..dealt]);
-    let mut deck = player.deck_top.clone();
+    let mut deck = pile(&player.deck_top);
     deck.extend_from_slice(&unseen[dealt..]);
     PlayerState {
         authority: player.authority,
         deck,
         hand,
-        in_play: player.in_play.clone(),
-        discard: player.discard.clone(),
-        bases: player.bases.clone(),
+        in_play: pile(&player.in_play),
+        discard: pile(&player.discard),
+        bases: pile(&player.bases),
         to_discard: player.to_discard,
         known_top: player.deck_top.len(),
     }
@@ -147,25 +153,25 @@ pub fn sample_world(view: &View, rng: &mut Random) -> GameState {
     let first = sample_player(&view.players[0], rng);
     let second = sample_player(&view.players[1], rng);
     let rng_seed = rng.next_u64();
-    let trade_deck = rng.sample(&view.trade_deck);
+    let trade_deck = pile(&rng.sample(&view.trade_deck));
     GameState {
         players: [first, second],
         rng_seed,
         trade_deck,
-        trade_row: view.trade_row.clone(),
+        trade_row: pile(&view.trade_row),
         explorers: view.explorers,
-        scrap_heap: view.scrap_heap.clone(),
+        scrap_heap: pile(&view.scrap_heap),
         current: view.current,
         turn: view.turn,
         trade: view.trade,
         combat: view.combat,
-        allies_used: view.allies_used.clone(),
-        bases_used: view.bases_used.clone(),
+        allies_used: pile(&view.allies_used),
+        bases_used: pile(&view.bases_used),
         may_scrap: view.may_scrap,
         must_scrap: view.must_scrap,
         may_destroy: view.may_destroy,
         may_scrap_row: view.may_scrap_row,
-        choosing: view.choosing.clone(),
+        choosing: pile(&view.choosing),
         recycling: view.recycling,
         factions_played: view.factions_played,
         may_on_top: view.may_on_top,

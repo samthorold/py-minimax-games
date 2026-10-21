@@ -1801,3 +1801,92 @@ So **a 20,000-game self-play round takes about 1.2 hours** on this machine with 
 
 - The port needed nothing new for determinism: the CPython rng port already makes each planner's sampled worlds Python's, games are independent, and std scoped threads with an atomic counter, the results put back in game order, keep a batch identical on any number of threads. No rayon.
 - Scores being whole numbers is what makes the agreement exact: the floating-point differences sit about nine orders of magnitude below the rounding, and everything after it (sums, means, ties) is exact.
+
+## Milestone 7: fewer state copies in the Rust engine and planner
+
+2026-10-21, #156 (tracked by #127), CPython 3.14, Apple M1 (8 GB: 4 performance and 4 efficiency cores), **shared**: another agent was running matches on 2 cores throughout (load average 2-3 for the "before" runs, 2-5 for the "after" ones). Before: `main` at 51cdaa3; after: this PR. Same scripts, same machine, release builds (`uv sync`), each measured just before the change and just after.
+
+**What changed** (design, Compiled engine, "Fewer copies"): every pile is a fixed-capacity inline list (`state::Pile`), so a state is 2,560 bytes of plain data and a copy allocates nothing; the planner's tables hold indices into lists of the states it keeps, hashed from the state's fields (the order-free piles as sums over their cards) and compared as multisets, with no sorted copy; a play's state is made in place, a copy of its parent's, and dropped again if it merges with one listed before.
+
+**Time per plan and per state**, the planner's enumeration (`plan_ends`, encoding included) at every turn start of the heuristic-vs-heuristic games of seeds 0-19 (483 turns), 4 worlds sampled from the mover's view (`Game.sample_world`, seeds fixed by game and turn), the default 20,000 states:
+
+| | Before | After | Speed-up |
+|---|---|---|---|
+| All 483 plans | 9.69 s | 3.30 s | 2.9x |
+| Mean plan | 20.1 ms | 6.8 ms | |
+| Median plan | 2.14 ms | 0.79 ms | |
+| Per state, all plans | 5.74 µs | 1.96 µs | 2.9x |
+| Per state, plans of 5,000 states or more (101) | 5.78 µs | 1.96 µs | 2.9x |
+
+(Milestone 7, planner enumeration, measured 4.7 µs per state on the big plans with worlds sampled by the Python planner on a less loaded machine; these runs are slower in absolute terms but compare like with like.) Step by step, per state over all plans: 5.74 µs; inline piles alone 4.96; then tables of indices with the order-free hash, no merge-key copies, 2.73; then states made in place, the lists of states reserved up front, decks hashed by their length and top four cards, and small piles compared as multisets without sorting, 1.91-1.96.
+
+**Self-play throughput**, the benchmark of Milestone 7 (self-play): the planner with the network against the planner with the logistic regression, both at the defaults (4 worlds, 20,000 states), seats alternating, 96 games from seed 50000, one run per thread count:
+
+| Threads | Before, games/s | After, games/s | Speed-up | 20,000-game round, before | after |
+|---|---|---|---|---|---|
+| 1 | 1.33 | 3.40 | 2.6x | 4.2 h | 1.6 h |
+| 4 | 3.54 | 11.91 | 3.4x | 1.6 h | 28 min |
+| 6 | 4.42 | 12.98 | 2.9x | 1.3 h | 26 min |
+| 8 | 4.49 | 14.22 | 3.2x | 1.2 h | 23 min |
+
+So **a 20,000-game self-play round now takes about 25 minutes** on this machine while it is shared (6 or 8 threads), against 1.2-1.3 hours before. Threads scale better than before (4 threads: 3.5 times one thread, against 2.7): every copy of a state had been 16 allocations and frees, and the threads contended for the allocator.
+
+**Where the time goes**, sampled with macOS `sample` (15-25 s while the benchmark runs), each sample's own time put under the innermost engine function of its stack. Shares of the engine thread's samples:
+
+| | Enumeration, before | after | Self-play (1 thread), before | after |
+|---|---|---|---|---|
+| Hashing states for the tables | 25% | 10% | 22% | 7% |
+| Copying states (clone and drop; nearly all malloc, free and memmove) | 29% | 9% | 26% | 7% |
+| Sorting merge keys | 5% | 0% | 5% | 1% |
+| Comparing states in the tables | 6% | 16% | 5% | 11% |
+| Rules: advance, automatic play, legal actions | 20% | 46% | 20% | 43% |
+| Planner bookkeeping: graph, tables, noting ends | 13% | 13% | 11% | 9% |
+| Feature encoder | 3% | 7% | 2% | 6% |
+| Value's forward pass | | | 9% | 16% |
+| All malloc, free and memmove, wherever called | 42% | 28% | 38% | 21% |
+
+Half the time is now the rules engine's own (legal actions and automatic play recomputed at every state, and their small vectors: lists of actions, distinct cards). Making those lists inline too was tried and gave nothing (zero-filling 200-byte inline lists cost what the allocations did), so it was left out. Comparing states is the true merges: a state reached by plays in another order matches one listed before, and its order-free piles are compared as multisets. The next levers, if self-play must be faster still, are apply/undo in the planner's search (design, Why not...), rules that allocate nothing, and a one-byte card, which would halve a state.
+
+**Memory.** A state is 2,560 bytes (it was about 500 plus 16 small heap blocks), its piles' capacities fixed by the card counts (a player owns at most 100 cards: 10 starting, the 80-card Trade Deck and 10 Explorers). A 20,000-state plan keeps up to about 50 MB of states; its lists are reserved up front (at most 25,000 states each), which costs nothing for the pages never written. Eight threads planning at once stay under half a gigabyte.
+
+**Agreement.** Every existing differential test passed unchanged at every step (engine, heuristic, planner, self-play: 479 tests in `tests/star_realms`), so the plans and games are the same, decision for decision. New unit tests: the capacities equal the card counts, a pile panics past its capacity, and over thousands of states from greedy games and their children, `merged` holds exactly when the old sorted merge keys are equal, merged states hash alike, and reordering any pile but the decks and the choices still merges.
+
+**Bugs caught: none.** The differential tests passed on the first run of every step.
+
+**Effort.** About an hour of agent time end to end: profiling, the three steps with a measurement after each, one tried and reverted, the tests and these docs.
+
+**Surprises.**
+
+- Inline piles alone gained only 14%: a copy no longer allocated, but it became a 2.5 KB memmove, and the tables keyed by whole merge keys moved them again on every insertion and rehash. Keeping each state once and the tables as indices is what paid, more than the piles themselves.
+- Hashing a state from its top cards is enough. Within a world's turn a deck only changes at the top (draws, ships put on top, the Trade Row refilling from the Trade Deck), so hashing whole decks, 75 cards of Trade Deck in every state, bought nothing; the comparison still checks every card.
+
+Commands:
+
+```python
+# Planner enumeration (time per plan and per state).
+import statistics, time
+from minimax_games._native import star_realms as native
+positions = []
+for seed in range(20):
+    g, turn = native.Game(seed), None
+    while g.winner() is None:
+        s = g.state()
+        if s["turn"] != turn:
+            turn = s["turn"]
+            positions.append([g.sample_world(s["current"], 1000 * seed + turn * 10 + k).state() for k in range(4)])
+        g.advance(g.heuristic_move())
+times, states = [], []
+for worlds in positions:
+    t = time.perf_counter()
+    states.append(native.plan_ends(worlds, 20_000)["states"])
+    times.append(time.perf_counter() - t)
+print(sum(times), statistics.median(times), sum(times) / sum(states))
+
+# Self-play throughput.
+from minimax_games.games.star_realms.selfplay import Planner, alternating, play
+from minimax_games.games.star_realms.value import load
+games = alternating(Planner(load("mlp")), Planner(load("logistic")), range(50_000, 50_096))
+played = play(games, threads=6)
+```
+
+Profiles: run either in a loop and `sample <pid> 20 -file out.txt` while it runs.
