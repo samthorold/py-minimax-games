@@ -9,7 +9,12 @@ from minimax_games.games.star_realms.bots import GreedyBot
 from minimax_games.games.star_realms.catalogue import CATALOGUE, STARTING_DECK
 from minimax_games.games.star_realms.ismcts import ITERATIONS, IsmctsBot, StarRealms
 from minimax_games.games.star_realms.match import MatchTooLong, play_match
-from minimax_games.games.star_realms.rollout import Rollout
+from minimax_games.games.star_realms.rollout import (
+    SCALE,
+    Rollout,
+    playout,
+    win_probability,
+)
 from minimax_games.games.star_realms.state import GameState, PlayerState
 from minimax_games.games.star_realms.view import observe
 
@@ -102,3 +107,31 @@ def opening(seed: int, turns: int = 4) -> list[str]:
 def test_a_seeded_game_replays_identically():
     assert opening(5) == opening(5)
     assert opening(5) != opening(6)
+
+
+def test_with_a_horizon_every_leaf_is_played_out_to_the_same_turn():
+    start = rules.auto_play(rules.new_game(3))
+    game = StarRealms(Rollout(turns=1, epsilon=0.1), until=start.turn + 2)
+
+    def leaf(state: GameState, turns: int) -> float:
+        end = playout(state, turns, 0.1, random.Random(1))
+        return win_probability(end, 0, SCALE)
+
+    # From the root's turn, the leaf plays this turn and the next...
+    assert game.value(start, random.Random(1)) == leaf(start, 2)
+    # ...and from a later turn, at least to the end of its own.
+    later = replace(start, turn=start.turn + 5)
+    assert game.value(later, random.Random(1)) == leaf(later, 1)
+
+
+def test_with_a_horizon_it_states_it_and_still_takes_a_winning_attack():
+    bot = IsmctsBot(0, iterations=50, horizon=2)
+    assert bot.settings() == (
+        "50 iterations per decision, exploration 0.7,"
+        " leaf: epsilon-greedy playout to the end of the 2nd turn from the root,"
+        " at least to the end of its own (epsilon 0.1), scale 16"
+    )
+    state = lethal()
+    assert bot.choose(observe(state, 0), rules.legal_actions(state)) == AttackPlayer()
+    with pytest.raises(ValueError, match="at least 1 turn"):
+        IsmctsBot(0, horizon=0)

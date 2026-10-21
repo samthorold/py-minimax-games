@@ -17,6 +17,7 @@ greedy bot's moves, each made random with probability `epsilon`
 
 import logging
 import random
+from dataclasses import replace
 
 from minimax_games.games.star_realms import rules
 from minimax_games.games.star_realms.action import Action
@@ -38,10 +39,16 @@ EPSILON = 0.1
 
 class StarRealms:
     """Star Realms as an ISMCTS game (`search.ismcts.Game`): its leaf value
-    is `rollout`'s win probability for player 0."""
+    is `rollout`'s win probability for player 0.
 
-    def __init__(self, rollout: Rollout) -> None:
+    With `until`, a leaf is played out to the start of turn `until` instead
+    (but at least to the end of its own turn, as `rollout` says), so leaves
+    reached by ending a turn and leaves reached within it are scored at the
+    same turn boundary."""
+
+    def __init__(self, rollout: Rollout, until: int | None = None) -> None:
         self.rollout = rollout
+        self.until = until
 
     def actions(self, state: GameState) -> tuple[Action, ...]:
         return rules.legal_actions(state)
@@ -56,7 +63,10 @@ class StarRealms:
         return rules.winner(state) is not None
 
     def value(self, state: GameState, rng: random.Random) -> float:
-        return self.rollout.value(state, 0, rng)
+        rollout = self.rollout
+        if self.until is not None and self.until - state.turn > rollout.turns:
+            rollout = replace(rollout, turns=self.until - state.turn)
+        return rollout.value(state, 0, rng)
 
 
 class IsmctsBot:
@@ -79,6 +89,7 @@ class IsmctsBot:
         epsilon: float = EPSILON,
         extra_turns: int = 0,
         scale: float = SCALE,
+        horizon: int | None = None,
     ) -> None:
         if iterations < 1:
             msg = f"the search needs at least 1 iteration, not {iterations}"
@@ -86,7 +97,11 @@ class IsmctsBot:
         if extra_turns < 0:
             msg = f"extra turns can't be negative: {extra_turns}"
             raise ValueError(msg)
+        if horizon is not None and horizon < 1:
+            msg = f"the horizon must be at least 1 turn, not {horizon}"
+            raise ValueError(msg)
         self.iterations = iterations
+        self.horizon = horizon
         self.exploration = exploration
         self.extra_turns = extra_turns
         self.game = StarRealms(
@@ -98,10 +113,16 @@ class IsmctsBot:
         rollout = self.game.rollout
         more = self.extra_turns
         extra = f" + {more} more turn{'s' if more > 1 else ''}" if more else ""
+        leaf = f"the turn{extra}"
+        if self.horizon is not None:
+            leaf = (
+                f"the {_ordinal(self.horizon)} turn from the root,"
+                f" at least to the end of its own{extra}"
+            )
         return (
             f"{self.iterations} iterations per decision,"
             f" exploration {self.exploration:g},"
-            f" leaf: epsilon-greedy playout to the end of the turn{extra}"
+            f" leaf: epsilon-greedy playout to the end of {leaf}"
             f" (epsilon {rollout.epsilon:g}), scale {rollout.scale:g}"
         )
 
@@ -110,8 +131,11 @@ class IsmctsBot:
             return actions[0]
         worlds = random.Random(self._rng.getrandbits(64))
         playouts = random.Random(self._rng.getrandbits(64))
+        game = self.game
+        if self.horizon is not None:
+            game = StarRealms(game.rollout, until=view.turn + self.horizon)
         found = ismcts(
-            self.game,
+            game,
             lambda: sample_world(view, worlds),
             self.iterations,
             playouts,
@@ -121,3 +145,11 @@ class IsmctsBot:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("decided %s %s", found.move, found.visits)
         return found.move
+
+
+def _ordinal(n: int) -> str:
+    """1st, 2nd, 3rd, 4th, ..."""
+    suffix = {1: "st", 2: "nd", 3: "rd"}.get(
+        n % 10 if n % 100 not in (11, 12, 13) else 0
+    )
+    return f"{n}{suffix or 'th'}"
