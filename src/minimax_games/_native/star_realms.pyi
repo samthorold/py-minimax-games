@@ -39,3 +39,15 @@ def bench_games(games: int, base_seed: int) -> tuple[int, int, float]:
 
 def bench_advance(games: int, base_seed: int) -> tuple[int, float]:
     """Time `advance` over recorded greedy games' decisions: `(calls, seconds)`."""
+
+def plan_ends(
+    worlds: list[dict[str, Any]], budget: int, ends: bool = False
+) -> dict[str, Any]:
+    """The whole-turn planner's enumeration over `worlds` (state dicts), at
+    most `budget` states visited: the ends' feature rows (`features`, a
+    float64 matrix) with each row's `world`, `winner` (-1 for none) and
+    `current`; each candidate's line (`lines`, indices into
+    `legal_actions`); per world the candidates `reached`, and the rows each
+    one's value is the best of (`rows[offsets[k]:offsets[k + 1]]`);
+    `states` and `complete`, as `planner.Plan`'s; with `ends`, the ends as
+    state dicts."""

@@ -8,6 +8,8 @@
 
 use std::time::Instant;
 
+use numpy::ndarray::Array2;
+use numpy::{IntoPyArray, PyArray1, PyArray2};
 use pyo3::IntoPyObjectExt;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -15,6 +17,8 @@ use pyo3::types::{PyDict, PyList, PyTuple};
 
 use crate::star_realms::bots::{greedy_move, play_greedy};
 use crate::star_realms::card::{Card, Effect};
+use crate::star_realms::features;
+use crate::star_realms::planner::enumerate;
 use crate::star_realms::rng::Random;
 use crate::star_realms::rules::{
     Action, Few, advance, advance_legal, auto_play, legal_actions, new_game, winner,
@@ -140,6 +144,69 @@ fn state_dict<'py>(py: Python<'py>, state: &GameState) -> PyResult<Bound<'py, Py
     d.set_item("scrap_to_draw", state.scrap_to_draw)?;
     d.set_item("copying", state.copying)?;
     Ok(d)
+}
+
+fn item<'py, T: FromPyObjectOwned<'py>>(d: &Bound<'py, PyDict>, key: &str) -> PyResult<T> {
+    d.get_item(key)?
+        .ok_or_else(|| PyValueError::new_err(format!("no {key:?} in the state")))?
+        .extract()
+        .map_err(Into::into)
+}
+
+fn pile(d: &Bound<'_, PyDict>, key: &str) -> PyResult<Vec<Card>> {
+    item::<Vec<String>>(d, key)?
+        .iter()
+        .map(|name| card_named(name))
+        .collect()
+}
+
+fn player_from_dict(d: &Bound<'_, PyDict>) -> PyResult<PlayerState> {
+    Ok(PlayerState {
+        authority: item(d, "authority")?,
+        deck: pile(d, "deck")?,
+        hand: pile(d, "hand")?,
+        in_play: pile(d, "in_play")?,
+        discard: pile(d, "discard")?,
+        bases: pile(d, "bases")?,
+        to_discard: item(d, "to_discard")?,
+        known_top: item(d, "known_top")?,
+    })
+}
+
+/// A state from a dict of the `GameState` fields, as `state_dict` makes it.
+fn state_from_dict(d: &Bound<'_, PyDict>) -> PyResult<GameState> {
+    let players: Vec<Bound<'_, PyDict>> = item(d, "players")?;
+    let [first, second] = players.as_slice() else {
+        return Err(PyValueError::new_err("a state has 2 players"));
+    };
+    let factions: Vec<u32> = item(d, "factions_played")?;
+    Ok(GameState {
+        players: [player_from_dict(first)?, player_from_dict(second)?],
+        rng_seed: item(d, "rng_seed")?,
+        trade_deck: pile(d, "trade_deck")?,
+        trade_row: pile(d, "trade_row")?,
+        explorers: item(d, "explorers")?,
+        scrap_heap: pile(d, "scrap_heap")?,
+        current: item(d, "current")?,
+        turn: item(d, "turn")?,
+        trade: item(d, "trade")?,
+        combat: item(d, "combat")?,
+        allies_used: pile(d, "allies_used")?,
+        bases_used: pile(d, "bases_used")?,
+        may_scrap: item(d, "may_scrap")?,
+        must_scrap: item(d, "must_scrap")?,
+        may_destroy: item(d, "may_destroy")?,
+        may_scrap_row: item(d, "may_scrap_row")?,
+        choosing: pile(d, "choosing")?,
+        recycling: item(d, "recycling")?,
+        factions_played: factions
+            .try_into()
+            .map_err(|_| PyValueError::new_err("factions_played has 4 counts"))?,
+        may_on_top: item(d, "may_on_top")?,
+        free_ships: item(d, "free_ships")?,
+        scrap_to_draw: item(d, "scrap_to_draw")?,
+        copying: item(d, "copying")?,
+    })
 }
 
 fn player_view_dict<'py>(py: Python<'py>, player: &PlayerView) -> PyResult<Bound<'py, PyDict>> {
@@ -377,6 +444,87 @@ fn bench_advance(py: Python<'_>, games: u64, base_seed: u64) -> (u64, f64) {
     })
 }
 
+fn int_array(py: Python<'_>, values: Vec<i64>) -> Bound<'_, PyArray1<i64>> {
+    values.into_pyarray(py)
+}
+
+fn int(n: usize) -> i64 {
+    i64::try_from(n).expect("an index fits in an i64")
+}
+
+/// The whole-turn planner's enumeration (`planner.rs`) over `worlds`, dicts
+/// of the `GameState` fields, at most `budget` states visited, as a dict:
+/// `features`, one row per distinct end (`features.encode`, a float64
+/// matrix handed over without a copy), and per row its `world`, `winner`
+/// (-1 for none) and `current` player; `lines`, each candidate's line as
+/// indices into `legal_actions` from the first world's state; `reached`,
+/// how many candidates each world reached; `offsets` and `rows`: for each
+/// world's reached candidates in turn, `rows[offsets[k]:offsets[k + 1]]`
+/// are the rows whose best score is the candidate's value there; `states`
+/// and `complete`, as `Plan`'s. With `ends`, also the ends as state dicts.
+#[pyfunction]
+#[pyo3(signature = (worlds, budget, ends=false))]
+fn plan_ends<'py>(
+    py: Python<'py>,
+    worlds: Vec<Bound<'py, PyDict>>,
+    budget: usize,
+    ends: bool,
+) -> PyResult<Bound<'py, PyDict>> {
+    if worlds.is_empty() {
+        return Err(PyValueError::new_err("a plan needs at least 1 world"));
+    }
+    let worlds = worlds
+        .iter()
+        .map(state_from_dict)
+        .collect::<PyResult<Vec<_>>>()?;
+    let (found, matrix) = py.detach(|| {
+        let found = enumerate(&worlds, budget);
+        let columns = features::columns();
+        let mut data = vec![0.0; found.ends.len() * columns];
+        for (row, end) in data.chunks_exact_mut(columns).zip(&found.ends) {
+            features::encode_into(row, end);
+        }
+        let matrix = Array2::from_shape_vec((found.ends.len(), columns), data)
+            .expect("rows of the encoder's width");
+        (found, matrix)
+    });
+    let d = PyDict::new(py);
+    let matrix: Bound<'py, PyArray2<f64>> = matrix.into_pyarray(py);
+    d.set_item("features", matrix)?;
+    let world = found.world.iter().map(|&w| int(w)).collect();
+    d.set_item("world", int_array(py, world))?;
+    let winners = found
+        .ends
+        .iter()
+        .map(|end| winner(end).map_or(-1, int))
+        .collect();
+    d.set_item("winner", int_array(py, winners))?;
+    let current = found.ends.iter().map(|end| int(end.current)).collect();
+    d.set_item("current", int_array(py, current))?;
+    d.set_item("lines", &found.lines)?;
+    let reached: Vec<usize> = found.reached.iter().map(Vec::len).collect();
+    d.set_item("reached", reached)?;
+    let mut offsets = vec![0];
+    let mut rows = Vec::new();
+    for candidate in found.reached.iter().flatten() {
+        rows.extend(candidate.iter().map(|&r| int(r)));
+        offsets.push(int(rows.len()));
+    }
+    d.set_item("offsets", int_array(py, offsets))?;
+    d.set_item("rows", int_array(py, rows))?;
+    d.set_item("states", found.states)?;
+    d.set_item("complete", found.complete)?;
+    if ends {
+        let ends = found
+            .ends
+            .iter()
+            .map(|end| state_dict(py, end))
+            .collect::<PyResult<Vec<_>>>()?;
+        d.set_item("ends", ends)?;
+    }
+    Ok(d)
+}
+
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = m.py();
@@ -386,6 +534,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     star_realms.add_function(wrap_pyfunction!(py_play_greedy, &star_realms)?)?;
     star_realms.add_function(wrap_pyfunction!(bench_games, &star_realms)?)?;
     star_realms.add_function(wrap_pyfunction!(bench_advance, &star_realms)?)?;
+    star_realms.add_function(wrap_pyfunction!(plan_ends, &star_realms)?)?;
     m.add_submodule(&star_realms)?;
     // So `import minimax_games._native.star_realms` finds it too.
     py.import("sys")?

@@ -272,5 +272,23 @@ class ValueEvaluator:
         score = round(SPAN * (2 * p - 1))
         return score if perspective == 1 - state.current else -score
 
+    def score_rows(
+        self,
+        x: np.ndarray,
+        winner: np.ndarray,
+        current: np.ndarray,
+        perspective: int,
+    ) -> np.ndarray:
+        """`__call__`'s scores for many states at once, from their feature
+        rows `x`, winners (-1 for none) and players to move: the whole-turn
+        planner's Rust backend scores a plan's ends with it, in one call.
+        A batch's products can differ from a single row's in the last bit,
+        far below the rounding to whole points."""
+        p = self.model.predict(x)
+        score = np.round(SPAN * (2 * p - 1)).astype(np.int64)
+        score = np.where(current == 1 - perspective, score, -score)
+        won = np.where(winner == perspective, WIN, -WIN)
+        return np.where(winner < 0, score, won)
+
     def describe(self) -> str:
         return f"learned value ({self.model.form})"

@@ -29,15 +29,26 @@ shuffle by choosing an order, so the orders are one decision. Keeping them
 apart would let a world pick the order that happens to shuffle best in it,
 which no player can do. The value is order-invariant too (`evaluate`, and
 `features` for learned ones).
+
+Two backends list the ends: this module's Python enumeration, the
+reference, which scores each end as it finds it, and the Rust one
+(`minimax_games._native.star_realms.plan_ends`), which lists them all
+first, the same ends in the same order, and returns their feature rows as
+one matrix, which a learned value (`RowEvaluator`) scores in one numpy call.
+The plans are the same with either.
 """
 
 import logging
 import math
 import random
-from collections.abc import Hashable, Sequence
+from collections.abc import Callable, Hashable, Sequence
 from dataclasses import dataclass, replace
 from operator import attrgetter
+from typing import Any, Literal, Protocol, runtime_checkable
 
+import numpy as np
+
+from minimax_games._native import star_realms as native
 from minimax_games.games.star_realms import rules
 from minimax_games.games.star_realms.action import Action, EndTurn
 from minimax_games.games.star_realms.bots import greedy_move
@@ -55,6 +66,28 @@ every end of 88% of turns, for about 1 s on CPython
 
 WORLDS = 4
 """The default number of worlds per plan, as the sampler's."""
+
+type Backend = Literal["python", "rust"]
+"""Which enumeration a plan uses: the Python reference, or the Rust port."""
+
+
+@runtime_checkable
+class RowEvaluator(Evaluator, Protocol):
+    """An evaluator that also scores ends of turn from their feature rows
+    (`features.encode`), as the Rust backend gives them: a learned value
+    (`value.ValueEvaluator`)."""
+
+    def score_rows(
+        self,
+        x: np.ndarray,
+        winner: np.ndarray,
+        current: np.ndarray,
+        perspective: int,
+    ) -> np.ndarray:
+        """Each row's score from `perspective`'s side, as `__call__` scores
+        its state: `x` the rows, `winner` each state's winner (-1 for none)
+        and `current` its player to move."""
+        ...
 
 
 def reveals(before: GameState, after: GameState) -> bool:
@@ -226,14 +259,35 @@ class _World:
         return value
 
 
+def _choose(
+    first: GameState,
+    values: list[list[float]],
+    line: Callable[[int], tuple[Action, ...]],
+    visited: int,
+    complete: bool,
+) -> Plan:
+    """The plan whose candidate `c` is worth `values[c]` in the worlds that
+    reached it and has the line `line(c)`."""
+    reached = max(map(len, values), default=0)
+    if reached == 0:
+        return Plan((_ordered(first)[0],), None, visited, complete=False)
+    best = max(
+        (c for c in range(len(values)) if len(values[c]) == reached),
+        key=lambda c: sum(values[c]) / reached,
+    )
+    return Plan(line(best), sum(values[best]) / reached, visited, complete)
+
+
 def plan(
     worlds: Sequence[GameState],
     budget: int = BUDGET,
     evaluator: Evaluator = LINEAR,
+    backend: Backend = "python",
 ) -> Plan:
     """The best line from `worlds`, sampled worlds of one view (or one true
     state), at most `budget` states visited in all, scoring ends with
-    `evaluator` from the mover's side.
+    `evaluator` from the mover's side, the ends listed by `backend`'s
+    enumeration (the Rust one needs a `RowEvaluator`).
 
     The shared part, the states before the first chance event, is listed
     first, in the first world, with at most half the budget: each line that
@@ -248,6 +302,10 @@ def plan(
     if not worlds:
         msg = "a plan needs at least 1 world"
         raise ValueError(msg)
+    _check(backend, evaluator)
+    if backend == "rust":
+        assert isinstance(evaluator, RowEvaluator)
+        return _plan_rust(worlds, budget, evaluator)
     first = worlds[0]
     me = first.current
     shared: list[tuple[int, Action]] = [(-1, EndTurn())]  # the root's entry is unused
@@ -308,20 +366,106 @@ def plan(
                 break
         visited += len(search.values)
 
-    reached = max(map(len, values), default=0)
-    if reached == 0:
-        return Plan((_ordered(first)[0],), None, visited, complete=False)
-    best = max(
-        (c for c in range(len(candidates)) if len(values[c]) == reached),
-        key=lambda c: sum(values[c]) / reached,
-    )
-    index, action = candidates[best]
-    line = [action]
-    while index > 0:
-        index, action = shared[index]
-        line.append(action)
-    line.reverse()
-    return Plan(tuple(line), sum(values[best]) / reached, visited, complete)
+    def line(candidate: int) -> tuple[Action, ...]:
+        index, action = candidates[candidate]
+        line = [action]
+        while index > 0:
+            index, action = shared[index]
+            line.append(action)
+        return tuple(reversed(line))
+
+    return _choose(first, values, line, visited, complete)
+
+
+def _check(backend: Backend, evaluator: Evaluator) -> None:
+    if backend not in ("python", "rust"):
+        msg = f"no planner backend {backend!r}: 'python' or 'rust'"
+        raise ValueError(msg)
+    if backend == "rust" and not isinstance(evaluator, RowEvaluator):
+        msg = (
+            "the Rust backend scores ends by their feature rows, which"
+            f" {evaluator.describe()} doesn't (it needs a learned value)"
+        )
+        raise ValueError(msg)
+
+
+def _names(cards: tuple[Card, ...]) -> list[str]:
+    return [card.name for card in cards]
+
+
+def _native_player(p: PlayerState) -> dict[str, Any]:
+    return {
+        "authority": p.authority,
+        "deck": _names(p.deck),
+        "hand": _names(p.hand),
+        "in_play": _names(p.in_play),
+        "discard": _names(p.discard),
+        "bases": _names(p.bases),
+        "to_discard": p.to_discard,
+        "known_top": p.known_top,
+    }
+
+
+def native_state(s: GameState) -> dict[str, Any]:
+    """`s` as the Rust engine takes it: a dict of its fields, cards by name."""
+    return {
+        "players": [_native_player(p) for p in s.players],
+        "rng_seed": s.rng_seed,
+        "trade_deck": _names(s.trade_deck),
+        "trade_row": _names(s.trade_row),
+        "explorers": s.explorers,
+        "scrap_heap": _names(s.scrap_heap),
+        "current": s.current,
+        "turn": s.turn,
+        "trade": s.trade,
+        "combat": s.combat,
+        "allies_used": _names(s.allies_used),
+        "bases_used": _names(s.bases_used),
+        "may_scrap": s.may_scrap,
+        "must_scrap": s.must_scrap,
+        "may_destroy": s.may_destroy,
+        "may_scrap_row": s.may_scrap_row,
+        "choosing": _names(s.choosing),
+        "recycling": s.recycling,
+        "factions_played": list(s.factions_played),
+        "may_on_top": s.may_on_top,
+        "free_ships": s.free_ships,
+        "scrap_to_draw": s.scrap_to_draw,
+        "copying": s.copying,
+    }
+
+
+def _plan_rust(
+    worlds: Sequence[GameState], budget: int, evaluator: RowEvaluator
+) -> Plan:
+    """`plan` with the Rust enumeration: the ends' rows scored in one call,
+    each candidate worth, in each world that reached it, the best score
+    among the rows the enumeration gives it there."""
+    first = worlds[0]
+    found = native.plan_ends([native_state(w) for w in worlds], budget)
+    rows, offsets = found["rows"], found["offsets"]
+    best: list[float] = []
+    if len(rows):
+        assert np.all(np.diff(offsets) > 0), "a candidate reached no end"
+        scores = evaluator.score_rows(
+            found["features"], found["winner"], found["current"], first.current
+        )
+        best = np.maximum.reduceat(scores[rows], offsets[:-1]).tolist()
+    lines: list[list[int]] = found["lines"]
+    values: list[list[float]] = [[] for _ in lines]
+    scored = iter(best)
+    for reached in found["reached"]:
+        for candidate in range(reached):
+            values[candidate].append(next(scored))
+
+    def line(candidate: int) -> tuple[Action, ...]:
+        state, actions = first, []
+        for i in lines[candidate]:
+            actions.append(rules.legal_actions(state)[i])
+            state = rules.advance_legal(state, actions[-1])
+        return tuple(actions)
+
+    return _choose(first, values, line, found["states"], found["complete"])
 
 
 def _sorted(cards: tuple[Card, ...]) -> tuple[Card, ...]:
@@ -361,7 +505,8 @@ class PlannerBot:
     line to the next chance event or the end of the turn before planning
     again. The worlds are drawn from an rng seeded with `seed`, so a game
     replays identically. `plans` and `turns` count the plans it has made and
-    the turns it has played.
+    the turns it has played. `backend` picks the enumeration (`plan`): the
+    Rust one needs a learned value, and plays the same game.
 
     The line is followed while the game goes as planned: before each of its
     moves the bot checks that its view is, up to pile order (`seen`), the one
@@ -381,7 +526,9 @@ class PlannerBot:
         worlds: int = WORLDS,
         budget: int = BUDGET,
         evaluator: Evaluator = LINEAR,
+        backend: Backend = "python",
     ) -> None:
+        _check(backend, evaluator)
         if worlds < 1:
             msg = f"the planner needs at least 1 world, not {worlds}"
             raise ValueError(msg)
@@ -394,6 +541,7 @@ class PlannerBot:
         self.worlds = worlds
         self.budget = budget
         self.evaluator = evaluator
+        self.backend: Backend = backend
         self.plans = 0
         self.turns = 0
         self.diverged = 0
@@ -407,6 +555,7 @@ class PlannerBot:
         return (
             f"{self.worlds} worlds, budget {self.budget} states per plan"
             f" shared by the worlds, {self.evaluator.describe()}"
+            + (", Rust enumeration" if self.backend == "rust" else "")
         )
 
     def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
@@ -419,7 +568,7 @@ class PlannerBot:
             self._line = []
         if not self._line:
             worlds = [sample_world(view, self._rng) for _ in range(self.worlds)]
-            made = plan(worlds, self.budget, self.evaluator)
+            made = plan(worlds, self.budget, self.evaluator, self.backend)
             self.plans += 1
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("planned %s", made)
