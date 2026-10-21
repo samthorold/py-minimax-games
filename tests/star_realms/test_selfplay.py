@@ -51,7 +51,7 @@ def _random_model(form: str, columns: int, seed: int) -> Model:
     names = tuple(f"x{i}" for i in range(columns))
     mean = rng.normal(size=columns)
     std = rng.uniform(0.5, 2, size=columns)
-    return Model(form, names, mean, std, params)
+    return Model(form, names, mean, std, (params,))
 
 
 @pytest.mark.parametrize("form", ["logistic", "mlp"])
@@ -60,6 +60,24 @@ def test_the_forward_pass_agrees_with_numpy_on_random_inputs(form: str):
     x = np.random.default_rng(4).normal(scale=3, size=(500, 23))
     rust = native.predict(native_model(model), x)
     np.testing.assert_allclose(rust, model.predict(x), rtol=0, atol=TOLERANCE)
+
+
+@pytest.mark.parametrize("form", ["logistic", "mlp"])
+def test_an_ensemble_s_forward_pass_agrees_with_numpy(form: str):
+    first = _random_model(form, 23, seed=3)
+    # three members with the first's standardisation
+    model = Model(
+        first.form,
+        first.names,
+        first.mean,
+        first.std,
+        tuple(_random_model(form, 23, seed=s).params for s in (3, 4, 5)),
+    )
+    x = np.random.default_rng(4).normal(scale=3, size=(500, 23))
+    rust = native.predict(native_model(model), x)
+    np.testing.assert_allclose(rust, model.predict(x), rtol=0, atol=TOLERANCE)
+    one = Model(model.form, model.names, model.mean, model.std, model.members[:1])
+    assert not np.allclose(rust, native.predict(native_model(one), x))
 
 
 def _real_rows() -> np.ndarray:
@@ -75,9 +93,19 @@ def _real_rows() -> np.ndarray:
 REAL_ROWS = _real_rows()
 
 
-@pytest.mark.parametrize("name", ["logistic", "mlp"])
+def _value(name: str) -> Model:
+    """A packaged model, or `"ensemble"`: three members, `mlp`'s, `pi03`'s
+    and `mlp`'s again, all under `mlp`'s standardisation."""
+    if name != "ensemble":
+        return load(name)
+    mlp = load("mlp")
+    members = (mlp.params, load("pi03").params, mlp.params)
+    return Model(mlp.form, mlp.names, mlp.mean, mlp.std, members)
+
+
+@pytest.mark.parametrize("name", ["logistic", "mlp", "ensemble"])
 def test_the_forward_pass_agrees_with_numpy_on_real_rows(name: str):
-    model = load(name)
+    model = _value(name)
     assert len(REAL_ROWS) > 5_000
     rust = native.predict(native_model(model), REAL_ROWS)
     numpy = model.predict(REAL_ROWS)
@@ -153,9 +181,12 @@ class _Recorder:
         return action
 
 
-@pytest.mark.parametrize(("seed", "model"), [(0, "logistic"), (1, "mlp"), (2, "mlp")])
+@pytest.mark.parametrize(
+    ("seed", "model"),
+    [(0, "logistic"), (1, "mlp"), (2, "mlp"), (3, "ensemble"), (4, "ensemble")],
+)
 def test_the_rust_planner_plays_the_python_planner_s_games(seed: int, model: str):
-    value = load(model)
+    value = _value(model)
     opponent = "heuristic" if seed % 2 else "greedy"
     planner = Planner(value, worlds=3, budget=1_500)
     # the planner moves first on even seeds, second on odd ones

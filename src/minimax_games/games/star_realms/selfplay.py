@@ -59,15 +59,19 @@ type Pairing = tuple[int, Player, Player]
 
 
 def native_model(model: Model) -> dict[str, Any]:
-    """`model` as the Rust forward pass takes it: its form, standardisation
-    and parameters as float64 arrays."""
-    arrays = {"mean": model.mean, "std": model.std, **model.params}
+    """`model` as the Rust forward pass takes it: its form, its
+    standardisation and each member's parameters, as float64 arrays."""
+
+    def arrays(params: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+        return {
+            name: np.ascontiguousarray(a, dtype=np.float64)
+            for name, a in params.items()
+        }
+
     return {
         "form": model.form,
-        **{
-            name: np.ascontiguousarray(a, dtype=np.float64)
-            for name, a in arrays.items()
-        },
+        **arrays({"mean": model.mean, "std": model.std}),
+        "members": [arrays(params) for params in model.members],
     }
 
 

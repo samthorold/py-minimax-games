@@ -9,12 +9,16 @@ by hand (the tests check it against finite differences). `fit` trains one
 with Adam on shuffled minibatches, deterministic given its seed.
 
 A `Model` is a form's parameters with the features' names and the mean and
-spread it standardises them by. It is saved as an `.npz` of plain arrays,
+spread it standardises them by. It may hold several members, fits of the
+form from different seeds to the same rows (`fit_ensemble`), and its win
+probability is then the mean of theirs: an ensemble, steadier than any one
+fit. It is saved as an `.npz` of plain arrays,
 never a pickle (which runs code when loaded), and models in the package's
 `models/` directory load by name (`load`). `ValueEvaluator` wraps one as an
 `evaluate.Evaluator`.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
@@ -149,27 +153,63 @@ FORMS: dict[str, Form] = {"logistic": LOGISTIC, "mlp": Mlp()}
 
 @dataclass(frozen=True, slots=True, eq=False)
 class Model:
-    """A fitted value: `form`'s `params` over standardised features
-    (`(x - mean) / std`), the features named `names`."""
+    """A fitted value: `form` over standardised features (`(x - mean) /
+    std`), the features named `names`, with one set of parameters per
+    member. Its win probability is the mean of its members' (an ensemble of
+    fits from different seeds, `fit_ensemble`); a model of one member is a
+    single fit."""
 
     form: str
     names: tuple[str, ...]
     mean: np.ndarray
     std: np.ndarray
-    params: Params
+    members: tuple[Params, ...]
+
+    def __post_init__(self) -> None:
+        if not self.members:
+            msg = "a model has at least 1 member"
+            raise ValueError(msg)
+
+    @property
+    def params(self) -> Params:
+        """The parameters of a model of one member."""
+        if len(self.members) != 1:
+            msg = f"a model of {len(self.members)} members has no single params"
+            raise ValueError(msg)
+        return self.members[0]
 
     def predict(self, x: np.ndarray) -> np.ndarray:
-        """The win probability for each row of raw features `x`."""
-        return FORMS[self.form].predict(self.params, (x - self.mean) / self.std)
+        """The win probability for each row of raw features `x`: the mean of
+        the members', summed in member order (as the Rust forward pass sums
+        them)."""
+        form = FORMS[self.form]
+        z = (x - self.mean) / self.std
+        if len(self.members) == 1:
+            return form.predict(self.members[0], z)
+        total = form.predict(self.members[0], z)
+        for params in self.members[1:]:
+            total = total + form.predict(params, z)
+        return total / len(self.members)
 
     def save(self, path: Path) -> None:
-        """Write the model to `path` as an `.npz` of plain arrays."""
+        """Write the model to `path` as an `.npz` of plain arrays: a model
+        of one member as `param_<name>`, as before ensembles, and one of
+        several as `member_<i>_<name>`, with their count."""
+        if len(self.members) == 1:
+            params = {f"param_{n}": a for n, a in self.members[0].items()}
+        else:
+            params = {
+                f"member_{i}_{n}": a
+                for i, member in enumerate(self.members)
+                for n, a in member.items()
+            }
+            params["members"] = np.array(len(self.members))
         arrays: dict[str, Any] = {
             "form": np.array(self.form),
             "names": np.array(self.names),
             "mean": self.mean,
             "std": self.std,
-            **{f"param_{name}": array for name, array in self.params.items()},
+            **params,
         }
         np.savez(path, **arrays)
 
@@ -177,17 +217,53 @@ class Model:
     def load(cls, path: Path) -> "Model":
         """The model saved at `path`. Never unpickles anything."""
         with np.load(path, allow_pickle=False) as data:
+            if "members" in data.files:
+                members = tuple(
+                    {
+                        key.removeprefix(f"member_{i}_"): data[key]
+                        for key in data.files
+                        if key.startswith(f"member_{i}_")
+                    }
+                    for i in range(int(data["members"]))
+                )
+            else:
+                members = (
+                    {
+                        key.removeprefix("param_"): data[key]
+                        for key in data.files
+                        if key.startswith("param_")
+                    },
+                )
             return cls(
                 form=str(data["form"]),
                 names=tuple(str(name) for name in data["names"]),
                 mean=data["mean"],
                 std=data["std"],
-                params={
-                    key.removeprefix("param_"): data[key]
-                    for key in data.files
-                    if key.startswith("param_")
-                },
+                members=members,
             )
+
+
+def ensemble(models: Sequence[Model]) -> Model:
+    """One model whose members are `models`' members, in order: fits of the
+    same form to the same features and standardisation (fits to the same
+    rows, from different seeds)."""
+    if not models:
+        msg = "an ensemble needs at least 1 member"
+        raise ValueError(msg)
+    first = models[0]
+    for model in models[1:]:
+        if model.form != first.form:
+            msg = f"members of one form only: {first.form} and {model.form}"
+            raise ValueError(msg)
+        if (
+            model.names != first.names
+            or not np.array_equal(model.mean, first.mean)
+            or not np.array_equal(model.std, first.std)
+        ):
+            msg = "members share their features and standardisation"
+            raise ValueError(msg)
+    members = tuple(params for model in models for params in model.members)
+    return Model(first.form, first.names, first.mean, first.std, members)
 
 
 def _models() -> Path:
@@ -245,7 +321,41 @@ def fit(
                 params[name] -= learning_rate * m / (np.sqrt(v) + eps)
     if names is None:
         names = tuple(f"x{i}" for i in range(x.shape[1]))
-    return Model(form.name, names, mean, std, params)
+    return Model(form.name, names, mean, std, (params,))
+
+
+def fit_ensemble(
+    form: Form,
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    seeds: Sequence[int],
+    epochs: int = EPOCHS,
+    batch: int = BATCH,
+    learning_rate: float = LEARNING_RATE,
+    l2: float = L2,
+    names: tuple[str, ...] | None = None,
+) -> Model:
+    """An ensemble of `form` fitted to `x` and `y` once per seed (`fit`),
+    the members in `seeds`' order. One seed is `fit` itself. The fits differ
+    only in their starting parameters and shuffles, so averaging them
+    steadies the value against the luck of one fit."""
+    return ensemble(
+        [
+            fit(
+                form,
+                x,
+                y,
+                seed=seed,
+                epochs=epochs,
+                batch=batch,
+                learning_rate=learning_rate,
+                l2=l2,
+                names=names,
+            )
+            for seed in seeds
+        ]
+    )
 
 
 @dataclass(frozen=True, slots=True, eq=False)

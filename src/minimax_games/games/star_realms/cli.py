@@ -957,6 +957,7 @@ def iterating(argv: list[str]) -> None:
         ("--budget", "budget", "the planner's states per plan"),
         ("--epochs", "epochs", "the fits' passes over the data"),
         ("--hidden", "hidden", "the network's hidden units"),
+        ("--members", "members", "fits per candidate, from consecutive seeds"),
     ):
         parser.add_argument(
             flag,

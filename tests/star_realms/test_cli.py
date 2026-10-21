@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from minimax_games.games.star_realms import planner
@@ -384,3 +386,16 @@ def test_iterate_runs_rounds_into_its_directory_and_resumes(capsys, tmp_path):
     assert "Stopped: 1 rounds played" in out
     main(argv)
     assert "Round" not in capsys.readouterr().out
+
+
+def test_iterate_fits_candidates_of_several_members(capsys, tmp_path):
+    argv = [
+        *("iterate", "--out", str(tmp_path), "--rounds", "1", "--threads", "2"),
+        *("--train-games", "6", "--held-out-games", "4", "--gate-games", "4"),
+        *("--ladder-games", "2", "--worlds", "1", "--budget", "40"),
+        *("--epochs", "1", "--hidden", "3", "--members", "2"),
+    ]
+    main(argv)
+    assert "2 members" in capsys.readouterr().out
+    state = json.loads((tmp_path / "state.json").read_text())
+    assert state["settings"]["members"] == 2

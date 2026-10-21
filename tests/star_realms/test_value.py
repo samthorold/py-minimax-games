@@ -155,3 +155,77 @@ def test_the_packaged_models_load_by_name_for_the_current_features(name: str):
     evaluator = ValueEvaluator(value.load(name))
     state = rules.apply(rules.auto_play(rules.new_game(0)), EndTurn())
     assert -SPAN <= evaluator(state, 0) <= SPAN
+
+
+def test_an_ensemble_s_value_is_the_mean_of_its_members_win_probabilities():
+    x, y = toy()
+    members = [fit(Mlp(hidden=3), x, y, seed=s, epochs=2) for s in (0, 1, 2)]
+    model = value.ensemble(members)
+    assert len(model.members) == 3
+    assert model.form == "mlp"
+    expected = sum(m.predict(x) for m in members) / 3
+    assert np.array_equal(model.predict(x), expected)
+
+
+def test_a_one_member_ensemble_is_the_member():
+    x, y = toy()
+    member = fit(LOGISTIC, x, y, seed=0, epochs=2)
+    model = value.ensemble([member])
+    assert np.array_equal(model.predict(x), member.predict(x))
+    assert model.params is member.params
+
+
+def test_only_fits_to_the_same_form_and_standardisation_make_an_ensemble():
+    x, y = toy()
+    a = fit(LOGISTIC, x, y, seed=0, epochs=1)
+    with pytest.raises(ValueError, match="standardis"):
+        value.ensemble([a, fit(LOGISTIC, x + 1, y, seed=1, epochs=1)])
+    with pytest.raises(ValueError, match="form"):
+        value.ensemble([a, fit(Mlp(hidden=2), x, y, seed=1, epochs=1)])
+    with pytest.raises(ValueError, match="member"):
+        value.ensemble([])
+
+
+def test_a_model_of_several_members_has_no_single_params():
+    x, y = toy()
+    model = value.ensemble([fit(LOGISTIC, x, y, seed=s, epochs=1) for s in (0, 1)])
+    with pytest.raises(ValueError, match="members"):
+        _ = model.params
+
+
+def test_an_ensemble_saved_as_npz_loads_identically(tmp_path):
+    x, y = toy()
+    members = [fit(Mlp(hidden=3), x, y, seed=s, epochs=2) for s in (0, 1)]
+    model = value.ensemble(members)
+    path = tmp_path / "e.npz"
+    model.save(path)
+    loaded = Model.load(path)
+    assert len(loaded.members) == 2
+    assert np.array_equal(loaded.predict(x), model.predict(x))
+    with np.load(path, allow_pickle=False) as data:
+        assert all(data[key].dtype != object for key in data.files)
+
+
+def test_a_one_member_model_is_saved_as_before(tmp_path):
+    x, y = toy()
+    model = fit(Mlp(hidden=3), x, y, seed=0, epochs=2)
+    model.save(tmp_path / "m.npz")
+    with np.load(tmp_path / "m.npz", allow_pickle=False) as data:
+        assert set(data.files) == {
+            "form",
+            "names",
+            "mean",
+            "std",
+            "param_w1",
+            "param_b1",
+            "param_w2",
+            "param_b2",
+        }
+
+
+def test_fit_ensemble_fits_one_member_per_seed():
+    x, y = toy()
+    model = value.fit_ensemble(LOGISTIC, x, y, seeds=(3, 4), epochs=2)
+    for member, seed in zip(model.members, (3, 4), strict=True):
+        alone = fit(LOGISTIC, x, y, seed=seed, epochs=2)
+        assert all(np.array_equal(member[n], alone.params[n]) for n in member)
