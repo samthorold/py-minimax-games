@@ -7,7 +7,7 @@ from minimax_games.games.star_realms import rules
 from minimax_games.games.star_realms.action import AttackPlayer, EndTurn
 from minimax_games.games.star_realms.bots import GreedyBot
 from minimax_games.games.star_realms.catalogue import CATALOGUE, STARTING_DECK
-from minimax_games.games.star_realms.ismcts import ITERATIONS, IsmctsBot, StarRealms
+from minimax_games.games.star_realms.ismcts import IsmctsBot, StarRealms
 from minimax_games.games.star_realms.match import MatchTooLong, play_match
 from minimax_games.games.star_realms.rollout import (
     SCALE,
@@ -62,15 +62,17 @@ def test_a_lone_legal_action_is_played_without_searching():
 
 
 def test_it_states_its_settings():
-    bot = IsmctsBot(0, iterations=120, exploration=0.35, epsilon=0.25, extra_turns=1)
+    bot = IsmctsBot(0, iterations=120, exploration=0.35, epsilon=0.1, extra_turns=1)
     assert bot.settings() == (
         "120 iterations per decision, exploration 0.35,"
         " leaf: epsilon-greedy playout to the end of the turn + 1 more turn"
-        " (epsilon 0.25), scale 16"
+        " (epsilon 0.1), scale 16"
     )
+    # The defaults chosen in docs/star-realms-results.md, Milestone 5: ISMCTS.
     assert IsmctsBot(0).settings() == (
-        f"{ITERATIONS} iterations per decision, exploration 0.7,"
-        " leaf: epsilon-greedy playout to the end of the turn (epsilon 0.1), scale 16"
+        "450 iterations per decision, exploration 0.7,"
+        " leaf: epsilon-greedy playout to the end of the turn (epsilon 0.25),"
+        " scale 16"
     )
 
 
@@ -129,7 +131,7 @@ def test_with_a_horizon_it_states_it_and_still_takes_a_winning_attack():
     assert bot.settings() == (
         "50 iterations per decision, exploration 0.7,"
         " leaf: epsilon-greedy playout to the end of the 2nd turn from the root,"
-        " at least to the end of its own (epsilon 0.1), scale 16"
+        " at least to the end of its own (epsilon 0.25), scale 16"
     )
     state = lethal()
     assert bot.choose(observe(state, 0), rules.legal_actions(state)) == AttackPlayer()
@@ -145,7 +147,7 @@ def test_a_leaf_can_be_played_out_by_the_heuristic():
     bot = IsmctsBot(0, iterations=50, policy="heuristic")
     assert bot.settings() == (
         "50 iterations per decision, exploration 0.7,"
-        " leaf: epsilon-heuristic playout to the end of the turn (epsilon 0.1),"
+        " leaf: epsilon-heuristic playout to the end of the turn (epsilon 0.25),"
         " scale 16"
     )
     state = lethal()

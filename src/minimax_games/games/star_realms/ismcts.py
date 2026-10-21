@@ -39,9 +39,10 @@ ITERATIONS = 450
 time per decision at its defaults, on CPython (docs/star-realms-results.md,
 Milestone 5: ISMCTS)."""
 
-EPSILON = 0.1
+EPSILON = 0.25
 """The default chance a leaf's playout move is random instead of the
-policy's."""
+policy's: the best of 0, 0.1, 0.25 and 0.5 (docs/star-realms-results.md,
+Milestone 5: ISMCTS)."""
 
 POLICIES: dict[str, Policy] = {"greedy": greedy, "heuristic": heuristic}
 """The playout policies, by name."""
