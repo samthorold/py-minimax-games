@@ -1,0 +1,22 @@
+92144 training states, 22998 held out
+24 fits in 21 s
+pi03 held-out log-loss 0.5328
+k1-s0: log-loss 0.5523, 96/300 (32.0%), 30 s
+k1-s1: log-loss 0.5524, 107/300 (35.7%), 31 s
+k1-s2: log-loss 0.5556, 85/300 (28.3%), 32 s
+k1-s3: log-loss 0.5576, 76/300 (25.3%), 33 s
+k1-s4: log-loss 0.5589, 78/300 (26.0%), 32 s
+k1-s5: log-loss 0.5549, 104/300 (34.7%), 32 s
+k1-s6: log-loss 0.5550, 95/300 (31.7%), 34 s
+k1-s7: log-loss 0.5580, 91/300 (30.3%), 32 s
+k4-s8-11: log-loss 0.5495, 114/300 (38.0%), 46 s
+k4-s12-15: log-loss 0.5471, 96/300 (32.0%), 44 s
+k4-s16-19: log-loss 0.5470, 104/300 (34.7%), 46 s
+k4-s20-23: log-loss 0.5498, 108/300 (36.0%), 44 s
+k8-s8-15: log-loss 0.5472, 100/300 (33.3%), 59 s
+k8-s16-23: log-loss 0.5473, 116/300 (38.7%), 60 s
+k=1: 8 candidates, mean 30.5%, sd 3.8, range 25.3-35.7
+k=4: 4 candidates, mean 35.2%, sd 2.5, range 32.0-38.0
+k=8: 2 candidates, mean 36.0%, sd 3.8, range 33.3-38.7
+
+[exited with code 0]

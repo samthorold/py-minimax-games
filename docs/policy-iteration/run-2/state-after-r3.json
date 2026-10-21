@@ -1,0 +1,156 @@
+{
+  "settings": {
+    "train_games": 4000,
+    "held_out_games": 1000,
+    "window": 4,
+    "gate_games": 1000,
+    "gate_batch": 128,
+    "ladder_games": 500,
+    "h0": 0.5,
+    "h1": 0.55,
+    "alpha": 0.05,
+    "beta": 0.05,
+    "max_rounds": 10,
+    "patience": 3,
+    "hours": 2.0,
+    "worlds": 4,
+    "budget": 20000,
+    "max_turns": 300,
+    "fit_seed": 0,
+    "members": 4,
+    "epochs": 10,
+    "batch": 256,
+    "learning_rate": 0.001,
+    "l2": 0.003,
+    "hidden": 32,
+    "start": "pi03",
+    "prefix": "pi2-",
+    "threads": 8
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "champion": "pi03",
+      "pool": [
+        "pi03"
+      ],
+      "window": [
+        1
+      ],
+      "train": {
+        "games": 4000,
+        "unfinished": 0,
+        "states": 92144
+      },
+      "held_out": {
+        "games": 1000,
+        "unfinished": 0,
+        "states": 22998
+      },
+      "window_states": 92144,
+      "losses": {
+        "logistic": 0.5609717616616507,
+        "mlp": 0.5481502444926347,
+        "champion": 0.5327601564336477
+      },
+      "candidate": "mlp",
+      "name": "pi2-01",
+      "pregate": false,
+      "sprt": null,
+      "promoted": null,
+      "ladder": null,
+      "seconds": {
+        "play": 534.9900864169977,
+        "fit": 5.356806875002803,
+        "gate": 2.090018824674189e-07,
+        "total": 540.3758901669971
+      }
+    },
+    {
+      "round": 2,
+      "champion": "pi03",
+      "pool": [
+        "pi03"
+      ],
+      "window": [
+        1,
+        2
+      ],
+      "train": {
+        "games": 4000,
+        "unfinished": 0,
+        "states": 92655
+      },
+      "held_out": {
+        "games": 1000,
+        "unfinished": 0,
+        "states": 23161
+      },
+      "window_states": 184799,
+      "losses": {
+        "logistic": 0.5569469362473601,
+        "mlp": 0.5281746299971604,
+        "champion": 0.5248183583359244
+      },
+      "candidate": "mlp",
+      "name": "pi2-02",
+      "pregate": false,
+      "sprt": null,
+      "promoted": null,
+      "ladder": null,
+      "seconds": {
+        "play": 601.202745999999,
+        "fit": 11.487436750001507,
+        "gate": 2.499982656445354e-07,
+        "total": 612.7572197919981
+      }
+    },
+    {
+      "round": 3,
+      "champion": "pi03",
+      "pool": [
+        "pi03"
+      ],
+      "window": [
+        1,
+        2,
+        3
+      ],
+      "train": {
+        "games": 4000,
+        "unfinished": 0,
+        "states": 92392
+      },
+      "held_out": {
+        "games": 1000,
+        "unfinished": 0,
+        "states": 23093
+      },
+      "window_states": 277191,
+      "losses": {
+        "logistic": 0.5324935846389397,
+        "mlp": 0.5041212398765725,
+        "champion": 0.5146281169967969
+      },
+      "candidate": "mlp",
+      "name": "pi2-03",
+      "pregate": true,
+      "sprt": {
+        "decision": "undecided",
+        "games": 1000,
+        "wins": 531,
+        "losses": 469,
+        "llr": 1.195623632575959
+      },
+      "promoted": null,
+      "ladder": null,
+      "seconds": {
+        "play": 597.0377391250004,
+        "fit": 16.982113333997404,
+        "gate": 189.3726431670002,
+        "total": 803.4351999999999
+      }
+    }
+  ],
+  "stopped": "3 rounds in a row without a promotion"
+}
