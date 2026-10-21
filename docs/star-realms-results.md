@@ -1586,6 +1586,20 @@ Over the 450 complete turns: 739,789 ends, 258,292 up to pile order, and 984,080
 
 **The budget binds often enough in the late game (30-50% of turns from turn 21 at 20,000) that the exact fix comes first**, as the design says: canonical orderings of commuting actions, together with merging ends up to pile order, measured against this table. Expect about a factor of 3, which turns the 20,000 budget into one that finishes roughly the turns under 60,000 states today (between the 88% and 93% finished at 20,000 and 100,000). It will not close the tail: the capped turns are at least 100,000 states and some far more, so the planner must still play its best end found so far when the budget runs out, and approximate search within the turn is for those turns.
 
+## Milestone 6: the planner's cost
+
+- Date: 2026-10-21
+- Commit: the merge of #133's PR.
+- Command: `python -m minimax_games.games.star_realms tournament --bots planner greedy --games 10 --jobs 2`: a smoke test of the whole-turn planner at its defaults (4 worlds, 20,000 states per plan shared by the worlds, linear evaluation), not the milestone's match (#134).
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0, shared with other jobs.
+
+| Bot | Wins | As 1st | As 2nd | ms/move |
+|---|---|---|---|---|
+| planner | 9/10 | 4/5 | 5/5 | 69 |
+| greedy | 1/10 | 0/5 | 1/5 | 0.007 |
+
+**2.58 plans per turn, 157 ms per plan** (all the planner's time per decision over its plans), 22.0 turns per game, 29 s wall time. Plans per turn include the plans made again when automatic play went otherwise than in the sampled worlds (design, Search: the whole-turn planner). A plan costs far less than the 1 s the turn-size measurement put on a 20,000-state plan: most plans are of small turns, or of the part of a turn after a draw, and merging states up to pile order visits a third fewer (on the turns of 4 seeded heuristic games at the default budget, 406,100 states instead of 611,227, and 87 of 100 turn-start plans finish instead of 78, at the same time). Not measured on PyPy: numpy, a core dependency since #135, publishes no PyPy wheels, and `task pypy` is gone (#148); the Rust engine is the route to speed.
+
 ## Milestone 8: offline value fit
 
 - Date: 2026-10-21

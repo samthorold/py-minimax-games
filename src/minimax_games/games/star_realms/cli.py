@@ -4,7 +4,8 @@
 transcript; without `--log` it prints only who won. `--bots greedy random`
 picks the bots, first player first (both random by default): `random`,
 `greedy`, `heuristic`, `sampler` (search over worlds sampled from its
-view) or `ismcts` (information-set Monte Carlo tree search from its
+view), `ismcts` (information-set Monte Carlo tree search from its
+view) or `planner` (the whole-turn planner, over worlds sampled from its
 view). `cheat` is a benchmark, not a legitimate player: it searches the
 true state.
 
@@ -12,12 +13,14 @@ true state.
 --games 500` plays seeded games with alternating seats (`--base-seed`,
 `--max-turns`) and prints each search bot's settings (the cheat's horizon
 and node budget, the sampler's worlds too, the ISMCTS bot's iterations
-and leaf settings) if it plays,
+and leaf settings, the planner's worlds and states per plan) if it plays,
 win rates overall and by seat, unfinished games and each bot's mean time per
-move. `--jobs N` spreads the games over N processes, with the same results.
-`--budget N` sets the search bots' nodes per decision and `--worlds K` the
-sampler's worlds (both default to the bots' own defaults). `--eval rollout`
-has them score positions by rollouts (`rollout.Rollout`: `--rollouts`,
+move, and the planner's plans per turn and time per plan. `--jobs N`
+spreads the games over N processes, with the same results. `--budget N`
+sets the search bots' nodes per decision (the planner's states per plan)
+and `--worlds K` the sampler's and the planner's worlds (both default to
+the bots' own defaults). `--eval rollout` has them score positions by
+rollouts (`rollout.Rollout`: `--rollouts`,
 `--rollout-turns`, `--epsilon`, seeded per game) instead of the linear
 evaluation, with `rollout.ROLLOUT_BUDGET` nodes unless `--budget` says.
 `--iterations N` sets the ISMCTS bot's iterations per decision.
@@ -84,6 +87,7 @@ from minimax_games.games.star_realms import (
     bench,
     cheat,
     fit,
+    planner,
     profiling,
     tune,
     turn_sizes,
@@ -99,6 +103,7 @@ from minimax_games.games.star_realms.cheat import CheatBot
 from minimax_games.games.star_realms.evaluate import LINEAR, Evaluator
 from minimax_games.games.star_realms.ismcts import ITERATIONS, IsmctsBot
 from minimax_games.games.star_realms.match import play_match
+from minimax_games.games.star_realms.planner import PlannerBot
 from minimax_games.games.star_realms.rollout import ROLLOUT_BUDGET, Rollout
 from minimax_games.games.star_realms.sampler import WORLDS, SamplerBot
 from minimax_games.games.star_realms.tournament import (
@@ -144,6 +149,17 @@ def _ismcts(seed: int, iterations: int = ITERATIONS) -> IsmctsBot:
     return IsmctsBot(seed, iterations=iterations)
 
 
+def _planner(
+    seed: int,
+    budget: int = planner.BUDGET,
+    worlds: int = planner.WORLDS,
+    evaluator: Evaluator = LINEAR,
+) -> PlannerBot:
+    return PlannerBot(
+        seed, worlds=worlds, budget=budget, evaluator=_seeded(evaluator, seed)
+    )
+
+
 BOTS: dict[str, Callable[[int], AnyBot]] = {
     "random": RandomBot,
     "greedy": _greedy,
@@ -151,9 +167,10 @@ BOTS: dict[str, Callable[[int], AnyBot]] = {
     "cheat": _cheat,
     "sampler": _sampler,
     "ismcts": _ismcts,
+    "planner": _planner,
 }
-"""Each bot by name, built from a seed (which only `random`, `sampler` and
-`ismcts` use). Module
+"""Each bot by name, built from a seed (which only `random`, `sampler`,
+`ismcts` and `planner` use). Module
 functions, not lambdas, so `tournament --jobs` can send them to workers."""
 
 
@@ -165,7 +182,8 @@ def configured(
     iterations: int | None = None,
 ) -> Callable[[int], AnyBot]:
     """`BOTS[name]`, with `budget` nodes per decision and `evaluator` if it is
-    an alpha-beta search bot, `worlds` worlds if it is the sampler, and
+    an alpha-beta search bot, `worlds` worlds if it is the sampler, `budget`
+    states per plan, `worlds` worlds and `evaluator` if it is the planner, and
     `iterations` per decision if it is the ISMCTS bot (each left at its
     default if None). A rollout evaluator's seed is set to each game's. A
     `partial` of a module function, so `--jobs` can still send it to
@@ -181,6 +199,13 @@ def configured(
             _sampler,
             budget=cheat.BUDGET if budget is None else budget,
             worlds=WORLDS if worlds is None else worlds,
+            evaluator=evaluator,
+        )
+    if name == "planner":
+        return partial(
+            _planner,
+            budget=planner.BUDGET if budget is None else budget,
+            worlds=planner.WORLDS if worlds is None else worlds,
             evaluator=evaluator,
         )
     if name == "ismcts":
@@ -297,12 +322,14 @@ def tournament(argv: list[str]) -> None:
         type=int,
         help="the search bots' nodes per decision, shared by the sampler's"
         f" worlds (default: {cheat.BUDGET}, or {ROLLOUT_BUDGET} with --eval"
-        " rollout, about the same time per decision)",
+        " rollout, about the same time per decision), and the planner's"
+        f" states per plan, shared by its worlds (default: {planner.BUDGET})",
     )
     parser.add_argument(
         "--worlds",
         type=int,
-        help=f"the sampler's worlds per decision (default: {WORLDS})",
+        help="the sampler's worlds per decision and the planner's per plan"
+        f" (default: {WORLDS} and {planner.WORLDS})",
     )
     parser.add_argument(
         "--iterations",
@@ -347,8 +374,16 @@ def tournament(argv: list[str]) -> None:
         if budget is None:
             budget = ROLLOUT_BUDGET
     a, b = args.bots
+    # The rollout evaluation's default budget is in alpha-beta nodes, not
+    # in the planner's states.
     factories = {
-        name: configured(name, budget, args.worlds, evaluator, args.iterations)
+        name: configured(
+            name,
+            args.budget if name == "planner" else budget,
+            args.worlds,
+            evaluator,
+            args.iterations,
+        )
         for name in dict.fromkeys(args.bots)
     }
     played = play_tournament(
@@ -794,6 +829,12 @@ def report(played: Tournament, names: tuple[str, str]) -> list[str]:
     games_per_second = (
         len(result.games) / timing.wall_seconds if timing.wall_seconds else 0.0
     )
+    plans = [
+        f"{name}: {timing.plans_per_turn(bot):.2f} plans per turn,"
+        f" {timing.ms_per_plan(bot):.3g} ms per plan"
+        for bot, name in enumerate(names)
+        if timing.plans[bot]
+    ]
     return [
         f"Unfinished: {len(unfinished)}{seeds}",
         f"Mean turns: {result.mean_turns:.1f} (finished games)",
@@ -801,5 +842,6 @@ def report(played: Tournament, names: tuple[str, str]) -> list[str]:
         "",
         *table,
         "",
+        *plans,
         f"Wall time: {timing.wall_seconds:.1f}s ({games_per_second:.1f} games/s)",
     ]
