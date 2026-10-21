@@ -8,5 +8,7 @@ pub mod heuristic;
 pub mod planner;
 pub mod rng;
 pub mod rules;
+pub mod selfplay;
 pub mod state;
+pub mod value;
 pub mod view;
