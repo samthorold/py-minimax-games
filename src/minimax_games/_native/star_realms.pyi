@@ -64,7 +64,9 @@ def plan_ends(
 
 def predict(model: dict[str, Any], x: np.ndarray) -> np.ndarray:
     """The win probability for each row of `x` (float64), by the Rust
-    forward pass of `model` (`selfplay.native_model`)."""
+    forward pass of `model` (`selfplay.native_model`: `form`, `mean`, `std`
+    and `members`, a list of each member's parameters), the mean of its
+    members'."""
 
 def self_play(
     players: list[dict[str, Any]],

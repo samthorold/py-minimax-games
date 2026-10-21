@@ -10,8 +10,10 @@ Each round:
    the pool (which holds champions only, the current best included), seats
    alternating.
 2. **Fits** both forms from scratch (`fit_candidates`) to the training games
-   of the last `window` rounds, and keeps the one with the lower log-loss on
-   this round's held-out games: the candidate.
+   of the last `window` rounds, each as an ensemble of `members` fits from
+   seeds `fit_seed`, `fit_seed + 1`, ... (one member is a single fit), and
+   keeps the one with the lower log-loss on this round's held-out games:
+   the candidate.
 3. **Gates** it offline (`pregate`): its held-out log-loss must be below the
    current best's on the same states. Then in a match (`decide`), the
    candidate's planner against the current best's, same settings, played in
@@ -113,6 +115,9 @@ class Settings:
     budget: int = BUDGET
     max_turns: int = MAX_TURNS
     fit_seed: int = 0
+    members: int = 1
+    """Fits per candidate, from seeds `fit_seed` on; its value is the mean
+    of theirs (`value.fit_ensemble`)."""
     epochs: int = EPOCHS
     batch: int = BATCH
     learning_rate: float = LEARNING_RATE
@@ -135,8 +140,13 @@ class Settings:
         if not 0 < self.max_rounds <= MAX_ROUNDS:
             msg = f"max_rounds must be 1 to {MAX_ROUNDS}: the seed ranges' rounds"
             raise ValueError(msg)
-        if self.window < 1 or self.patience < 1 or self.gate_batch < 1:
-            msg = "window, patience and gate_batch must be at least 1"
+        if (
+            self.window < 1
+            or self.patience < 1
+            or self.gate_batch < 1
+            or self.members < 1
+        ):
+            msg = "window, patience, gate_batch and members must be at least 1"
             raise ValueError(msg)
 
     def train_seeds(self, round: int) -> range:
@@ -248,14 +258,16 @@ def stop_reason(
 def fit_candidates(
     x: np.ndarray, y: np.ndarray, settings: Settings
 ) -> dict[str, Model]:
-    """Both forms, fitted from scratch to rows `x` and labels `y`."""
+    """Both forms, fitted from scratch to rows `x` and labels `y`, each an
+    ensemble of `settings.members` fits from consecutive seeds."""
     forms = {"logistic": LOGISTIC, "mlp": Mlp(hidden=settings.hidden)}
+    seeds = range(settings.fit_seed, settings.fit_seed + settings.members)
     return {
-        name: value.fit(
+        name: value.fit_ensemble(
             form,
             x,
             y,
-            seed=settings.fit_seed,
+            seeds=seeds,
             epochs=settings.epochs,
             batch=settings.batch,
             learning_rate=settings.learning_rate,
@@ -330,7 +342,9 @@ def _load_state(out: Path, settings: Settings) -> dict[str, Any]:
         _write_json(path, state)
         return state
     state = json.loads(path.read_text())
-    stored = {k: v for k, v in state["settings"].items() if k not in KEPT}
+    # a setting added since the run began has the value it then behaved as
+    stored = {**_comparable(Settings()), **state["settings"]}
+    stored = {k: v for k, v in stored.items() if k not in KEPT}
     if stored != _comparable(settings):
         differ = sorted(k for k in stored if stored[k] != _comparable(settings).get(k))
         msg = f"{path} was run with other settings: {', '.join(differ)}"
@@ -502,7 +516,8 @@ def _round(
         f"Round {number}: fitted to rounds {rounds[0]}-{rounds[-1]}"
         f" ({window_states} states); held-out log-loss logistic"
         f" {losses['logistic']:.4f}, mlp {losses['mlp']:.4f}, champion"
-        f" {losses['champion']:.4f}: {name} ({form})"
+        f" {losses['champion']:.4f}: {name} ({form}, {settings.members}"
+        f" member{'s' if settings.members > 1 else ''})"
         f" {'passes' if passed else 'fails'} the offline gate,"
         f" {seconds['fit']:.0f} s"
     )

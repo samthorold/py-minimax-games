@@ -11,9 +11,10 @@ from collections import Counter
 from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
 import pytest
 
-from minimax_games.games.star_realms import iterate
+from minimax_games.games.star_realms import features, iterate, value
 from minimax_games.games.star_realms.iterate import Settings
 from minimax_games.games.star_realms.sprt import Hypothesis, Sprt
 
@@ -114,6 +115,49 @@ def test_the_window_is_the_last_rounds_up_to_its_size():
     assert iterate.window(3, 4) == [1, 2, 3]
     assert iterate.window(4, 4) == [1, 2, 3, 4]
     assert iterate.window(7, 4) == [4, 5, 6, 7]
+
+
+# --- the candidates ---------------------------------------------------------
+
+
+def _rows(rows: int = 60):
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=(rows, len(features.NAMES)))
+    y = (rng.random(rows) < 0.5).astype(np.float64)
+    return x, y
+
+
+def test_one_member_is_a_single_fit_from_the_fit_seed():
+    x, y = _rows()
+    settings = replace(TINY, fit_seed=5)
+    assert settings.members == 1
+    for form, model in iterate.fit_candidates(x, y, settings).items():
+        assert len(model.members) == 1
+        alone = iterate.fit_candidates(x, y, settings)[form]
+        assert np.array_equal(model.predict(x), alone.predict(x))
+    mlp = iterate.fit_candidates(x, y, settings)["mlp"]
+    single = value.fit(
+        value.Mlp(hidden=TINY.hidden), x, y, seed=5, epochs=1, names=features.NAMES
+    )
+    assert all(np.array_equal(mlp.params[n], single.params[n]) for n in mlp.params)
+
+
+def test_k_members_are_fits_from_k_consecutive_seeds():
+    x, y = _rows()
+    settings = replace(TINY, fit_seed=5, members=3)
+    candidates = iterate.fit_candidates(x, y, settings)
+    for form in ("logistic", "mlp"):
+        assert len(candidates[form].members) == 3
+    expected = value.fit_ensemble(
+        value.LOGISTIC, x, y, seeds=(5, 6, 7), epochs=1, names=features.NAMES
+    )
+    got = candidates["logistic"]
+    assert np.array_equal(got.predict(x), expected.predict(x))
+
+
+def test_members_must_be_at_least_one():
+    with pytest.raises(ValueError, match="members"):
+        Settings(members=0)
 
 
 # --- the gates --------------------------------------------------------------
@@ -313,6 +357,32 @@ def test_a_run_refuses_to_resume_with_other_settings(tmp_path: Path):
         iterate.run(replace(TINY, budget=80, max_rounds=2), tmp_path)
     # the stopping rules and threads may change between invocations
     iterate.run(replace(TINY, max_rounds=1, threads=1, hours=1.0), tmp_path)
+
+
+def test_a_run_from_before_ensembles_resumes_as_one_member(tmp_path: Path):
+    iterate.run(replace(TINY, max_rounds=1), tmp_path, log=lambda _: None)
+    path = tmp_path / "state.json"
+    state = json.loads(path.read_text())
+    del state["settings"]["members"]
+    path.write_text(json.dumps(state))
+    with pytest.raises(ValueError, match="members"):
+        iterate.run(replace(TINY, max_rounds=1, members=2), tmp_path)
+    iterate.run(replace(TINY, max_rounds=1), tmp_path, log=lambda _: None)
+
+
+def test_a_promoted_ensemble_is_saved_whole(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(iterate, "pregate", lambda candidate, best: True)
+    monkeypatch.setattr(
+        iterate, "decide", lambda outcomes, test, limit: (Hypothesis.H1, 3)
+    )
+    settings = replace(TINY, max_rounds=2, members=2, prefix="e")
+    iterate.run(settings, tmp_path, log=lambda _: None)
+    _, second = _state(tmp_path)["rounds"]
+    assert second["champion"] == "e01"
+    saved = value.Model.load(tmp_path / "models" / "e01.npz")
+    assert len(saved.members) == 2
+    candidate = tmp_path / "candidates" / "round-01-mlp.npz"
+    assert len(value.Model.load(candidate).members) == 2
 
 
 def test_the_time_cap_counts_the_recorded_rounds(tmp_path: Path):

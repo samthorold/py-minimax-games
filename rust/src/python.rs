@@ -578,24 +578,22 @@ fn scalar(model: &Bound<'_, PyDict>, key: &str) -> PyResult<f64> {
     }
 }
 
-/// A model from a dict of float64 arrays (`selfplay.native_model`): its
-/// `form` (`"logistic"` or `"mlp"`), `mean` and `std`, and its parameters
-/// under their names (`w` and `b`, or `w1`, `b1`, `w2` and `b2`).
-fn value_from_dict(model: &Bound<'_, PyDict>) -> PyResult<Value> {
-    let form: String = item(model, "form")?;
-    let form = match form.as_str() {
+/// A member's parameters from a dict of float64 arrays, under their names
+/// (`w` and `b` for a logistic regression, or `w1`, `b1`, `w2` and `b2`).
+fn member_from_dict(form: &str, params: &Bound<'_, PyDict>) -> PyResult<Form> {
+    Ok(match form {
         "logistic" => Form::Logistic {
-            w: vector(model, "w")?,
-            b: scalar(model, "b")?,
+            w: vector(params, "w")?,
+            b: scalar(params, "b")?,
         },
         "mlp" => {
-            let w1: PyReadonlyArray2<'_, f64> = item(model, "w1")?;
+            let w1: PyReadonlyArray2<'_, f64> = item(params, "w1")?;
             Form::Mlp {
                 // row after row, whatever the array's own layout
                 w1: w1.as_array().iter().copied().collect(),
-                b1: vector(model, "b1")?,
-                w2: vector(model, "w2")?,
-                b2: scalar(model, "b2")?,
+                b1: vector(params, "b1")?,
+                w2: vector(params, "w2")?,
+                b2: scalar(params, "b2")?,
             }
         }
         other => {
@@ -603,8 +601,21 @@ fn value_from_dict(model: &Bound<'_, PyDict>) -> PyResult<Value> {
                 "no model form {other:?}: 'logistic' or 'mlp'"
             )));
         }
-    };
-    Value::new(vector(model, "mean")?, vector(model, "std")?, form).map_err(PyValueError::new_err)
+    })
+}
+
+/// A model from a dict (`selfplay.native_model`): its `form` (`"logistic"`
+/// or `"mlp"`), `mean` and `std` as float64 arrays, and its `members`, a
+/// list of dicts of each member's parameters (`member_from_dict`).
+fn value_from_dict(model: &Bound<'_, PyDict>) -> PyResult<Value> {
+    let form: String = item(model, "form")?;
+    let members: Vec<Bound<'_, PyDict>> = item(model, "members")?;
+    let members = members
+        .iter()
+        .map(|params| member_from_dict(&form, params))
+        .collect::<PyResult<Vec<_>>>()?;
+    Value::ensemble(vector(model, "mean")?, vector(model, "std")?, members)
+        .map_err(PyValueError::new_err)
 }
 
 /// The model's win probability for each row of `x` (`Model.predict`),
