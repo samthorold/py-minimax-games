@@ -3,6 +3,7 @@
 
 pub mod bots;
 pub mod card;
+pub mod heuristic;
 pub mod rng;
 pub mod rules;
 pub mod state;

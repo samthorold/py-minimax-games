@@ -273,6 +273,7 @@ def test_native_bench_times_the_rust_engine(capsys):
     assert "greedy games: 3 in" in out
     assert "games/s" in out
     assert "calls/s" in out
+    assert "heuristic games: 3 in" in out
 
 
 def test_a_single_game_plays_the_planner(capsys, monkeypatch):

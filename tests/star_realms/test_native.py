@@ -19,7 +19,7 @@ import pytest
 from minimax_games._native import star_realms as native
 from minimax_games.games.star_realms import rules
 from minimax_games.games.star_realms.action import Action, Choose
-from minimax_games.games.star_realms.bots import greedy_move
+from minimax_games.games.star_realms.bots import HeuristicBot, greedy_move
 from minimax_games.games.star_realms.card import Card
 from minimax_games.games.star_realms.catalogue import CATALOGUE
 from minimax_games.games.star_realms.effect import Choice
@@ -38,6 +38,7 @@ from minimax_games.games.star_realms.view import (
 GREEDY_GAMES = 100
 RANDOM_GAMES = 60
 RANDOM_MAX_TURNS = 200
+HEURISTIC_GAMES = 60
 
 
 def _names(cards: tuple[Card, ...]) -> list[str]:
@@ -262,3 +263,63 @@ def test_an_illegal_action_is_refused():
 
 def test_the_initial_factions_played_are_empty():
     assert native.Game(0).state()["factions_played"] == list(NO_FACTIONS_PLAYED)
+
+
+type Seat = Callable[[View, tuple[Action, ...]], Action]
+
+
+def _heuristic_game(
+    seed: int, seats: tuple[Seat, Seat], max_turns: int
+) -> Counter[str]:
+    """Play a game from `seed` in both engines, `seats[p]` choosing player
+    `p`'s actions, checking at every decision, whoever's it is, that the
+    Rust heuristic chooses what the Python one does from the current
+    player's view. Returns how often the heuristic chose each kind of action;
+    fails at the first divergence, naming the seed, action and turn."""
+    state = rules.auto_play(rules.new_game(seed))
+    game = native.Game(seed)
+    heuristic = HeuristicBot()
+    chosen: Counter[str] = Counter()
+    taken = 0
+    while rules.winner(state) is None and state.turn <= max_turns:
+        actions = rules.legal_actions(state)
+        view = observe(state, state.current)
+        expected = heuristic.choose(view, actions)
+        chosen[type(expected).__name__] += 1
+        assert game.heuristic_move() == native_action(expected), (
+            f"heuristic differs: seed {seed}, action {taken}, turn {state.turn}"
+        )
+        action = seats[state.current](view, actions)
+        state = rules.advance(state, action)
+        game.advance(native_action(action))
+        taken += 1
+    return chosen
+
+
+def _greedy_seat(view: View, actions: tuple[Action, ...]) -> Action:
+    return greedy_move(view.must_scrap, actions)
+
+
+def _random_seat(seed: int) -> Seat:
+    rng = random.Random(seed)
+    return lambda _, actions: rng.choice(actions)
+
+
+def test_heuristic_games_match_the_python_heuristic():
+    heuristic = HeuristicBot().choose
+    chosen: Counter[str] = Counter()
+    for seed in range(HEURISTIC_GAMES):
+        chosen += _heuristic_game(seed, (heuristic, heuristic), max_turns=1000)
+        state = rules.auto_play(rules.new_game(seed))
+        while rules.winner(state) is None and state.turn <= 1000:
+            view = observe(state, state.current)
+            state = rules.advance(state, heuristic(view, rules.legal_actions(state)))
+        assert native.play_heuristic(seed)[:2] == (rules.winner(state), state.turn)
+    for seed in range(HEURISTIC_GAMES):
+        seats = (heuristic, _greedy_seat)
+        chosen += _heuristic_game(seed, seats if seed % 2 else seats[::-1], 1000)
+    for seed in range(HEURISTIC_GAMES):
+        seats = (heuristic, _random_seat(seed))
+        chosen += _heuristic_game(seed, seats if seed % 2 else seats[::-1], 1000)
+    kinds = {variant.__name__ for variant in get_args(Action.__value__)}
+    assert kinds - chosen.keys() == set()
