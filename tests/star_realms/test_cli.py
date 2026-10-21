@@ -332,3 +332,40 @@ def test_the_planner_keeps_its_own_budget_with_rollouts():
     assert isinstance(bot, PlannerBot)
     assert bot.budget == planner.BUDGET
     assert bot.evaluator == Rollout(seed=3)
+
+
+def test_planner_with_a_learned_value_uses_the_model_and_the_rust_enumeration():
+    bot = configured("planner:mlp", 60, 2)(3)
+    assert isinstance(bot, PlannerBot)
+    assert (bot.budget, bot.worlds, bot.backend) == (60, 2, "rust")
+    assert bot.evaluator.describe() == "learned value (mlp)"
+    other = configured("planner:logistic")(3)
+    assert isinstance(other, PlannerBot)
+    assert other.budget == planner.BUDGET
+
+
+def test_tournament_pairs_the_planner_with_a_learned_value_against_the_planner(
+    capsys,
+):
+    argv = ["tournament", "--bots", "planner:mlp", "planner", "--games", "2"]
+    main([*argv, "--max-turns", "3", "--budget", "60", "--worlds", "2", "--sprt"])
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].startswith("planner:mlp vs planner: ")
+    learned = PlannerBot(0, worlds=2, budget=60, evaluator=LINEAR).settings()
+    assert f"planner: {learned}" in out
+    assert any(
+        line.startswith("planner:mlp: ") and "learned value (mlp)" in line
+        for line in out
+    )
+
+
+def test_tournament_refuses_an_unknown_model_or_bot(capsys):
+    for bot in ("planner:nonesuch", "planner:", "greedy:mlp"):
+        with pytest.raises(SystemExit):
+            main(["tournament", "--bots", bot, "greedy", "--games", "1"])
+        assert bot in capsys.readouterr().err
+
+
+def test_a_single_game_plays_the_planner_with_a_learned_value(capsys):
+    main(["--seed", "7", "--bots", "planner:logistic", "greedy"])
+    assert "wins on turn" in capsys.readouterr().out
