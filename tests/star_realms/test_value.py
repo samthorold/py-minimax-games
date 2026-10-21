@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from minimax_games.games.star_realms import features, rules, value
+from minimax_games.games.star_realms.action import EndTurn
 from minimax_games.games.star_realms.evaluate import WIN
 from minimax_games.games.star_realms.rollout import SPAN
 from minimax_games.games.star_realms.state import PlayerState
@@ -139,3 +140,10 @@ def test_the_evaluator_scores_a_finished_game_as_won_or_lost():
 def test_a_missing_model_name_says_where_it_looked():
     with pytest.raises(FileNotFoundError, match="no-such-model"):
         value.load("no-such-model")
+
+
+@pytest.mark.parametrize("name", ["logistic", "mlp"])
+def test_the_packaged_models_load_by_name_for_the_current_features(name: str):
+    evaluator = ValueEvaluator(value.load(name))
+    state = rules.apply(rules.auto_play(rules.new_game(0)), EndTurn())
+    assert -SPAN <= evaluator(state, 0) <= SPAN
