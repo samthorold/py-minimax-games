@@ -68,7 +68,7 @@ tasks:
       - uv run python -m minimax_games.games.star_realms fit {{.CLI_ARGS}}
 
   iterate:
-    desc: "Policy iteration, resumable, into runs/iterate (about 2 hours at the defaults): task iterate -- [--out DIR] [--threads N] [--rounds N] [--hours H]"
+    desc: "Policy iteration, resumable, into runs/iterate (about 30 minutes at the defaults): task iterate -- [--out DIR] [--threads N] [--rounds N] [--hours H]"
     cmds:
       - uv run python -m minimax_games.games.star_realms iterate {{.CLI_ARGS}}
 
