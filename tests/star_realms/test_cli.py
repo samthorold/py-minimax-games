@@ -399,3 +399,23 @@ def test_iterate_fits_candidates_of_several_members(capsys, tmp_path):
     assert "2 members" in capsys.readouterr().out
     state = json.loads((tmp_path / "state.json").read_text())
     assert state["settings"]["members"] == 2
+
+
+def test_iterate_takes_td_targets(capsys, tmp_path):
+    argv = [
+        *("iterate", "--out", str(tmp_path), "--rounds", "1", "--threads", "2"),
+        *("--train-games", "6", "--held-out-games", "4", "--gate-games", "4"),
+        *("--ladder-games", "2", "--worlds", "1", "--budget", "40"),
+        *("--epochs", "1", "--hidden", "3", "--targets", "td", "--lam", "0.8"),
+    ]
+    main(argv)
+    assert "TD(0.8) targets" in capsys.readouterr().out
+    state = json.loads((tmp_path / "state.json").read_text())
+    assert state["settings"]["targets"] == "td"
+    assert state["settings"]["lam"] == 0.8
+
+
+def test_iterate_refuses_unknown_targets(capsys, tmp_path):
+    with pytest.raises(SystemExit):
+        main(["iterate", "--targets", "sarsa"])
+    assert "sarsa" in capsys.readouterr().err
