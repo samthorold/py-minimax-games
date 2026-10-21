@@ -987,6 +987,12 @@ def iterating(argv: list[str]) -> None:
         help="the lambda of TD targets (default: %(default)s)",
     )
     parser.add_argument(
+        "--extra",
+        action="store_true",
+        default=defaults.extra,
+        help="fit values that read the hand-made features too (features.EXTRA)",
+    )
+    parser.add_argument(
         "--prefix",
         default=defaults.prefix,
         help="round r's candidate is named <prefix><r> (default: %(default)s)",

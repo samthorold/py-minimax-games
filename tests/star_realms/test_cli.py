@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from minimax_games.games.star_realms import planner
+from minimax_games.games.star_realms import features, planner
 from minimax_games.games.star_realms.action import Action
 from minimax_games.games.star_realms.bots import GreedyBot, HeuristicBot
 from minimax_games.games.star_realms.cheat import BUDGET, CheatBot
@@ -413,6 +413,34 @@ def test_iterate_takes_td_targets(capsys, tmp_path):
     state = json.loads((tmp_path / "state.json").read_text())
     assert state["settings"]["targets"] == "td"
     assert state["settings"]["lam"] == 0.8
+
+
+def test_iterate_fits_with_the_hand_made_features(capsys, tmp_path):
+    argv = [
+        *("iterate", "--out", str(tmp_path), "--rounds", "1", "--threads", "2"),
+        *("--train-games", "6", "--held-out-games", "4", "--gate-games", "4"),
+        *("--ladder-games", "2", "--worlds", "1", "--budget", "40"),
+        *("--epochs", "1", "--hidden", "3", "--extra"),
+    ]
+    main(argv)
+    assert "hand-made features" in capsys.readouterr().out
+    state = json.loads((tmp_path / "state.json").read_text())
+    assert state["settings"]["extra"] is True
+    model = Model.load(tmp_path / "candidates" / "round-01-mlp.npz")
+    assert model.extra == features.EXTRA
+
+
+def test_iterate_fits_without_the_hand_made_features_by_default(capsys, tmp_path):
+    argv = [
+        *("iterate", "--out", str(tmp_path), "--rounds", "1", "--threads", "2"),
+        *("--train-games", "6", "--held-out-games", "4", "--gate-games", "4"),
+        *("--ladder-games", "2", "--worlds", "1", "--budget", "40"),
+        *("--epochs", "1", "--hidden", "3"),
+    ]
+    main(argv)
+    assert "hand-made features" not in capsys.readouterr().out
+    state = json.loads((tmp_path / "state.json").read_text())
+    assert state["settings"]["extra"] is False
 
 
 def test_iterate_refuses_unknown_targets(capsys, tmp_path):
