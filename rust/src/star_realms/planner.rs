@@ -13,14 +13,24 @@
 //! the best end found through it so far. The enumeration never reads a
 //! value, so it can run before the scoring, and the ends come out in the
 //! order the Python planner scores them.
+//!
+//! Then the choice (`plan`, `planner._choose`), scoring the ends with a
+//! learned value's forward pass (`value.rs`), and the bot that plays the
+//! plans (`PlannerBot`, `planner.PlannerBot`), for self-play in Rust.
 
+use std::collections::VecDeque;
 use std::collections::hash_map::Entry;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::bots::greedy_move;
+use super::card::Card;
+use super::features;
+use super::rng::Random;
 use super::rules::{Action, advance_legal, apply_legal, legal_actions, winner};
 use super::state::{GameState, PlayerState};
+use super::value::Value;
+use super::view::{PlayerView, View, observe, sample_world};
 
 /// Whether a play from `before` to `after`, within the mover's turn, is a
 /// chance event (`planner.reveals`): it draws a card no one knows, shuffles
@@ -352,10 +362,209 @@ pub fn enumerate(worlds: &[GameState], budget: usize) -> Enumeration {
     found
 }
 
+/// A plan (`planner.Plan`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Plan {
+    /// The decisions to play from the first world's state, up to and
+    /// including the next chance event or the end of the turn.
+    pub line: Vec<Action>,
+    /// The mean over worlds of the best end found through the line, from
+    /// the mover's side (`None` if no end was found).
+    pub value: Option<f64>,
+    pub states: usize,
+    pub complete: bool,
+}
+
+/// The best line from `worlds`, at most `budget` states visited, the ends
+/// scored by `value` from the mover's side (`planner.plan` with a
+/// `ValueEvaluator`). A candidate is worth, in each world that reached it,
+/// the best score of the ends `enumerate` gives it there; the candidates
+/// reached in the most worlds compete by their mean, ties to the first
+/// found (`planner._choose`); if none is reached, the line is the greedy
+/// move. Scores are whole numbers, so their sums are exact, and the mean is
+/// the same correctly rounded division as Python's `int / int`.
+pub fn plan(worlds: &[GameState], budget: usize, value: &Value) -> Plan {
+    let found = enumerate(worlds, budget);
+    let first = &worlds[0];
+    let mut row = vec![0.0; features::columns()];
+    let mut scratch = Vec::new();
+    let scores: Vec<i64> = found
+        .ends
+        .iter()
+        .map(|end| {
+            row.fill(0.0);
+            features::encode_into(&mut row, end);
+            value.score(end, &row, first.current, &mut scratch)
+        })
+        .collect();
+    let mut values: Vec<Vec<i64>> = vec![Vec::new(); found.lines.len()];
+    for reached in &found.reached {
+        for (candidate, rows) in reached.iter().enumerate() {
+            let best = rows.iter().map(|&r| scores[r]).max();
+            values[candidate].push(best.expect("a candidate reaches an end"));
+        }
+    }
+    let reached = values.iter().map(Vec::len).max().unwrap_or(0);
+    if reached == 0 {
+        return Plan {
+            line: vec![ordered(first)[0].1],
+            value: None,
+            states: found.states,
+            complete: false,
+        };
+    }
+    let mut best: Option<(usize, f64)> = None;
+    for (candidate, scores) in values.iter().enumerate() {
+        if scores.len() != reached {
+            continue;
+        }
+        let mean = scores.iter().sum::<i64>() as f64 / reached as f64;
+        if best.is_none_or(|(_, top)| mean > top) {
+            best = Some((candidate, mean));
+        }
+    }
+    let (candidate, mean) = best.expect("a candidate reached in the most worlds");
+    let mut state = first.clone();
+    let mut line = Vec::new();
+    for &i in &found.lines[candidate] {
+        let action = legal_actions(&state)[i];
+        state = advance_legal(&state, action);
+        line.push(action);
+    }
+    Plan {
+        line,
+        value: Some(mean),
+        states: found.states,
+        complete: found.complete,
+    }
+}
+
+fn sorted(cards: &[Card]) -> Vec<Card> {
+    let mut cards = cards.to_vec();
+    cards.sort_unstable();
+    cards
+}
+
+fn player_seen(player: &PlayerView) -> PlayerView {
+    PlayerView {
+        in_play: sorted(&player.in_play),
+        discard: sorted(&player.discard),
+        bases: sorted(&player.bases),
+        ..player.clone()
+    }
+}
+
+/// `view` up to the order of its piles (`planner.seen`): sorting by the
+/// card enum's order gives the same equality as Python's sort by name.
+pub fn seen(view: &View) -> View {
+    View {
+        players: [player_seen(&view.players[0]), player_seen(&view.players[1])],
+        trade_row: sorted(&view.trade_row),
+        scrap_heap: sorted(&view.scrap_heap),
+        allies_used: sorted(&view.allies_used),
+        bases_used: sorted(&view.bases_used),
+        ..view.clone()
+    }
+}
+
+/// `planner.PlannerBot` with a learned value: plans whole turns over
+/// `worlds` worlds sampled from its view with an rng seeded as Python's
+/// `random.Random(seed)`, and plays each plan's line while its view is, up
+/// to pile order, the one the line reached in the first world, planning
+/// again if not (`diverged`) or once the line is played.
+pub struct PlannerBot<'a> {
+    value: &'a Value,
+    worlds: usize,
+    budget: usize,
+    rng: Random,
+    turn: Option<u32>,
+    line: VecDeque<(View, Action)>,
+    pub plans: u64,
+    pub turns: u64,
+    pub diverged: u64,
+}
+
+impl<'a> PlannerBot<'a> {
+    pub fn new(value: &'a Value, worlds: usize, budget: usize, seed: u64) -> Self {
+        assert!(worlds >= 1, "the planner needs at least 1 world");
+        assert!(budget >= 2 * worlds, "at least 2 states per world");
+        PlannerBot {
+            value,
+            worlds,
+            budget,
+            rng: Random::new(seed),
+            turn: None,
+            line: VecDeque::new(),
+            plans: 0,
+            turns: 0,
+            diverged: 0,
+        }
+    }
+
+    /// The bot's move from `view`, among the legal `actions`
+    /// (`PlannerBot.choose`).
+    pub fn choose(&mut self, view: &View, actions: &[Action]) -> Action {
+        if self.turn != Some(view.turn) {
+            self.turn = Some(view.turn);
+            self.turns += 1;
+            self.line.clear();
+        }
+        if let Some((expected, _)) = self.line.front()
+            && *expected != seen(view)
+        {
+            self.diverged += 1;
+            self.line.clear();
+        }
+        if self.line.is_empty() {
+            let worlds: Vec<GameState> = (0..self.worlds)
+                .map(|_| sample_world(view, &mut self.rng))
+                .collect();
+            let made = plan(&worlds, self.budget, self.value);
+            self.plans += 1;
+            let mut state = worlds[0].clone();
+            for action in made.line {
+                self.line
+                    .push_back((seen(&observe(&state, view.observer)), action));
+                state = advance_legal(&state, action);
+            }
+        }
+        let (_, action) = self.line.pop_front().expect("a plan has a line");
+        debug_assert!(actions.contains(&action), "{action:?} not in {actions:?}");
+        action
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::rules::{auto_play, new_game};
+    use super::super::value::Form;
     use super::*;
+
+    #[test]
+    fn a_plan_s_line_is_legal_and_ends_at_a_chance_event_or_the_turn_s_end() {
+        let columns = features::columns();
+        let value = Value::new(
+            vec![0.0; columns],
+            vec![1.0; columns],
+            Form::Logistic {
+                w: vec![0.01; columns],
+                b: 0.0,
+            },
+        )
+        .unwrap();
+        let mut state = new_game(4);
+        auto_play(&mut state);
+        let made = plan(std::slice::from_ref(&state), 2_000, &value);
+        assert!(made.value.is_some());
+        let mut at = state;
+        for (i, &action) in made.line.iter().enumerate() {
+            assert!(legal_actions(&at).contains(&action));
+            let next = advance_legal(&at, action);
+            let stops = action == Action::EndTurn || reveals(&at, &next) || winner(&next).is_some();
+            assert_eq!(stops, i + 1 == made.line.len());
+            at = next;
+        }
+    }
 
     #[test]
     fn the_first_turn_is_listed_within_a_small_budget() {

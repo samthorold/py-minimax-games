@@ -1766,3 +1766,38 @@ Against the Python backend, on the 123 turn starts of seeds 0-4 (same worlds, bo
 - Rust is only 14 times faster than CPython here, not the hundreds a compiled engine might suggest: the planner is bound by `advance`, which clones the state, and by hashing whole states. The design's "roughly a millisecond" of enumeration per plan holds at the median (1.6 ms) but not the tail (68 ms at the 90th percentile).
 - The enumeration doesn't need the value at all: which ends a candidate's best is taken over is fixed by the walk, so the scoring can wait until every end is listed and then run as one matrix call, with no callback into Python.
 - A batch of rows and a single row give model probabilities that differ in the last bit (numpy's matrix products sum in another order); the scores are rounded to whole points out of a million, so they agree.
+
+## Milestone 7: Rust self-play with the value's forward pass
+
+2026-10-21, #141 (tracked by #127), CPython 3.14, Apple M1 (8 GB: 4 performance and 4 efficiency cores), **shared**: another agent was running matches on 2 cores throughout (load average 3-9 while measuring). The value's forward pass, the planner's choice and its bot, and whole games across threads, in Rust: one call (`selfplay.play`) plays a batch and returns the training rows and results (design, Compiled engine, "Self-play").
+
+**Throughput**, the costliest pairing a round plays: the planner with the network against the planner with the logistic regression, both at the defaults (4 worlds, 20,000 states per plan), seats alternating, 96 games from seed 50000 (24.5 turns and 56 plans per game, 2,253 training rows), release build, one run per thread count:
+
+| Threads | Games/s | Time of a 20,000-game round |
+|---|---|---|
+| 1 | 1.31 (0.76 s per game) | 4.2 h |
+| 4 | 3.70 | 1.5 h |
+| 6 | 4.51 | 1.2 h |
+| 8 | 4.58 | 1.2 h |
+
+```python
+from minimax_games.games.star_realms.selfplay import Planner, alternating, play
+from minimax_games.games.star_realms.value import load
+games = alternating(Planner(load("mlp")), Planner(load("logistic")), range(50_000, 50_096))
+played = play(games, threads=6)
+```
+
+So **a 20,000-game self-play round takes about 1.2 hours** on this machine with 6 threads while it is shared, perhaps an hour with all 8 cores free. Four threads scale 2.8 times, and past 6 threads nothing is gained: two cores were busy, and the efficiency cores are slower. A smaller batch (24 games) scaled worse, 5.6 games/s at 6 threads and less at 8, because the last few long games run alone; a round's thousands of games don't have that tail. A game against the heuristic plans half as often, so a round that mixes in heuristic games is quicker. The time is the planner's enumeration (Milestone 7, planner enumeration: about 5 µs per state); the forward pass costs about 2 µs per end of turn for the network and 0.5 µs for the logistic regression (`predict` over those rows, the copy into Rust included).
+
+**The forward pass against numpy**, on the 10,392 ends the planner lists from every turn start of a seeded heuristic game (one world, 5,000 states): the largest difference in probability is 1.1e-15 for the logistic regression and 4.4e-16 for the network (80% and 57% of the probabilities differ in the last bits), and **no score differs** once rounded to whole points out of a million. The tests' tolerance is 1e-12. Only the order of the products' sums differs: numpy's are blocked and vectorised, Rust's left to right. A score could flip only if `SPAN * (2p - 1)` fell within about 2e-9 of a half point; the nearest of these 10,392 was 5e-5 away, so a flip is a few in a billion ends, and it would change a move only if that end were a candidate's best and the flip reordered the candidates. Ties between candidates can't differ: scores are whole numbers, so their sums are exact and the means are the same correctly rounded division, and both take the first of equal means.
+
+**Agreement with the Python planner.** The tests (about 1.5 s) play three seeded games of the planner (3 worlds, 1,500 states, both models, against greedy and the heuristic, in either seat) with both, and the decisions, winner, turns, plans and replans are identical. Once, outside the suite, at the defaults (4 worlds, 20,000 states), seeds 0-23, both models, against greedy and the heuristic, in either seat: **24 of 24 games identical**, decision for decision, plans and replans included, in 26 s (nearly all of it the Python planner's). The training rows of heuristic games are exactly `fit.dataset`'s, labels and winners included, and a mixed batch gives identical results on 1, 2 and 5 threads.
+
+**Bugs caught: none in the port.** Every differential test passed on its first run. The failures on the way were the tests' own: a real-rows set too small for its assertion, and a check that every game planned in a batch whose last game is heuristic against greedy. Clippy asked for the planner bot to be boxed inside the bot enum (2.6 KB against a few bytes for the others).
+
+**Effort.** About 35 minutes of agent time end to end: reading the planner, values and crate, the tests, the port (about 600 lines of Rust with its unit tests, and 150 of Python), the measurements and these docs.
+
+**Surprises.**
+
+- The port needed nothing new for determinism: the CPython rng port already makes each planner's sampled worlds Python's, games are independent, and std scoped threads with an atomic counter, the results put back in game order, keep a batch identical on any number of threads. No rayon.
+- Scores being whole numbers is what makes the agreement exact: the floating-point differences sit about nine orders of magnitude below the rounding, and everything after it (sums, means, ties) is exact.
