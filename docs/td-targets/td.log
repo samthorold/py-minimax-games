@@ -1,0 +1,10 @@
+dataset: {'train_seeds': [6000000, 6003999], 'held_out_seeds': [6100000, 6100999], 'pool': ('mlp', 'pi03'), 'games': 5000, 'unfinished': 0, 'train_states': 92596, 'held_out_states': 22858, 'seconds': 516.7}
+pi03 held-out log-loss 0.5161
+td0: held-out log-loss 0.5252, 137/300 (45.7%), as 1st 85/150, fit 4 s, match 54 s
+td0.5: held-out log-loss 0.5244, 134/300 (44.7%), as 1st 86/150, fit 4 s, match 53 s
+td0.8: held-out log-loss 0.5232, 144/300 (48.0%), as 1st 85/150, fit 4 s, match 57 s
+td0.95: held-out log-loss 0.5245, 141/300 (47.0%), as 1st 86/150, fit 4 s, match 56 s
+mc: held-out log-loss 0.5294, 118/300 (39.3%), as 1st 73/150, fit 4 s, match 47 s
+real 803.40
+user 5908.47
+sys 31.47
