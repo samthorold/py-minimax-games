@@ -37,6 +37,7 @@ task bench                  # Star Realms: the cheat's search speed (nodes/sec)
 task turn-sizes             # Star Realms: distinct ends per turn (planner workload)
 task profile                # Star Realms: profile the cheat's search
 task tune                   # Star Realms: tune evaluate's weights by tournament
+task fit                    # Star Realms: fit learned values, gated against evaluate
 task pypy -- tournament ... # Star Realms: a long tournament under PyPy
 ```
 
@@ -60,6 +61,21 @@ the share of the cheat's decisions (every `--every`-th of the `--games` games)
 that doubling or halving it changes, most first, to pick which weights to
 tune. Tuning is a long run: `task pypy -- tune ...` runs it under PyPy
 (below), faster with the same results. Results: "Milestone 5: tuning" in
+[docs/star-realms-results.md](docs/star-realms-results.md).
+
+### Fitting a learned Star Realms value
+
+`task fit` (`python -m minimax_games.games.star_realms fit`) plays seeded
+heuristic-vs-heuristic games (8,000 from seed 20000 to train on, and the
+next 2,000 held out by default), fits logistic regression and a
+one-hidden-layer network, hand-written in numpy, to who won from each
+turn-boundary state, and prints each one's held-out log-loss beside
+`sigmoid(evaluate / 16)`'s on the same states. It is deterministic given
+the seeds and takes under a minute with `--jobs 2`. `--save DIR` writes the
+models as `.npz` files; a model that beats `evaluate` is committed in
+`src/minimax_games/games/star_realms/models/` and loads by name
+(`value.load("mlp")`). The data are never stored: the command regenerates
+them. Results: "Milestone 8: offline value fit" in
 [docs/star-realms-results.md](docs/star-realms-results.md).
 
 ### Long Star Realms tournaments under PyPy
