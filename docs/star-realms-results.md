@@ -1681,3 +1681,30 @@ The games figure includes legal actions and the greedy bot's choice; the `advanc
 
 - `rust-toolchain.toml` pinning `1.95.0` made rustup download that toolchain although the installed `stable` was the same 1.95.0: rustup treats the names as different toolchains. A one-time download.
 - `task pypy` no longer installs: maturin builds a PyPy-specific wheel (`pp312`), which uv refuses under the task's `--python-version 3.13` workaround for PyPy having no 3.13. The compiled engine is the path to speed now, so the task is left broken pending a decision (drop it, or install PyPy's copy another way).
+
+## Milestone 7: Rust engine, full deck
+
+2026-10-21, #138 (tracked by #127), CPython 3.14, Apple M1 (8 GB) shared with another agent's builds and tests. The Rust engine now plays the whole 80-card base set: every kind of effect and action, Stealth Needle's copies included, plus `observe` and `sample_world` (design, Compiled engine, "The full deck").
+
+**Speed**, `task native-bench -- --games 5000` (seeds 0-4999, greedy vs greedy, full deck, release build, three runs):
+
+| Measure | Result |
+|---|---|
+| Greedy games | 3,250-3,290 games/s (0.31 ms per game) |
+| Decisions in those games | 493,000-500,000/s (152 per game) |
+| `advance` alone, over the 759,480 recorded decisions | 627,000-735,000 calls/s (1.4-1.6 µs per call) |
+
+Against the first slice (Milestone 7, tracer bullet), a game is 1.6 times slower, mostly because full-deck games are longer (152 decisions against 112), and `advance` 10-25% slower per call, from the checks automatic play now makes (scrappers from hand, Fleet HQ, Embassy Yacht) and the larger state cloned on every call. Still unoptimised: piles are `Vec`s cloned whole, and automatic play recomputes the playable actions after every step.
+
+**Differential tests**, `tests/star_realms/test_native.py`: 100 greedy-vs-greedy and 60 seeded random games, comparing after every action the whole state, the legal actions, the winner, both views and a world sampled from the current player's view (bit-identical to Python's from the same seed), plus the greedy bot's choices and results. The random games take every kind of action (the rarest, `AcquireFreeShip`, 6 times), and the test fails if one goes missing. About 6 s. Once, outside the suite: 1,000 more random games (seeds 1000-1999, up to 400 turns) and 500 greedy ones, about 367,000 actions, all identical, in 70 s.
+
+**Bugs differential testing caught: none in the rules.** As with the first slice, the engine matched the Python one on the first run of the differential tests. The only failure on the way was in a new Rust unit test, which set a pending discard after automatic play had already emptied the hand. Two deliberately injected bugs each failed the tests at a named seed and action: not capping pending discards at the hand's size (seed 58, action 659, an `EndTurn` on turn 171: a long random game, so the wider random games matter), and forgetting that Stealth Needle in hand keeps ships waiting (seed 11, action 68). The reasons are the tracer bullet's: the Python rules are an explicit, documented reference, small functions with one job each, so the port is function for function.
+
+**`sample_world` is bit-identical** to Python's given the same seed: it makes the same draws from the same CPython RNG port, in the same order, so the tests compare sampled worlds exactly rather than by distribution.
+
+**Effort.** About 20 minutes of agent time, end to end: reading the Python engine and the crate, writing the cards (the longest part, by volume), the rules, views, greedy bot and boundary, the differential tests and these docs. The extension rebuilds in about 10 s; `uv run pre-commit run --all-files` takes about 30 s.
+
+**Surprises.**
+
+- Stealth Needle's copies were the one design question: a Python copy is a new `Card` made at run time. In Rust it is a card variant naming its target, `NeedleAs(i)`, whose data is built once on first use, which keeps cards two bytes and `Copy`, so piles and actions needed no change.
+- The boundary's actions had to grow: `Choose`, `Recycle` and `ScrapAndDraw` carry more than one card name, so actions now cross as `(kind, *fields)` tuples, not `(kind, card)` pairs.
