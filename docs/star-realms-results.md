@@ -1730,6 +1730,70 @@ No game was unfinished. Mean 22.8, 24.2 and 24.4 turns.
 - **It is about ten times faster too**, 6-8 ms per decision (Rust enumeration) against 68-80 ms for the Python planner on `evaluate`.
 - **The mlp is the ladder's current best**: `planner:mlp`, the committed `src/minimax_games/games/star_realms/models/mlp.npz` (trained by the Milestone 8 offline value fit's command). It is the bar the rounds of policy iteration on the Rust engine (design, Milestone 8) have to beat, with the heuristic kept among the opponents. The logistic regression wasn't played; with its worse log-loss it isn't needed to name the best.
 
+## Milestone 8: policy iteration
+
+- Date: 2026-10-21
+- Commit: `f5ccc00` (#162, the loop: `iterate`, `python -m minimax_games.games.star_realms iterate`; the run was made from that PR's branch head `9e48021`, the same tree).
+- Machine: Apple M1 MacBook, 8 GB (4 performance and 4 efficiency cores), macOS (Darwin 25.2), CPython 3.14.0, numpy 2.5.4; no other agent running. 8 self-play threads.
+- Settings: the agreed design's (design, Learned values: Policy iteration), all the command's defaults. Each round 5,000 games (4,000 training, 1,000 held out), mixed half the current best against itself, a quarter against the heuristic, a quarter against a champion from the pool; both forms refitted from scratch on the last 4 rounds' training games (`value.fit` defaults: seed 0, 10 epochs, batch 256, Adam at 0.001, `l2` 0.003, 32 hidden units); the offline gate on the round's held-out games; then the candidate's planner against the current best's (4 worlds, 20,000 states per plan, both in Rust), SPRT H0 50% against H1 55%, α = β = 0.05 (bounds ±2.94), at most 1,000 games; a promoted value then plays 500 games against the heuristic on seeds 0-499. Start: `mlp`, pool {`mlp`}.
+- Seeds: round `r`'s training games 1,000,000 + 10,000 (r − 1) on, held-out 2,000,000 + 10,000 (r − 1) on, gating 3,000,000 + 10,000 (r − 1) on; the ladder 0-499; the confirmation below 4,000,000-4,000,499.
+
+```sh
+uv run python -m minimax_games.games.star_realms iterate --out runs/iterate --threads 8
+```
+
+Records: [policy-iteration/run-1/](policy-iteration/run-1/): `state.json` (every round's record), `run.log`, and the per-seed results (seed, first, second, winner, turns) of every gating match (`gate-rNN.csv`), the ladder match (`ladder-r03.csv`), `mlp`'s ladder match replayed in Rust (`ladder-mlp.csv`) and the confirmation (`confirm-pi03-mlp.csv`). No game in the run reached the 300-turn cap.
+
+### Rounds
+
+Log-loss is on the round's held-out states; the candidate is the form with the lower one (the network every round). The SPRT column is the candidate's record against the current best.
+
+| Round | Champion (pool) | Training games, states | Held-out states | Fit on (rounds, states) | Log-loss: logistic / mlp / champion | Offline gate | SPRT | Promoted | vs heuristic, seeds 0-499 | Play / fit / gate / ladder / total (min) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | mlp (mlp) | 4,000, 92,936 | 23,217 | 1, 92,936 | 0.5549 / 0.5455 / 0.5498 | pass | **H0** after 87, 31-56 (35.6%) | - | | 7.8 / 0.0 / 0.2 / - / 8.0 |
+| 2 | mlp (mlp) | 4,000, 93,121 | 23,338 | 1-2, 186,057 | 0.5350 / 0.5146 / 0.5276 | pass | **H0** after 179, 79-100 (44.1%) | - | | 8.6 / 0.1 / 0.6 / - / 9.2 |
+| 3 | mlp (mlp) | 4,000, 92,872 | 23,453 | 1-3, 278,929 | 0.5422 / 0.5149 / 0.5415 | pass | **H1** after 185, 112-73 (60.5%) | **pi03** | 351/500 (70.2%) | 8.7 / 0.1 / 0.5 / 0.7 / 9.9 |
+| 4 | pi03 (mlp, pi03) | 4,000, 92,268 | 23,132 | 1-4, 371,197 | 0.5317 / 0.5045 / 0.5056 | pass | **H0** after 487, 241-246 (49.5%) | - | | 9.4 / 0.1 / 1.1 / - / 10.6 |
+| 5 | pi03 (mlp, pi03) | 4,000, 92,430 | 23,199 | 2-5, 370,691 | 0.5675 / 0.5386 / 0.5435 | pass | **H0** after 87, 31-56 (35.6%) | - | | 9.7 / 0.1 / 0.3 / - / 10.0 |
+| 6 | pi03 (mlp, pi03) | 4,000, 93,007 | 23,298 | 3-6, 370,577 | 0.5596 / 0.5346 / 0.5362 | pass | **H0** after 177, 78-99 (44.1%) | - | | 9.8 / 0.1 / 0.6 / - / 10.5 |
+
+**Stopped after round 6: 3 rounds in a row without a promotion.** 58 minutes in all (59 wall), within the 2-hour cap. A round took 8-11 minutes, nearly all of it self-play (10.7 games/s in round 1, slowing round by round to 8.5 in round 6 with the same mix of games, probably the laptop throttling over an hour at full load); the fits took 2-6 s and the matches 10-70 s.
+
+### The promoted value, pi03
+
+`src/minimax_games/games/star_realms/models/pi03.npz` (`value.load("pi03")`, `planner:pi03`): the network fitted in round 3 to rounds 1-3's 12,000 training games (278,929 states), all played by `mlp`'s planner. Two checks after the run, same planner settings, in Rust on 8 threads:
+
+```python
+from pathlib import Path
+from minimax_games.games.star_realms import iterate, selfplay
+from minimax_games.games.star_realms.value import load
+players = {"mlp": selfplay.Planner(load("mlp")), "pi03": selfplay.Planner(load("pi03")), "heuristic": "heuristic"}
+for a, b, seeds, name in [("mlp", "heuristic", range(500), "ladder-mlp"),
+                          ("pi03", "mlp", range(4_000_000, 4_000_500), "confirm-pi03-mlp")]:
+    named = iterate._alternating(a, b, seeds)
+    played = selfplay.play([(s, players[x], players[y]) for s, x, y in named], threads=8)
+    iterate._write_games(Path(f"{name}.csv"), named, played.winners, played.turns)
+```
+
+
+| Match (first bot's results) | Seeds | Wins | Win% | 95% interval | As 1st | Time |
+|---|---|---|---|---|---|---|
+| planner:pi03 vs planner:mlp | 4,000,000-4,000,499 | 290/500 | **58.0%** | 53.6-62.2% | 164/250 | 59 s |
+| planner:mlp vs heuristic (replayed in Rust) | 0-499 | 345/500 | 69.0% | 64.8-72.9% | 189/250 | 27 s |
+| planner:pi03 vs heuristic (the ladder match) | 0-499 | 351/500 | 70.2% | 66.0-74.0% | 193/250 | 39 s |
+
+- `mlp`'s ladder match in Rust reproduces Milestone 8 (the planner with a learned value) exactly, 345/500 and 189 as first player, so the Rust self-play and the Python planner play the same games here too.
+- **pi03 beats mlp head to head**, 60.5% in its gating match and 58.0% on 500 fresh seeds: the promotion holds up, it isn't the SPRT's 5% false positive.
+- **Against the heuristic it is level with mlp**: 70.2% against 69.0% on the same seeds, and paired by seed, pi03 alone won 80 games and mlp alone 74 (271 both): no difference.
+
+### Reading it
+
+- **One step of improvement, then a plateau.** The loop found one value that beats `mlp` (by about 8-10 points head to head), and three more rounds, fitted on up to 16,000 games of `pi03`'s and `mlp`'s play, failed to beat `pi03`: 49.5%, 35.6% and 44.1%.
+- **The offline gate passed every round, and predicted the match only once in six.** Every candidate had a lower held-out log-loss than the current best on its own round's games, yet four of the five matches went to H0, two of them clearly worse (35.6%). Log-loss on the current best's own states measures how well a value predicts outcomes where the current best goes; the planner instead takes the maximum over thousands of ends per turn, most of them states the current best would never reach, and a fit's errors there are what it exploits. The pre-gate costs nothing, so it does no harm, but as built it barely filters. Scoring a candidate on the planner's alternative ends (the states it rejects, labelled by playing them out) would be a gate that tracks play.
+- **The candidates vary a lot between rounds.** Rounds 1 and 5 lost 35.6%, round 3 won 60.5%, with similar data. Fits from scratch on about 100,000-370,000 states of near-identical play give values whose games differ by up to 25 points, so a round's promotion is partly the luck of the fit. Fitting with several seeds, or averaging them, would steady it, as would larger windows.
+- **No gain against the heuristic.** The heuristic is a quarter of every round's games, yet beating `mlp` didn't carry over to beating the heuristic more often. The improvement is in the mirror match, which is what self-play trains for.
+- **What it suggests next**, as the design anticipates for a plateau (the form, not the data): the network's capacity and targets. Temporal-difference targets (or Monte Carlo targets averaged over several playouts per state) cut the label noise of single game results, which at about 90,000 states per round may be what makes the fits vary; a wider network or richer features; and a gate on the planner's off-policy ends. Self-play at about 9-11 games/s keeps each round near 10 minutes, so these can be tried as more runs of the same command.
+
 ## Milestone 7: Rust tracer bullet (toolchain and first-slice engine)
 
 2026-10-21, #137 (tracked by #127), CPython 3.14, Apple M1 (8 GB) shared with three other agents' builds and tests. The first end-to-end path through Rust: maturin builds `minimax_games._native` from `rust/`, and its Star Realms engine plays the starter decks and the 30-card first slice (design, Compiled engine).
