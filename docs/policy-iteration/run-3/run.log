@@ -1,0 +1,8 @@
+Round 1: champion pi03, pool pi03; 4000 training games (92144 states), 1000 held out (22998), 538 s
+Round 1: fitted to rounds 1-1 (92144 states); held-out log-loss logistic 0.5582, mlp 0.5375, champion 0.5328: pi3-01 (mlp, 4 members, TD(0.8) targets) fails the offline gate, 6 s
+Round 2: champion pi03, pool pi03; 4000 training games (92655 states), 1000 held out (23161), 602 s
+Round 2: fitted to rounds 1-2 (184799 states); held-out log-loss logistic 0.5574, mlp 0.5262, champion 0.5248: pi3-02 (mlp, 4 members, TD(0.8) targets) fails the offline gate, 12 s
+Round 3: champion pi03, pool pi03; 4000 training games (92392 states), 1000 held out (23093), 663 s
+Round 3: fitted to rounds 1-3 (277191 states); held-out log-loss logistic 0.5369, mlp 0.5115, champion 0.5146: pi3-03 (mlp, 4 members, TD(0.8) targets) passes the offline gate, 19 s
+Round 3: pi3-03 vs pi03: H0 after 255 games, 119-136 (LLR -2.99)
+Stopped: 3 rounds played

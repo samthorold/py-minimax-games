@@ -1898,6 +1898,42 @@ Script, log, the dataset's record and the per-seed results (seed, first, second,
 - **Part of the gain may be pi03 itself, not less noise.** The bootstrap values are pi03's, so a TD target partly copies pi03's opinion of the next state, and a candidate that copied pi03 exactly would score 50% against it. The lower λ, the more it copies, yet TD(0) did no better than TD(0.95), whose targets are 95% game results, so most of the gain probably is the noise reduction. This experiment can't fully separate the two.
 - **What it suggests**: TD targets, with λ about 0.8, are a better way to label the same games, worth about 7 points against the champion at one round's data. Adopting them in `iterate` (bootstrapping from the current best, on the window of 4 rounds) is the follow-up the issue reserves: on that much data the candidates' starting point is close to pi03's, and 7 points could be enough to get past it. That would be a run, and is not part of this issue.
 
+## Milestone 8: policy-iteration run 3, TD targets
+
+- Date: 2026-10-21
+- Commit: `6709f21` (#171, `iterate --targets td --lam L`), issue #170.
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0, numpy 2.5.4; no other agent running. 8 self-play threads.
+
+The follow-up to the offline test above: TD(0.8) targets in `iterate`, at the data size pi03 was fitted to. Each round, every window round's training targets were rebuilt as TD(0.8) returns from the current best's values of that round's states (design, Learned values: Temporal-difference targets). Held-out log-loss, and with it the offline gate, stayed on game results.
+
+```sh
+uv run python -m minimax_games.games.star_realms iterate --out runs/run-3 --start pi03 \
+    --prefix pi3- --members 4 --targets td --lam 0.8 --threads 8
+```
+
+All other settings were `iterate`'s defaults, the agreed design's, including the short stopping rules: 3 rounds, or 3 in a row without a promotion, or 30 minutes. The candidates were 4-member ensembles as in run 2, and the start was `pi03`, pool {`pi03`}. The run was not resumed or extended.
+
+Records: [policy-iteration/run-3/](policy-iteration/run-3/), holding `state.json`, `run.log` and the per-seed results of the one gating match (`gate-r03.csv`). Nothing was promoted, so there is no ladder match, no confirmation and no model to commit. No game reached the 300-turn cap.
+
+**Same games as run 2.** The seeds are run 2's, and so are the champion (`pi03`, not promoted), the mix and the planner settings. So run 3 played exactly run 2's rounds 1-3: the same state counts (92,144, 184,799 and 277,191 in the windows) and the same champion log-losses. The only difference is the targets, which makes the two runs a paired comparison of Monte Carlo and TD(0.8) targets at one, two and three rounds of data. The gating seeds are shared too.
+
+| Round | Fit on (rounds, states) | Log-loss: logistic / mlp (4 members) / champion | Run 2's mlp (Monte Carlo) | Offline gate | SPRT against pi03 | Promoted | Play / fit / gate / total (min) |
+|---|---|---|---|---|---|---|---|
+| 1 | 1, 92,144 | 0.5582 / 0.5375 / 0.5328 | 0.5482 | **fail** | - | - | 9.0 / 0.1 / - / 9.1 |
+| 2 | 1-2, 184,799 | 0.5574 / 0.5262 / 0.5248 | 0.5282 | **fail** | - | - | 10.0 / 0.2 / - / 10.2 |
+| 3 | 1-3, 277,191 | 0.5369 / 0.5115 / 0.5146 | 0.5041 | pass | **H0** after 255, 119-136 (46.7%, LLR −2.99) | - | 11.0 / 0.3 / 1.0 / 12.3 |
+
+**Stopped after round 3: 3 rounds played**, and none promoted. It took 31.6 minutes, as estimated beforehand from run 2's rounds (about 10-13 minutes each). Play slowed from 9.3 to 7.5 games/s across the rounds, the same slowdown run 1 showed. Building the TD targets (pi03's forward pass on up to 277,000 states) added a few seconds to each fit.
+
+**Paired with run 2's round 3** (seeds 3,020,000-3,020,254, the first 255 games of both gating matches, against the same pi03): TD's pi3-03 won 119, Monte Carlo's pi2-03 won 130 (51.0%). 28 seeds were won only by TD and 39 only by Monte Carlo, a sign test of z ≈ −1.3. Run 2's match went on to 1,000 games and ended undecided at 53.1%.
+
+### Reading it
+
+- **TD targets didn't beat pi03, and didn't beat Monte Carlo targets on the same data.** The one candidate that reached a match lost it (46.7%, H0 after 255 games). On the same 255 seeds the Monte Carlo candidate fitted to the same games did slightly better, 51.0%. The difference isn't significant, but it points the wrong way for the offline gain to have carried over.
+- **The offline result didn't scale with the data.** At one round of data, the offline test had TD(0.8) about 9 points ahead of Monte Carlo against pi03 (48.0% against 39.3%), with a lower log-loss on game results. Here TD's held-out log-loss was lower at one round (0.5375 against 0.5482), about level at two (0.5262 against 0.5282), and higher at three (0.5115 against 0.5041). A likely reading: with little data, TD's bootstrapped targets cut noise that a Monte Carlo fit can't average away, but with three rounds of data the averaging happens anyway, and the bootstrap's bias toward pi03's own values (its errors included) is what remains. The design's warning that TD partly copies the champion fits that.
+- **The offline gate filtered rounds 1 and 2 again**, as in run 2: the candidates fitted to one or two rounds had a higher log-loss than pi03 on its own states.
+- **`pi03` stays the current best**, after three runs and 16 candidates. TD targets stay an option (`--targets td`), and `iterate` still defaults to Monte Carlo. Per the design's stopping rule, the run is not resumed. The plateau now points away from the targets and the fit's seed, and toward the form (a wider network, richer features) or toward a gate that tracks play (the planner's off-policy ends), as run 1's reading suggested.
+
 ## Milestone 7: Rust tracer bullet (toolchain and first-slice engine)
 
 2026-10-21, #137 (tracked by #127), CPython 3.14, Apple M1 (8 GB) shared with three other agents' builds and tests. The first end-to-end path through Rust: maturin builds `minimax_games._native` from `rust/`, and its Star Realms engine plays the starter decks and the 30-card first slice (design, Compiled engine).
