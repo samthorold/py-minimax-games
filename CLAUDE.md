@@ -4,6 +4,8 @@ Minimax (alpha-beta) search applied to games. src layout: the package is `src/mi
 
 A Star Realms game is planned: its agreed design is in [docs/star-realms.md](docs/star-realms.md). Follow it, and update it in the same PR as any change that departs from it.
 
+How learned play and search compare, and where each is strong, is in [docs/learning-and-search.md](docs/learning-and-search.md); research notes behind open proposals (#127 a compiled engine, #128 a learned evaluation) are in `docs/research/`.
+
 ## Tooling
 
 Managed with uv. See the README's Development section for commands.
