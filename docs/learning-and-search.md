@@ -179,7 +179,7 @@ Read together with section 3:
 
 ### 4.4 Implications for #127 and #128
 
-These are readings of the evidence, for the reviews of those issues to challenge, not decisions.
+These are readings of the evidence, written before the reviews of those issues. The design the reviews agreed is in [star-realms.md](star-realms.md) (Search, Compiled engine, Learned values, Milestones 6-8); it chose Rust over Numba for the engine, because the planner's inner loop hashes states into a table.
 
 - **#128 (learned evaluation plus turn planner) matches the guide.** The game's long horizon, chance-dominated hidden information and multi-action turns all point to "a strong evaluation, a short search within the turn, simple sampling for the hidden cards". The cheap test it lists first, a whole-turn planner on the *current* evaluation, separates "the tree wastes budget" from "the leaf is too weak"; the cheat's gain from 4x nodes suggests both are true.
 - **A learned value is the general replacement for hand-chosen card values.** TD learning or Monte Carlo regression on self-play games [5] [read] is the simplest form; a policy trained by PPO is what worked for space-deck-builder [36] [read]; search-guided training (expert iteration) is the next step if search on top helps [8] [abstract].

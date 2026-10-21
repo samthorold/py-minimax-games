@@ -1,6 +1,6 @@
 # Choosing a fast core-engine language for the Star Realms bot
 
-> Research notes for #127, kept as written (2026-10-21). Section 4 drops an earlier wrong constraint, that training had to run on the M1; its ranking supersedes the earlier one. Labels: [V] verified, [A] abstract/README only, [U] unverified.
+> Research notes for #127, kept as written (2026-10-21). Section 4 drops an earlier wrong constraint, that training had to run on the M1; its ranking supersedes the earlier one. The review of #127 chose Rust instead (docs/star-realms.md, Compiled engine). Labels: [V] verified, [A] abstract/README only, [U] unverified.
 
 
 Research date: 2026-10-21. Context: the pure-Python Star Realms engine (frozen dataclasses, about 1,050 lines of rules, about 45k search nodes/s on CPython, PyPy 1.5-1.7x faster), developed on an M1 with 8 GB and no CUDA. The target is self-play learning (a value/policy net in a Python ML framework) plus search (ISMCTS, PIMC or whole-turn enumeration) that calls the net.
