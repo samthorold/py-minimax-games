@@ -534,3 +534,67 @@ def test_td_targets_need_rounds_that_saved_games_and_positions(tmp_path: Path):
     (tmp_path / "state.json").unlink()
     with pytest.raises(ValueError, match="game"):
         iterate.run(replace(TINY, max_rounds=1, targets="td"), tmp_path)
+
+
+# --- the hand-made features -------------------------------------------------
+
+
+def _state_rows() -> tuple[np.ndarray, np.ndarray]:
+    """Real rows (counts) from a few heuristic games: the extra features
+    divide by pool sizes, which random rows don't respect."""
+    from minimax_games.games.star_realms.fit import dataset
+
+    data = dataset(range(6))
+    return data.x, data.y
+
+
+def test_candidates_read_no_extra_features_by_default():
+    assert Settings().extra is False
+    x, y = _state_rows()
+    for model in iterate.fit_candidates(x, y, TINY).values():
+        assert model.extra == ()
+
+
+def test_with_extra_both_forms_read_the_hand_made_features():
+    x, y = _state_rows()
+    settings = replace(TINY, extra=True, members=2)
+    candidates = iterate.fit_candidates(x, y, settings)
+    for form, model in candidates.items():
+        assert model.extra == features.EXTRA
+        expected = value.fit_ensemble(
+            value.LOGISTIC if form == "logistic" else value.Mlp(hidden=TINY.hidden),
+            x,
+            y,
+            seeds=(0, 1),
+            epochs=1,
+            names=features.NAMES,
+            extra=features.EXTRA,
+        )
+        assert np.array_equal(model.predict(x), expected.predict(x))
+
+
+def test_a_run_with_extra_features_promotes_a_model_that_reads_them(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setattr(iterate, "pregate", lambda candidate, best: True)
+    monkeypatch.setattr(
+        iterate, "decide", lambda outcomes, test, limit: (Hypothesis.H1, 3)
+    )
+    settings = replace(TINY, max_rounds=2, prefix="x", extra=True)
+    iterate.run(settings, tmp_path, log=lambda _: None)
+    _, second = _state(tmp_path)["rounds"]
+    assert second["champion"] == "x01"
+    saved = value.Model.load(tmp_path / "models" / "x01.npz")
+    assert saved.extra == features.EXTRA
+    assert _state(tmp_path)["settings"]["extra"] is True
+
+
+def test_a_run_from_before_extra_features_resumes_without_them(tmp_path: Path):
+    iterate.run(replace(TINY, max_rounds=1), tmp_path, log=lambda _: None)
+    path = tmp_path / "state.json"
+    state = json.loads(path.read_text())
+    del state["settings"]["extra"]
+    path.write_text(json.dumps(state))
+    with pytest.raises(ValueError, match="extra"):
+        iterate.run(replace(TINY, max_rounds=1, extra=True), tmp_path)
+    iterate.run(replace(TINY, max_rounds=1), tmp_path, log=lambda _: None)

@@ -132,6 +132,8 @@ class Settings:
     (`targets`)."""
     lam: float = 0.8
     """The λ of TD targets; unused by Monte Carlo ones."""
+    extra: bool = False
+    """Whether the fits read the hand-made features too (`features.EXTRA`)."""
     epochs: int = EPOCHS
     batch: int = BATCH
     learning_rate: float = LEARNING_RATE
@@ -279,7 +281,8 @@ def fit_candidates(
     x: np.ndarray, y: np.ndarray, settings: Settings
 ) -> dict[str, Model]:
     """Both forms, fitted from scratch to rows `x` and labels `y`, each an
-    ensemble of `settings.members` fits from consecutive seeds."""
+    ensemble of `settings.members` fits from consecutive seeds, reading the
+    hand-made features too if `settings.extra`."""
     forms = {"logistic": LOGISTIC, "mlp": Mlp(hidden=settings.hidden)}
     seeds = range(settings.fit_seed, settings.fit_seed + settings.members)
     return {
@@ -293,6 +296,7 @@ def fit_candidates(
             learning_rate=settings.learning_rate,
             l2=settings.l2,
             names=features.NAMES,
+            extra=features.EXTRA if settings.extra else (),
         )
         for name, form in forms.items()
     }
@@ -566,7 +570,8 @@ def _round(
         f" ({window_states} states); held-out log-loss logistic"
         f" {losses['logistic']:.4f}, mlp {losses['mlp']:.4f}, champion"
         f" {losses['champion']:.4f}: {name} ({form}, {settings.members}"
-        f" member{'s' if settings.members > 1 else ''}, {_targets_name(settings)})"
+        f" member{'s' if settings.members > 1 else ''}, {_targets_name(settings)}"
+        f"{', hand-made features' if settings.extra else ''})"
         f" {'passes' if passed else 'fails'} the offline gate,"
         f" {seconds['fit']:.0f} s"
     )
