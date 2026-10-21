@@ -2,13 +2,14 @@ import math
 import random
 
 from minimax_games.games.star_realms import rules
-from minimax_games.games.star_realms.bots import GreedyBot
+from minimax_games.games.star_realms.bots import GreedyBot, HeuristicBot
 from minimax_games.games.star_realms.evaluate import WIN, evaluate
 from minimax_games.games.star_realms.rollout import (
     SCALE,
     SPAN,
     Rollout,
     greedy,
+    heuristic,
     playout,
 )
 from minimax_games.games.star_realms.state import GameState
@@ -67,3 +68,27 @@ def test_an_unfinished_playout_scores_its_win_probability():
     assert end.turn == state.turn + 1
     p = 1 / (1 + math.exp(-evaluate(end, 0) / SCALE))
     assert rollout(state, 0) == round(SPAN * (2 * p - 1))
+
+
+def test_the_heuristic_policy_plays_as_the_heuristic_bot_from_the_movers_view():
+    for seed in range(5):
+        for state in random_states(seed, 120)[::3]:
+            actions = rules.legal_actions(state)
+            view = observe(state, state.current)
+            assert heuristic(state, actions) == HeuristicBot().choose(view, actions)
+
+
+def test_a_playout_can_follow_another_policy():
+    state = next(  # a state where the policies differ at once
+        s
+        for s in random_states(2, 200)
+        if heuristic(s, rules.legal_actions(s)) != greedy(s, rules.legal_actions(s))
+    )
+    rng = random.Random(0)
+    end = playout(state, 2, 0.0, rng, policy=heuristic)
+    expected = state
+    while expected.turn < state.turn + 2 and rules.winner(expected) is None:
+        actions = rules.legal_actions(expected)
+        expected = rules.advance_legal(expected, heuristic(expected, actions))
+    assert end == expected
+    assert end != playout(state, 2, 0.0, rng)  # greedy plays differently here
