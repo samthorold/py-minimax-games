@@ -1539,3 +1539,49 @@ ISMCTS scores its leaves at different turn boundaries: a leaf inside the bot's o
 Paired by seed: +4 on 70 discordant seeds, p = 0.72. **No measurable effect at the default budget.** Whether the correction makes ISMCTS gain from more iterations wasn't tested (4x, about 1-1.5 hours). The flat budget curve is better explained by the leaf evaluation itself than by this bias. A whole-turn planner scores every candidate at the same boundary, so the bias can't affect its choices (design, Search).
 
 Raw outputs and scripts (not committed): `tempo/` (`fit_tempo.py <first seed> <games>`; `run_tempo.py <base|tempo> <first seed> <games> <iterations>`, which subclasses `ismcts.StarRealms` to override its leaf value; `{base,tempo}-450-4000-200.pkl`).
+
+## Milestone 6: full-deck turn sizes
+
+- Date: 2026-10-21
+- Commit: the merge of #132 (measured on its branch, from `main` at e884671).
+- Command: `python -m minimax_games.games.star_realms turn-sizes --games 20 --jobs 2` (or `task turn-sizes -- --games 20 --jobs 2`): every turn of the heuristic-vs-heuristic games of seeds 0-19, each enumerated up to 100,000 states. 2.4 minutes wall time.
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0, shared with other jobs.
+
+The whole-turn planner (design, Search) lists the distinct states reachable at the end of the mover's turn and scores each. `turn_sizes.turn_ends` does that listing, from each turn's first decision on the true state (one world), each state expanded once, as `bench.turn_tree` merges orderings: **end states** are the states after `EndTurn` or a winning play, **within-turn states** the states expanded to reach them, and **states visited** both, which is what a planner's state budget pays for. **Unordered ends** count the ends up to the order of every pile but the decks (hand, discard pile, bases, Trade Row, scrap heap): the positions a value that counts cards by zone can tell apart. A turn past 100,000 states visited is stopped and counted as capped, ranking above every complete turn. The counts are the same on every run; only the ms vary.
+
+483 turns, 33 (7%) capped:
+
+| Count | q1 | median | q3 | p90 | p99 | max |
+|---|---|---|---|---|---|---|
+| End states | 26 | 110 | 1,182 | 12,214 | capped | capped |
+| Unordered ends | 20 | 79 | 430 | 3,357 | capped | capped |
+| Within-turn states | 26 | 115 | 1,412 | 15,470 | capped | capped |
+| States visited | 52 | 224 | 2,492 | 28,876 | capped | capped |
+| ms (CPython) | 2 | 10 | 135 | 1,446 | 6,767 | 9,717 |
+
+Share of turns visiting more states than a budget (capped turns count as over):
+
+| Turns | Count | median visited | p90 visited | > 1k | > 5k | > 20k | > 100k |
+|---|---|---|---|---|---|---|---|
+| all | 483 | 224 | 28,876 | 34% | 20% | 12% | 7% |
+| 1-5 | 100 | 32 | 116 | 1% | 0% | 0% | 0% |
+| 6-10 | 100 | 168 | 3,156 | 23% | 8% | 5% | 0% |
+| 11-15 | 100 | 284 | 15,835 | 33% | 15% | 7% | 2% |
+| 16-20 | 93 | 1,890 | 48,673 | 53% | 34% | 16% | 9% |
+| 21-25 | 64 | 2,541 | capped | 62% | 42% | 30% | 25% |
+| 26-30 | 24 | 16,820 | capped | 75% | 54% | 50% | 25% |
+| 31-35 | 2 | 65,406 | capped | 100% | 100% | 100% | 50% |
+
+Over the 450 complete turns: 739,789 ends, 258,292 up to pile order, and 984,080 within-turn states, enumerated at 19,100 states/s.
+
+### Reading it
+
+- **The distribution is heavy-tailed and grows with the game.** The median turn visits 224 states and three quarters stay under 2,500, but the 90th percentile is 29,000 and 7% pass 100,000. The opening is trivial (turns 1-5, under 120 states at the 90th percentile); from turn 21 on, a quarter of turns pass 100,000, and those late turns, with big decks, many bases and lethal in reach, are where within-turn tactics matter most.
+- **Ends are most of the work, and two thirds of them are pile order.** Within-turn states are about as many as ends (1.3x over complete turns), so a canonical ordering of commuting actions can't shrink a turn by more than its within-turn share plus the ends it merges. Most ends that differ do so only in the order of a pile: up to pile order there are 2.9x fewer (3.6x at the 90th percentile), because playing the same cards in another order leaves the discard pile in another order. A discard pile's order is a real difference in the true world (it decides the deck it is shuffled into), but not to a value that counts cards by zone, nor across sampled worlds, which reshuffle anyway. So a canonical form saves a factor of about 3, not the factors of thousands the transposition table removed (Milestone 2b).
+- **The cost on CPython** is about 50 µs per state visited: a 20,000-state plan takes about 1 s.
+
+### Recommended default budget
+
+**20,000 states per plan, shared by the worlds**, enumerated depth first with the greedy policy's preferred moves first (design, Search). It lists every end of 88% of turns, and of 96% before turn 16, for about 1 s per plan on CPython, so 1-3 plans per turn cost at most a few seconds a turn (the median turn's plan takes 10 ms): playable for one tournament stopped by a sequential test, and about the per-decision cost the Rust engine has to cut for self-play. A smaller budget leaves too many mid-game turns unfinished (5,000 misses 20% of all turns and 34-54% from turn 16), and a larger one buys little: 100,000 still misses 7%, at five times the cost. With N worlds, each world after the shared part before the first chance event gets its share (5,000 at N = 4, which finishes 80% of turns).
+
+**The budget binds often enough in the late game (30-50% of turns from turn 21 at 20,000) that the exact fix comes first**, as the design says: canonical orderings of commuting actions, together with merging ends up to pile order, measured against this table. Expect about a factor of 3, which turns the 20,000 budget into one that finishes roughly the turns under 60,000 states today (between the 88% and 93% finished at 20,000 and 100,000). It will not close the tail: the capped turns are at least 100,000 states and some far more, so the planner must still play its best end found so far when the budget runs out, and approximate search within the turn is for those turns.
