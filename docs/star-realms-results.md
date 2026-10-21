@@ -1446,3 +1446,77 @@ This is what the research predicted (docs/ismcts.md, §1): in Star Realms the hi
 `IsmctsBot`'s defaults stay as chosen: 450 iterations, `c` 0.7, epsilon 0.25, the greedy playout, the leaf at the end of its turn.
 
 Raw outputs (not committed): `m5/ismcts/` (`cost-*.txt`, the CPython costs (`cost-sampler-5000-4000-4.txt`, `cost-ismcts-<N>-4000-4.txt`, `cost-variants-idle.txt`, `cost-policy-idle.txt`, `cost-4x-idle.txt`; `cost-leaf-settings.txt`, `cost-horizon.txt` contended); `diag-ismcts-{450,1800}.txt`, the tree diagnostics; `sel-*-4000.{txt,pkl}`, the selection runs; `fin-*-<first seed>.{txt,pkl}` and the combined `fin-*-all.txt`, the final runs; `fin-paired-*.txt`; `scripts/` (`probe.py`, `probe_extra.py`, `run_part.py`, `paired.py`, `combine_all.py`)).
+
+## Milestone 5: the ladder
+
+- Date: 2026-10-21
+- Commit: `1531a34` (main after #117), no code changes. The defaults the milestone-5 slices chose: the linear evaluation with the hand-chosen card values (#114, kept by #115's tuning and by #116's rollout comparison), the cheat and the sampler at a 2-turn horizon and **5,000 nodes per decision** (`cheat.BUDGET`; the sampler's 4 worlds 1,250 each), ISMCTS at **450 iterations**, `c` 0.7, epsilon 0.25 (#117).
+- **Equal compute**: the cheat and the sampler share the node budget, as in the milestone-3 and -4 ladders. ISMCTS's 450 iterations were matched to the sampler by ms per decision on CPython 3.14.0, alone (97 against 94 ms; Milestone 5: ISMCTS, Cost). Under PyPy ISMCTS spends about 20% more time per decision than the sampler (107 against the sampler's 89.6 ms/move, each against the heuristic, contended), so if anything the matching favours ISMCTS a little.
+- Interpreters: the new runs on **PyPy 3.12.14** (`task pypy`'s `.venv-pypy`, installed from `1531a34`); the reused cheat run on CPython 3.14.0. Results are identical on both (Milestone 5: PyPy re-measured); only ms/move differs.
+- Machine: Apple M1 MacBook, 8 GB, run under `caffeinate -i`; shared at times (load average 3-6 near the end of the sampler-vs-cheat run), so ms/move and wall times are contended.
+
+500 games per pairing, seeds 0-499, alternating seats, max 300 turns, `--jobs 3`, each pairing as five runs of 100 consecutive seeds (0-99, ..., 400-499) one after another in the foreground, combined with `tournament.combine`. Each run equals `task pypy -- tournament --bots <A> <B> --games 100 --base-seed <first seed> --jobs 3` (a scratch script, `run_part.py <name> <A> <B> <first seed> 100`, calling `tournament.play_tournament` with `cli.configured`'s bots so the per-seed results could be pickled and paired). All six pairings ran the full 500 games (no departure). No game was unfinished.
+
+### Reused and new runs
+
+Four of the six pairings had already been played at seeds 0-499 by the slices that chose the defaults, with code whose moves are unchanged since, so they were reused rather than replayed:
+
+| Pairing | Source | Commit run | Why still valid |
+|---|---|---|---|
+| cheat vs heuristic | Milestone 5: card values (#114), CPython | `586d7b4` (= `93c9efb`, its squash merge) | Since then #115 and #116 changed no default (weights kept, `Linear(WEIGHTS)` the default evaluator), #116 routed the evaluation through `Linear.__call__` and #117 moved `GreedyBot.choose`'s body into `bots.greedy_move` unchanged: refactors. **Checked by replaying** seeds 400-499 at `1531a34`'s defaults on PyPy: every game the same first player, winner and turns, and the same decision counts (7,508 cheat, 6,562 heuristic) as #114's run (43/100 both times). |
+| sampler vs heuristic | Milestone 5: ISMCTS (#117), PyPy | `7aaf99b` | `src/` is identical in `7aaf99b` and `1531a34` (the squash merge). |
+| ismcts vs heuristic | the same | `7aaf99b` | the same |
+| ismcts vs sampler | the same | `7aaf99b` | the same |
+| ismcts vs greedy | **new** | `1531a34` | |
+| sampler vs cheat | **new** | `1531a34` | |
+
+### The ladder
+
+| Pairing (first bot's results) | Wins | Win% | 95% interval | As 1st | As 2nd | ms/move | Wall time |
+|---|---|---|---|---|---|---|---|
+| cheat vs heuristic | 260/500 | **52.0%** | 47.6-56.3% | 152/250 | 108/250 | 119 (CPython) | 25.7 min (CPython) |
+| sampler vs heuristic | 167/500 | **33.4%** | 29.4-37.6% | 89/250 | 78/250 | 89.6 | 19.4 min |
+| ismcts vs heuristic | 173/500 | **34.6%** | 30.6-38.9% | 99/250 | 74/250 | 107 | 17.8 min |
+| ismcts vs sampler | 243/500 | 48.6% | 44.2-53.0% | 125/250 | 118/250 | 86.8 (sampler 71.1) | 28.6 min |
+| ismcts vs greedy | 373/500 | 74.6% | 70.6-78.2% | 194/250 | 179/250 | 95.7 | 19.6 min |
+| sampler vs cheat | 181/500 | 36.2% | 32.1-40.5% | 111/250 | 70/250 | 75.2 (cheat 58.1) | 25.7 min |
+
+ms/move is PyPy unless marked, contended by the three processes. The two new pairings: ismcts vs greedy, mean 26.5 turns, 34,044 ISMCTS decisions (68 per game), 0.91 hours of ISMCTS thinking time, the first player won 265/500; the five runs 73, 72, 77, 77 and 74 wins of 100. sampler vs cheat, mean 23.5 turns, 33,464 sampler and 32,029 cheat decisions (67 and 64 per game), 0.70 and 0.52 hours, the first player won 291/500; the five runs 38, 36, 43, 28 and 36 wins of 100. The reused pairings' details are in their sections.
+
+**Paired** on the same seeds against the heuristic (exact two-sided sign test on the seeds one won and the other lost):
+
+| Comparison | Result |
+|---|---|
+| cheat vs sampler | +93 on 171 discordant (132, 39), p < 0.001 |
+| cheat vs ismcts | +87 on 199 (143, 56), p < 0.001 |
+| ismcts vs sampler (Milestone 5: ISMCTS) | +6 on 184 (95, 89), p = 0.71 |
+
+### Against milestone 4
+
+The same pairings, seeds and seats in the milestone-4 ladder (the full deck, `evaluate` scoring only primary trade and combat). The p-value compares two independent 500-game rates. ISMCTS didn't exist in milestone 4; for scale, the heuristic beat greedy 90.6% and the sampler 62.4% there (the heuristic's and greedy's moves haven't changed since).
+
+| Pairing (first bot's win rate) | Milestone 4 | Milestone 5 | Change | p |
+|---|---|---|---|---|
+| cheat vs heuristic | 32.8% | **52.0%** | +19.2 | < 0.0001 |
+| sampler vs heuristic | 27.2% | **33.4%** | +6.2 | 0.03 |
+| sampler vs cheat | 40.0% | 36.2% | -3.8 | 0.22 |
+| ismcts vs heuristic | | 34.6% | | |
+| ismcts vs sampler | | 48.6% | | |
+| ismcts vs greedy (sampler vs greedy in milestone 4) | (62.4%) | 74.6% | | |
+
+### Reading the ladder
+
+**cheat ≈ heuristic >> ismcts ≈ sampler > greedy.**
+
+- **No legitimate bot beats the heuristic.** The strongest are **ISMCTS, 34.6% (30.6-38.9%), and the sampler, 33.4% (29.4-37.6%)**, level with each other: +6 on 184 discordant seeds (p = 0.71) against the heuristic, and 48.6% (44.2-53.0%) head to head. ISMCTS is nominally ahead by 1.2 points; the measurements can't separate them. Both are far below 50% against the heuristic (p < 0.0001), and ISMCTS beats greedy 74.6% where the heuristic does 90.6%. The heuristic stays the bar for a legitimate bot.
+- **The card values lifted the cheat much more than the sampler.** The cheat gained 19.2 points against the heuristic (32.8% to 52.0%) and is now level with it; the sampler, with the same evaluation and total budget, gained 6.2 (27.2% to 33.4%, p = 0.03). On the same seeds the cheat wins 93 more games against the heuristic than the sampler, and head to head the sampler's share fell a little, 40.0% to 36.2% (within noise, p = 0.22). So the cost of not seeing the hidden cards at equal compute is now about 19 points against the heuristic, where it was about 6. A likely reason, not isolated by an ablation: the sampler splits the 5,000 nodes over 4 worlds, so each world searches 1,250, and on the full deck budget now matters (#116: the cheat at 4x the nodes gained 8 points). With a better evaluation, each world's shallower search may waste more of it.
+- **The seed range matters about as much as some of these differences.** The default cheat scored 52.0% against the heuristic on seeds 0-499, but 43.8% on 1000-1499 (Milestone 5: tuning) and 43.2% on 2000-2499 (Milestone 5: rollouts), the same code: so "level with the heuristic" holds on the ladder's seeds, and on the 1,500 seeds measured the cheat is a little below it. Comparisons on the same seeds (all of the above) are unaffected; a single rate is uncertain by more than its interval suggests.
+
+**What should come next.**
+
+- **Search efficiency, first: a canonical order for buys and attacks** (closed #105). It is the measured cause of unfinished searches on the full deck (Milestone 4: search speed), budget now pays (#116: the cheat at 20,000 nodes rose from 43.2% to 51.4% on seeds 2000-2499, +41 on 81 discordant seeds, p < 0.001), and collapsing orderings would make every node count for the cheat, the sampler's smaller per-world searches and ISMCTS (whose tree spends its iterations on micro-action orderings; docs/ismcts.md §5, item 3) alike.
+- **Then the budget and K sweeps for the sampler**, unmeasured since the card values: if the sampler's lag behind the cheat is its per-world budget, fewer worlds or more nodes will show it. A larger default budget is a separate decision with a 3-4x cost in tournament time.
+- **For ISMCTS, the leaf, not the budget** (#117): 4x the iterations gained nothing (+1 on 61 seeds), while leaf changes moved it by up to 24 games of 200. Priors on the micro-actions (progressive bias) or implicit minimax backups with `evaluate` (docs/ismcts.md §5, items 4 and 5) are the levers there.
+- **A learned evaluation** stays deferred: tuning the linear weights (#115) and greedy rollouts (#116) didn't beat the hand-chosen card values, and the cheat, the upper bound for the legitimate bots, is already level with the heuristic; the gap to close is in the legitimate bots' search, not the cheat's evaluation.
+
+Raw outputs (not committed): `m5/ladder/` (`fin-ismcts-greedy-<first seed>.{txt,pkl}`, `fin-sampler-cheat-<first seed>.{txt,pkl}` and the combined `fin-*-all.txt`; `check-cheat-heuristic-400.{txt,pkl}`, the replay checking the reused cheat run; `paired-cheat-vs-{sampler,ismcts}-heuristic.txt`; `scripts/` (`run_part.py`, `all.sh`, `combine_all.py`, `paired.py`)); the reused runs in `m5/cardvalue/` and `m5/ismcts/`.
