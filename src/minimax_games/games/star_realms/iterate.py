@@ -106,10 +106,10 @@ class Settings:
     h1: float = 0.55
     alpha: float = 0.05
     beta: float = 0.05
-    max_rounds: int = 10
+    max_rounds: int = 3
     patience: int = 3
     """Stop after this many rounds in a row without a promotion."""
-    hours: float = 2.0
+    hours: float = 0.5
     """Start no round once the rounds so far have taken this long."""
     worlds: int = WORLDS
     budget: int = BUDGET

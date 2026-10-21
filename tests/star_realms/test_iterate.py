@@ -205,7 +205,7 @@ def test_only_an_accepted_h1_promotes():
 
 
 def test_stops_after_patience_rounds_in_a_row_without_a_promotion():
-    settings = Settings()
+    settings = Settings(max_rounds=10)
     assert iterate.stop_reason([], 0, settings) is None
     assert iterate.stop_reason([False, False], 0, settings) is None
     assert iterate.stop_reason([True, False, False, True, False], 0, settings) is None
@@ -225,6 +225,15 @@ def test_stops_once_the_time_cap_has_passed():
     settings = Settings(hours=2.0)
     assert iterate.stop_reason([True], 7199, settings) is None
     assert "2 hours" in (iterate.stop_reason([True], 7200, settings) or "")
+
+
+def test_a_default_run_is_short():
+    settings = Settings()
+    assert "3 rounds played" in (
+        iterate.stop_reason([True, True, True], 0, settings) or ""
+    )
+    assert iterate.stop_reason([True], 1799, settings) is None
+    assert "0.5 hours" in (iterate.stop_reason([True], 1800, settings) or "")
 
 
 # --- whole runs --------------------------------------------------------------
