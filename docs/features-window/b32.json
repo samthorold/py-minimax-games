@@ -1,0 +1,17 @@
+{
+  "candidate": "b32",
+  "extra": 0,
+  "train_log_loss": 0.5022,
+  "held_out_log_loss": 0.5137,
+  "fit_seconds": 15.4,
+  "match": {
+    "games": 300,
+    "wins": 134,
+    "finished": 300,
+    "win_pct": 44.7,
+    "wilson_low": 39.1,
+    "wilson_high": 50.3,
+    "wins_as_first": 76,
+    "seconds": 42.3
+  }
+}

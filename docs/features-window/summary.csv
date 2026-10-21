@@ -1,0 +1,4 @@
+candidate,extra,train_log_loss,held_out_log_loss,fit_seconds,games,wins,finished,win_pct,wilson_low,wilson_high,wins_as_first,match_seconds
+pi03,0,0.521,0.5204,,,,,,,,,
+b32,0,0.5022,0.5137,15.4,300,134,300,44.7,39.1,50.3,76,42.3
+f32,28,0.4963,0.5088,18.8,300,169,300,56.3,50.7,61.8,98,49.5
