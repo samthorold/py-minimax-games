@@ -1,0 +1,19 @@
+pi03 log-loss: training 0.5280, held-out 0.5161
+{'candidate': 'w32', 'hidden': 32, 'extra': 0, 'parameters': 24580, 'train_log_loss': 0.5056, 'held_out_log_loss': 0.5294, 'wins': 122, 'finished': 300, 'wins_as_first': 75, 'ms_per_plan': 10.26, 'fit_seconds': 3.8, 'match_seconds': 40.6, 'timing_seconds': 11.9}
+{'candidate': 'w64', 'hidden': 64, 'extra': 0, 'parameters': 49156, 'train_log_loss': 0.5053, 'held_out_log_loss': 0.5278, 'wins': 127, 'finished': 300, 'wins_as_first': 75, 'ms_per_plan': 17.77, 'fit_seconds': 5.3, 'match_seconds': 58.6, 'timing_seconds': 22.1}
+{'candidate': 'w128', 'hidden': 128, 'extra': 0, 'parameters': 98308, 'train_log_loss': 0.5064, 'held_out_log_loss': 0.5263, 'wins': 117, 'finished': 300, 'wins_as_first': 67, 'ms_per_plan': 27.7, 'fit_seconds': 7.5, 'match_seconds': 96.4, 'timing_seconds': 33.9}
+w32: train 0.5056 held-out 0.5294, 122/300 (40.7%, 35.3-46.3), vs w32 +0/-0 (z 0.00), 10.26 ms/plan
+w64: train 0.5053 held-out 0.5278, 127/300 (42.3%, 36.9-48.0), vs w32 +39/-34 (z 0.59), 17.77 ms/plan
+w128: train 0.5064 held-out 0.5263, 117/300 (39.0%, 33.7-44.6), vs w32 +43/-48 (z -0.52), 27.7 ms/plan
+real 281.48
+user 1422.95
+sys 9.71
+pi03 log-loss: training 0.5280, held-out 0.5161
+{'candidate': 'f32', 'hidden': 32, 'extra': 28, 'parameters': 28164, 'train_log_loss': 0.4897, 'held_out_log_loss': 0.5157, 'wins': 151, 'finished': 300, 'wins_as_first': 86, 'ms_per_plan': 14.92, 'fit_seconds': 4.4, 'match_seconds': 58.9, 'timing_seconds': 18.3}
+w32: train 0.5056 held-out 0.5294, 122/300 (40.7%, 35.3-46.3), vs w32 +0/-0 (z 0.00), 10.26 ms/plan
+w64: train 0.5053 held-out 0.5278, 127/300 (42.3%, 36.9-48.0), vs w32 +39/-34 (z 0.59), 17.77 ms/plan
+w128: train 0.5064 held-out 0.5263, 117/300 (39.0%, 33.7-44.6), vs w32 +43/-48 (z -0.52), 27.7 ms/plan
+f32: train 0.4897 held-out 0.5157, 151/300 (50.3%, 44.7-56.0), vs w32 +64/-35 (z 2.91), 14.92 ms/plan
+real 82.39
+user 401.09
+sys 3.27

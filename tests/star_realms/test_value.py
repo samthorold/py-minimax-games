@@ -229,3 +229,64 @@ def test_fit_ensemble_fits_one_member_per_seed():
     for member, seed in zip(model.members, (3, 4), strict=True):
         alone = fit(LOGISTIC, x, y, seed=seed, epochs=2)
         assert all(np.array_equal(member[n], alone.params[n]) for n in member)
+
+
+def state_rows(games: range = range(2)) -> tuple[np.ndarray, np.ndarray]:
+    from minimax_games.games.star_realms.fit import dataset
+
+    data = dataset(games)
+    return data.x, data.y
+
+
+def test_a_model_with_extra_features_reads_them_from_the_counts():
+    x, y = state_rows()
+    model = fit(
+        Mlp(hidden=3),
+        x,
+        y,
+        seed=0,
+        epochs=2,
+        names=features.NAMES,
+        extra=features.EXTRA,
+    )
+    assert model.extra == features.EXTRA
+    assert len(model.mean) == len(features.NAMES) + len(features.EXTRA)
+    assert model.params["w1"].shape == (len(model.mean), 3)
+    # the same as a model of the widened rows
+    widened = np.hstack([x, features.extra(x).astype(x.dtype)])
+    plain = Model(model.form, model.names, model.mean, model.std, model.members)
+    np.testing.assert_array_equal(model.predict(x), plain.predict(widened))
+    ValueEvaluator(model)  # still a value of features.NAMES
+
+
+def test_a_model_with_extra_features_saves_and_loads_them(tmp_path):
+    x, y = state_rows()
+    model = value.fit_ensemble(
+        LOGISTIC,
+        x,
+        y,
+        seeds=(0, 1),
+        epochs=1,
+        names=features.NAMES,
+        extra=features.EXTRA,
+    )
+    model.save(tmp_path / "m.npz")
+    loaded = Model.load(tmp_path / "m.npz")
+    assert loaded.extra == features.EXTRA
+    assert np.array_equal(loaded.predict(x), model.predict(x))
+    with np.load(tmp_path / "m.npz", allow_pickle=False) as data:
+        assert all(data[key].dtype != object for key in data.files)
+
+
+def test_a_model_without_extra_features_saves_none(tmp_path):
+    x, y = toy()
+    fit(LOGISTIC, x, y, seed=0, epochs=1).save(tmp_path / "m.npz")
+    with np.load(tmp_path / "m.npz", allow_pickle=False) as data:
+        assert "extra" not in data.files
+    assert Model.load(tmp_path / "m.npz").extra == ()
+
+
+def test_only_the_known_extra_features_are_taken():
+    x, y = toy()
+    with pytest.raises(ValueError, match="extra"):
+        fit(LOGISTIC, x, y, seed=0, epochs=1, extra=("kill threat",))

@@ -4,13 +4,14 @@ training rows against `fit`'s, and the Rust planner's games against the
 Python planner's with the same model (docs/star-realms.md, Compiled engine:
 self-play)."""
 
+import functools
 import random
 
 import numpy as np
 import pytest
 
 from minimax_games._native import star_realms as native
-from minimax_games.games.star_realms import fit
+from minimax_games.games.star_realms import features, fit, value
 from minimax_games.games.star_realms.action import Action
 from minimax_games.games.star_realms.bots import Bot, GreedyBot, HeuristicBot
 from minimax_games.games.star_realms.match import play_match
@@ -93,9 +94,28 @@ def _real_rows() -> np.ndarray:
 REAL_ROWS = _real_rows()
 
 
+@functools.cache
+def _extra_model() -> Model:
+    """An ensemble of 2 small networks reading `features.EXTRA` too, fitted
+    to a few heuristic games."""
+    data = fit.dataset(range(40))
+    return value.fit_ensemble(
+        Mlp(hidden=8),
+        data.x,
+        data.y,
+        seeds=(0, 1),
+        epochs=3,
+        names=features.NAMES,
+        extra=features.EXTRA,
+    )
+
+
 def _value(name: str) -> Model:
-    """A packaged model, or `"ensemble"`: three members, `mlp`'s, `pi03`'s
-    and `mlp`'s again, all under `mlp`'s standardisation."""
+    """A packaged model, `"ensemble"`: three members, `mlp`'s, `pi03`'s and
+    `mlp`'s again, all under `mlp`'s standardisation, or `"extra"`, a model
+    reading the extra features (`_extra_model`)."""
+    if name == "extra":
+        return _extra_model()
     if name != "ensemble":
         return load(name)
     mlp = load("mlp")
@@ -103,7 +123,7 @@ def _value(name: str) -> Model:
     return Model(mlp.form, mlp.names, mlp.mean, mlp.std, members)
 
 
-@pytest.mark.parametrize("name", ["logistic", "mlp", "ensemble"])
+@pytest.mark.parametrize("name", ["logistic", "mlp", "ensemble", "extra"])
 def test_the_forward_pass_agrees_with_numpy_on_real_rows(name: str):
     model = _value(name)
     assert len(REAL_ROWS) > 5_000
@@ -186,7 +206,15 @@ class _Recorder:
 
 @pytest.mark.parametrize(
     ("seed", "model"),
-    [(0, "logistic"), (1, "mlp"), (2, "mlp"), (3, "ensemble"), (4, "ensemble")],
+    [
+        (0, "logistic"),
+        (1, "mlp"),
+        (2, "mlp"),
+        (3, "ensemble"),
+        (4, "ensemble"),
+        (5, "extra"),
+        (6, "extra"),
+    ],
 )
 def test_the_rust_planner_plays_the_python_planner_s_games(seed: int, model: str):
     value = _value(model)
@@ -217,3 +245,12 @@ def test_the_rust_planner_plays_the_python_planner_s_games(seed: int, model: str
     assert rust.plans[0, me] == bot.plans >= 20
     assert rust.diverged[0, me] == bot.diverged
     assert rust.plans[0, 1 - me] == 0
+
+
+def test_a_model_s_extra_features_cross_with_it():
+    model = native_model(_extra_model())
+    assert set(model["extra"]) == {"combat", "faction", "base_card"}
+    assert "extra" not in native_model(load("mlp"))
+    # without them, its inputs don't fit the rows
+    with pytest.raises(ValueError, match="features"):
+        native.predict({k: v for k, v in model.items() if k != "extra"}, REAL_ROWS)

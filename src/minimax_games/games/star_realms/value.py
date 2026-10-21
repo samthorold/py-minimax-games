@@ -12,7 +12,9 @@ A `Model` is a form's parameters with the features' names and the mean and
 spread it standardises them by. It may hold several members, fits of the
 form from different seeds to the same rows (`fit_ensemble`), and its win
 probability is then the mean of theirs: an ensemble, steadier than any one
-fit. It is saved as an `.npz` of plain arrays,
+fit. A model may also read `features.EXTRA`, hand-made features it
+computes from the counts of each row (`features.extra`) and appends before
+standardising (#173). It is saved as an `.npz` of plain arrays,
 never a pickle (which runs code when loaded), and models in the package's
 `models/` directory load by name (`load`). `ValueEvaluator` wraps one as an
 `evaluate.Evaluator`.
@@ -157,18 +159,22 @@ class Model:
     std`), the features named `names`, with one set of parameters per
     member. Its win probability is the mean of its members' (an ensemble of
     fits from different seeds, `fit_ensemble`); a model of one member is a
-    single fit."""
+    single fit. With `extra` (`features.EXTRA`), the rows it is given are
+    widened by their extra features (`features.extra`) before standardising,
+    so `mean` and `std` cover both."""
 
     form: str
     names: tuple[str, ...]
     mean: np.ndarray
     std: np.ndarray
     members: tuple[Params, ...]
+    extra: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.members:
             msg = "a model has at least 1 member"
             raise ValueError(msg)
+        _check_extra(self.extra)
 
     @property
     def params(self) -> Params:
@@ -183,7 +189,7 @@ class Model:
         the members', summed in member order (as the Rust forward pass sums
         them)."""
         form = FORMS[self.form]
-        z = (x - self.mean) / self.std
+        z = (_widen(x, self.extra) - self.mean) / self.std
         if len(self.members) == 1:
             return form.predict(self.members[0], z)
         total = form.predict(self.members[0], z)
@@ -211,6 +217,8 @@ class Model:
             "std": self.std,
             **params,
         }
+        if self.extra:
+            arrays["extra"] = np.array(self.extra)
         np.savez(path, **arrays)
 
     @classmethod
@@ -240,6 +248,11 @@ class Model:
                 mean=data["mean"],
                 std=data["std"],
                 members=members,
+                extra=(
+                    tuple(str(n) for n in data["extra"])
+                    if "extra" in data.files
+                    else ()
+                ),
             )
 
 
@@ -259,11 +272,25 @@ def ensemble(models: Sequence[Model]) -> Model:
             model.names != first.names
             or not np.array_equal(model.mean, first.mean)
             or not np.array_equal(model.std, first.std)
+            or model.extra != first.extra
         ):
             msg = "members share their features and standardisation"
             raise ValueError(msg)
     members = tuple(params for model in models for params in model.members)
-    return Model(first.form, first.names, first.mean, first.std, members)
+    return Model(first.form, first.names, first.mean, first.std, members, first.extra)
+
+
+def _check_extra(extra: tuple[str, ...]) -> None:
+    if extra not in ((), features.EXTRA):
+        msg = f"the extra features are features.EXTRA or none, not {extra}"
+        raise ValueError(msg)
+
+
+def _widen(x: np.ndarray, extra: tuple[str, ...]) -> np.ndarray:
+    """Rows `x` with their extra features appended, in `x`'s precision."""
+    if not extra:
+        return x
+    return np.hstack([x, features.extra(x).astype(x.dtype)])
 
 
 def _models() -> Path:
@@ -290,13 +317,19 @@ def fit(
     learning_rate: float = LEARNING_RATE,
     l2: float = L2,
     names: tuple[str, ...] | None = None,
+    extra: tuple[str, ...] = (),
 ) -> Model:
     """`form` fitted to rows `x` and 0/1 labels `y` by Adam on minibatches.
 
     The features are standardised by their mean and spread over `x` (a
     feature that never varies is left unscaled), in `x`'s own precision:
     float32 halves a big dataset's memory. The starting parameters and each
-    epoch's shuffle come from `seed`, so a fit is deterministic."""
+    epoch's shuffle come from `seed`, so a fit is deterministic. With
+    `extra` (`features.EXTRA`), the model reads the rows' extra features
+    too, standardised alongside them."""
+    _check_extra(extra)
+    names_of_x = names
+    x = _widen(x, extra)
     rng = np.random.default_rng(seed)
     mean = x.mean(axis=0, dtype=np.float64)
     std = x.std(axis=0, dtype=np.float64)
@@ -319,9 +352,9 @@ def fit(
                 m = first[name] / (1 - beta1**step)
                 v = second[name] / (1 - beta2**step)
                 params[name] -= learning_rate * m / (np.sqrt(v) + eps)
-    if names is None:
-        names = tuple(f"x{i}" for i in range(x.shape[1]))
-    return Model(form.name, names, mean, std, (params,))
+    if names_of_x is None:
+        names_of_x = tuple(f"x{i}" for i in range(x.shape[1] - len(extra)))
+    return Model(form.name, names_of_x, mean, std, (params,), extra)
 
 
 def fit_ensemble(
@@ -335,6 +368,7 @@ def fit_ensemble(
     learning_rate: float = LEARNING_RATE,
     l2: float = L2,
     names: tuple[str, ...] | None = None,
+    extra: tuple[str, ...] = (),
 ) -> Model:
     """An ensemble of `form` fitted to `x` and `y` once per seed (`fit`),
     the members in `seeds`' order. One seed is `fit` itself. The fits differ
@@ -352,6 +386,7 @@ def fit_ensemble(
                 learning_rate=learning_rate,
                 l2=l2,
                 names=names,
+                extra=extra,
             )
             for seed in seeds
         ]

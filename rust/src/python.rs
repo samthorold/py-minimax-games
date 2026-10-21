@@ -26,7 +26,7 @@ use crate::star_realms::rules::{
 };
 use crate::star_realms::selfplay::{Game as SelfPlayGame, Player, play_games};
 use crate::star_realms::state::{GameState, Pile, PlayerState};
-use crate::star_realms::value::{Form, Value};
+use crate::star_realms::value::{Extra, Form, Value};
 use crate::star_realms::view::{PlayerView, View, observe, sample_world};
 
 fn names(cards: &[Card]) -> Vec<&'static str> {
@@ -604,9 +604,38 @@ fn member_from_dict(form: &str, params: &Bound<'_, PyDict>) -> PyResult<Form> {
     })
 }
 
+fn indices(d: &Bound<'_, PyDict>, key: &str) -> PyResult<Vec<i64>> {
+    let array: PyReadonlyArray1<'_, i64> = item(d, key)?;
+    Ok(array.as_array().to_vec())
+}
+
+/// The extra features' card tables (`features.extra_tables`): `combat` as
+/// float64, `faction` (-1 for none) and `base_card` as int64.
+fn extra_from_dict(d: &Bound<'_, PyDict>) -> PyResult<Extra> {
+    let bad = |what: &str| PyValueError::new_err(format!("a bad {what} in the extra tables"));
+    let faction = indices(d, "faction")?
+        .into_iter()
+        .map(|f| match f {
+            -1 => Ok(None),
+            f => usize::try_from(f).map(Some).map_err(|_| bad("faction")),
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    let base_card = indices(d, "base_card")?
+        .into_iter()
+        .map(|c| usize::try_from(c).map_err(|_| bad("base")))
+        .collect::<PyResult<Vec<_>>>()?;
+    Ok(Extra {
+        combat: vector(d, "combat")?,
+        faction,
+        base_card,
+    })
+}
+
 /// A model from a dict (`selfplay.native_model`): its `form` (`"logistic"`
-/// or `"mlp"`), `mean` and `std` as float64 arrays, and its `members`, a
-/// list of dicts of each member's parameters (`member_from_dict`).
+/// or `"mlp"`), `mean` and `std` as float64 arrays, its `members`, a list
+/// of dicts of each member's parameters (`member_from_dict`), and, for a
+/// model reading the extra features, their card tables, `extra`
+/// (`extra_from_dict`).
 fn value_from_dict(model: &Bound<'_, PyDict>) -> PyResult<Value> {
     let form: String = item(model, "form")?;
     let members: Vec<Bound<'_, PyDict>> = item(model, "members")?;
@@ -614,8 +643,17 @@ fn value_from_dict(model: &Bound<'_, PyDict>) -> PyResult<Value> {
         .iter()
         .map(|params| member_from_dict(&form, params))
         .collect::<PyResult<Vec<_>>>()?;
-    Value::ensemble(vector(model, "mean")?, vector(model, "std")?, members)
-        .map_err(PyValueError::new_err)
+    let value = Value::ensemble(vector(model, "mean")?, vector(model, "std")?, members)
+        .map_err(PyValueError::new_err)?;
+    match model.get_item("extra")? {
+        None => Ok(value),
+        Some(extra) => {
+            let extra: Bound<'_, PyDict> = extra.extract()?;
+            value
+                .with_extra(extra_from_dict(&extra)?)
+                .map_err(PyValueError::new_err)
+        }
+    }
 }
 
 /// The model's win probability for each row of `x` (`Model.predict`),
