@@ -50,7 +50,6 @@ task turn-sizes             # Star Realms: distinct ends per turn (planner workl
 task profile                # Star Realms: profile the cheat's search
 task tune                   # Star Realms: tune evaluate's weights by tournament
 task fit                    # Star Realms: fit learned values, gated against evaluate
-task pypy -- tournament ... # Star Realms: a long tournament under PyPy
 ```
 
 ### Tuning the Star Realms evaluation
@@ -71,8 +70,7 @@ every trial: rerunning the same command replays them from the file and
 carries on where it stopped. `--screen` is the cheap first step: per weight,
 the share of the cheat's decisions (every `--every`-th of the `--games` games)
 that doubling or halving it changes, most first, to pick which weights to
-tune. Tuning is a long run: `task pypy -- tune ...` runs it under PyPy
-(below), faster with the same results. Results: "Milestone 5: tuning" in
+tune. Results: "Milestone 5: tuning" in
 [docs/star-realms-results.md](docs/star-realms-results.md).
 
 ### Fitting a learned Star Realms value
@@ -89,38 +87,6 @@ models as `.npz` files; a model that beats `evaluate` is committed in
 (`value.load("mlp")`). The data are never stored: the command regenerates
 them. Results: "Milestone 8: offline value fit" in
 [docs/star-realms-results.md](docs/star-realms-results.md).
-
-### Long Star Realms tournaments under PyPy
-
-**Broken since the Rust extension (#137):** maturin builds a PyPy-specific
-wheel, which uv refuses under the `--python-version 3.13` workaround below, so
-`task pypy` no longer installs. The compiled engine is the path to speed now;
-whether to drop this or install PyPy's copy another way is open.
-
-Search-bot tournaments run about 1.5-1.6x faster under PyPy 3.12, with
-identical results (Milestone 5 in `docs/star-realms-results.md`). The project
-supports CPython only (`requires-python = ">=3.13"`, and CI), so PyPy runs from
-its own environment, `.venv-pypy` (git ignores it):
-
-```sh
-task pypy -- tournament --bots sampler heuristic --games 500 --jobs 3
-```
-
-which runs
-
-```sh
-uv venv --allow-existing --python pypy@3.12 .venv-pypy
-uv pip install --python .venv-pypy --python-version 3.13 --reinstall-package minimax-games .
-.venv-pypy/bin/python -m minimax_games.games.star_realms tournament ...
-```
-
-PyPy has no 3.13; `--python-version 3.13` makes uv resolve as if it did, so the
-package installs on 3.12 (nothing in it needs 3.13). The package is installed,
-not editable, and reinstalled from the working tree on every run. Use it only
-for runs of many games: PyPy's JIT needs a few games to warm up, so short runs
-(`bench --budget`, single games, the tests) are slower than on CPython. The
-tests, `task profile` (PyPy's `cProfile` breaks its breakdown) and everything
-else stay on CPython.
 
 ### Profiling the Star Realms search
 

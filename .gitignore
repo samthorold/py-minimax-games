@@ -1,6 +1,5 @@
 __pycache__
 .venv
-.venv-pypy
 build
 dist
 **.egg-info
@@ -15,3 +14,4 @@ profiles/
 rust/target
 # The extension module maturin builds into the source tree for editable installs.
 src/minimax_games/*.so
+.claude/worktrees/
