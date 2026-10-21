@@ -15,3 +15,6 @@ rust/target
 # The extension module maturin builds into the source tree for editable installs.
 src/minimax_games/*.so
 .claude/worktrees/
+
+# Policy iteration runs (`iterate`): their data are large and regenerable.
+runs/

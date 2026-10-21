@@ -369,3 +369,18 @@ def test_tournament_refuses_an_unknown_model_or_bot(capsys):
 def test_a_single_game_plays_the_planner_with_a_learned_value(capsys):
     main(["--seed", "7", "--bots", "planner:logistic", "greedy"])
     assert "wins on turn" in capsys.readouterr().out
+
+
+def test_iterate_runs_rounds_into_its_directory_and_resumes(capsys, tmp_path):
+    argv = [
+        *("iterate", "--out", str(tmp_path), "--rounds", "1", "--threads", "2"),
+        *("--train-games", "6", "--held-out-games", "4", "--gate-games", "4"),
+        *("--ladder-games", "2", "--worlds", "1", "--budget", "40"),
+        *("--epochs", "1", "--hidden", "3"),
+    ]
+    main(argv)
+    out = capsys.readouterr().out
+    assert "Round 1: champion mlp, pool mlp" in out
+    assert "Stopped: 1 rounds played" in out
+    main(argv)
+    assert "Round" not in capsys.readouterr().out
