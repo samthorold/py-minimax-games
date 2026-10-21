@@ -9,7 +9,7 @@
 use std::time::Instant;
 
 use numpy::ndarray::Array2;
-use numpy::{IntoPyArray, PyArray1, PyArray2};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::IntoPyObjectExt;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -24,7 +24,9 @@ use crate::star_realms::rng::Random;
 use crate::star_realms::rules::{
     Action, Few, advance, advance_legal, auto_play, legal_actions, new_game, winner,
 };
+use crate::star_realms::selfplay::{Game as SelfPlayGame, Player, play_games};
 use crate::star_realms::state::{GameState, PlayerState};
+use crate::star_realms::value::{Form, Value};
 use crate::star_realms::view::{PlayerView, View, observe, sample_world};
 
 fn names(cards: &[Card]) -> Vec<&'static str> {
@@ -555,6 +557,208 @@ fn plan_ends<'py>(
     Ok(d)
 }
 
+fn vector(model: &Bound<'_, PyDict>, key: &str) -> PyResult<Vec<f64>> {
+    let array: PyReadonlyArray1<'_, f64> = item(model, key)?;
+    Ok(array.as_array().to_vec())
+}
+
+fn scalar(model: &Bound<'_, PyDict>, key: &str) -> PyResult<f64> {
+    match vector(model, key)?.as_slice() {
+        &[b] => Ok(b),
+        other => Err(PyValueError::new_err(format!(
+            "{key} holds 1 number, not {}",
+            other.len()
+        ))),
+    }
+}
+
+/// A model from a dict of float64 arrays (`selfplay.native_model`): its
+/// `form` (`"logistic"` or `"mlp"`), `mean` and `std`, and its parameters
+/// under their names (`w` and `b`, or `w1`, `b1`, `w2` and `b2`).
+fn value_from_dict(model: &Bound<'_, PyDict>) -> PyResult<Value> {
+    let form: String = item(model, "form")?;
+    let form = match form.as_str() {
+        "logistic" => Form::Logistic {
+            w: vector(model, "w")?,
+            b: scalar(model, "b")?,
+        },
+        "mlp" => {
+            let w1: PyReadonlyArray2<'_, f64> = item(model, "w1")?;
+            Form::Mlp {
+                // row after row, whatever the array's own layout
+                w1: w1.as_array().iter().copied().collect(),
+                b1: vector(model, "b1")?,
+                w2: vector(model, "w2")?,
+                b2: scalar(model, "b2")?,
+            }
+        }
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "no model form {other:?}: 'logistic' or 'mlp'"
+            )));
+        }
+    };
+    Value::new(vector(model, "mean")?, vector(model, "std")?, form).map_err(PyValueError::new_err)
+}
+
+/// The model's win probability for each row of `x` (`Model.predict`),
+/// computed by the Rust forward pass.
+#[pyfunction]
+fn predict<'py>(
+    py: Python<'py>,
+    model: &Bound<'py, PyDict>,
+    x: PyReadonlyArray2<'py, f64>,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    let value = value_from_dict(model)?;
+    let x = x.as_array();
+    if x.ncols() != value.columns() {
+        return Err(PyValueError::new_err(format!(
+            "rows of {} features for a model of {}",
+            x.ncols(),
+            value.columns()
+        )));
+    }
+    let mut scratch = Vec::new();
+    let mut row = Vec::with_capacity(x.ncols());
+    let p: Vec<f64> = x
+        .rows()
+        .into_iter()
+        .map(|r| {
+            row.clear();
+            row.extend(r.iter().copied());
+            value.predict(&row, &mut scratch)
+        })
+        .collect();
+    Ok(p.into_pyarray(py))
+}
+
+/// A player from a dict: `{"kind": "greedy"}`, `{"kind": "heuristic"}` or
+/// `{"kind": "planner", "worlds": n, "budget": n, "model": {...}}`.
+fn seat_player(d: &Bound<'_, PyDict>) -> PyResult<Player> {
+    let kind: String = item(d, "kind")?;
+    Ok(match kind.as_str() {
+        "greedy" => Player::Greedy,
+        "heuristic" => Player::Heuristic,
+        "planner" => {
+            let worlds: usize = item(d, "worlds")?;
+            let budget: usize = item(d, "budget")?;
+            if worlds < 1 || budget < 2 * worlds {
+                return Err(PyValueError::new_err(format!(
+                    "a planner needs at least 1 world and 2 states per world, not {worlds} worlds and {budget} states"
+                )));
+            }
+            let value = value_from_dict(&item(d, "model")?)?;
+            if value.columns() != features::columns() {
+                return Err(PyValueError::new_err(
+                    "the model was fitted to other features than the encoder's",
+                ));
+            }
+            Player::Planner {
+                value,
+                worlds,
+                budget,
+            }
+        }
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "no player {other:?}: 'greedy', 'heuristic' or 'planner'"
+            )));
+        }
+    })
+}
+
+/// Play `games`, `(seed, seat 0, seat 1)` with the seats as indices into
+/// `players` (dicts, `seat_player`), on `threads` threads with the GIL
+/// released, each game stopping unfinished past `max_turns`. Returns a
+/// dict: `features`, the turn-boundary states' rows of the finished games
+/// in game order (float32), with each row's label `y` (1.0 if the player
+/// who just ended won) and `game` (its index in `games`); per game its
+/// `winner` (`None` if unfinished) and `turns`, and `plans` and `diverged`
+/// (int64, a column per seat); with `record`, each game's decisions as
+/// `actions`.
+#[pyfunction]
+#[pyo3(signature = (players, games, threads=1, max_turns=300, record=false))]
+fn self_play<'py>(
+    py: Python<'py>,
+    players: Vec<Bound<'py, PyDict>>,
+    games: Vec<(u64, usize, usize)>,
+    threads: usize,
+    max_turns: u32,
+    record: bool,
+) -> PyResult<Bound<'py, PyDict>> {
+    let players = players
+        .iter()
+        .map(seat_player)
+        .collect::<PyResult<Vec<_>>>()?;
+    let games = games
+        .into_iter()
+        .map(|(seed, first, second)| {
+            if first < players.len() && second < players.len() {
+                Ok(SelfPlayGame {
+                    seed,
+                    seats: [first, second],
+                })
+            } else {
+                Err(PyValueError::new_err(format!(
+                    "seats {first} and {second} among {} players",
+                    players.len()
+                )))
+            }
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    if threads < 1 {
+        return Err(PyValueError::new_err("self-play needs at least 1 thread"));
+    }
+    let played = py.detach(|| play_games(&players, &games, threads, max_turns, record));
+    let columns = features::columns();
+    let mut x: Vec<f32> = Vec::new();
+    let mut y: Vec<f64> = Vec::new();
+    let mut game = Vec::new();
+    let mut counts = Vec::with_capacity(2 * played.len());
+    let mut diverged = Vec::with_capacity(2 * played.len());
+    for (i, p) in played.iter().enumerate() {
+        counts.extend(p.plans.iter().map(|&n| n as i64));
+        diverged.extend(p.diverged.iter().map(|&n| n as i64));
+        let Some(won_by) = p.winner else {
+            continue;
+        };
+        // every feature is a small integer, exact in float32
+        x.extend(p.rows.iter().map(|&v| v as f32));
+        y.extend(p.ended.iter().map(|&e| f64::from(u8::from(e == won_by))));
+        game.extend(std::iter::repeat_n(int(i), p.ended.len()));
+    }
+    let d = PyDict::new(py);
+    let rows = y.len();
+    let x = Array2::from_shape_vec((rows, columns), x).expect("rows of the encoder's width");
+    d.set_item("features", x.into_pyarray(py))?;
+    d.set_item("y", y.into_pyarray(py))?;
+    d.set_item("game", int_array(py, game))?;
+    let winners: Vec<Option<usize>> = played.iter().map(|p| p.winner).collect();
+    d.set_item("winner", winners)?;
+    let turns: Vec<u32> = played.iter().map(|p| p.turns).collect();
+    d.set_item("turns", turns)?;
+    let pairs = |values: Vec<i64>| {
+        Array2::from_shape_vec((played.len(), 2), values)
+            .expect("two seats per game")
+            .into_pyarray(py)
+    };
+    d.set_item("plans", pairs(counts))?;
+    d.set_item("diverged", pairs(diverged))?;
+    if record {
+        let actions = played
+            .iter()
+            .map(|p| {
+                p.actions
+                    .iter()
+                    .map(|&a| to_py(py, a))
+                    .collect::<PyResult<Vec<_>>>()
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        d.set_item("actions", actions)?;
+    }
+    Ok(d)
+}
+
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = m.py();
@@ -567,6 +771,8 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     star_realms.add_function(wrap_pyfunction!(bench_heuristic_games, &star_realms)?)?;
     star_realms.add_function(wrap_pyfunction!(bench_advance, &star_realms)?)?;
     star_realms.add_function(wrap_pyfunction!(plan_ends, &star_realms)?)?;
+    star_realms.add_function(wrap_pyfunction!(predict, &star_realms)?)?;
+    star_realms.add_function(wrap_pyfunction!(self_play, &star_realms)?)?;
     m.add_submodule(&star_realms)?;
     // So `import minimax_games._native.star_realms` finds it too.
     py.import("sys")?

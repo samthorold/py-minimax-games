@@ -9,6 +9,8 @@ names.
 
 from typing import Any
 
+import numpy as np
+
 type NativeAction = tuple[Any, ...]
 
 class Game:
@@ -59,3 +61,22 @@ def plan_ends(
     one's value is the best of (`rows[offsets[k]:offsets[k + 1]]`);
     `states` and `complete`, as `planner.Plan`'s; with `ends`, the ends as
     state dicts."""
+
+def predict(model: dict[str, Any], x: np.ndarray) -> np.ndarray:
+    """The win probability for each row of `x` (float64), by the Rust
+    forward pass of `model` (`selfplay.native_model`)."""
+
+def self_play(
+    players: list[dict[str, Any]],
+    games: list[tuple[int, int, int]],
+    threads: int = 1,
+    max_turns: int = 300,
+    record: bool = False,
+) -> dict[str, Any]:
+    """Play `games`, `(seed, seat 0, seat 1)` with the seats as indices into
+    `players` (`{"kind": "greedy"}`, `{"kind": "heuristic"}` or `{"kind":
+    "planner", "worlds": n, "budget": n, "model": {...}}`) on `threads`
+    threads, the GIL released: the finished games' turn-boundary rows
+    (`features`, float32) with each row's label `y` and `game`; per game
+    its `winner` (None if unfinished) and `turns`, and `plans` and
+    `diverged` (a column per seat); with `record`, each game's `actions`."""
