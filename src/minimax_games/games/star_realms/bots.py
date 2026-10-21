@@ -75,6 +75,18 @@ class Budgeted(Protocol):
         ...
 
 
+@runtime_checkable
+class Planning(Protocol):
+    """A bot that plans ahead and plays its plan over several decisions (the
+    whole-turn planner): it counts its plans and turns, so the tournament
+    can report time per plan and plans per turn."""
+
+    plans: int
+    """Plans made so far."""
+    turns: int
+    """Turns played so far."""
+
+
 type AnyBot = Bot | BenchmarkBot
 """A bot the match runner accepts: a `Bot`, or a `BenchmarkBot`."""
 

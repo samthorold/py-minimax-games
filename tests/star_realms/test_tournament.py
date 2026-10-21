@@ -106,3 +106,39 @@ def test_games_in_parallel_give_the_serial_result():
 def test_jobs_must_be_positive():
     with pytest.raises(ValueError, match="jobs"):
         play_tournament((RandomBot, RandomBot), games=2, jobs=0)
+
+
+class Counting:
+    """Plays greedily and claims a plan at the start of each turn, two in
+    each even turn: a stand-in for a planning bot (`bots.Planning`)."""
+
+    def __init__(self, seed: int) -> None:
+        self.plans = 0
+        self.turns = 0
+        self._turn = 0
+
+    def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
+        if view.turn != self._turn:
+            self._turn = view.turn
+            self.turns += 1
+            self.plans += 2 if view.turn % 2 == 0 else 1
+        return GreedyBot().choose(view, actions)
+
+
+def test_planning_bots_plans_and_turns_are_counted_and_combined():
+    played = play_tournament((Counting, greedy), games=4)
+    timing = played.timing
+    assert timing.plans[1] == timing.turns[1] == 0
+    assert timing.turns[0] > 0
+    assert timing.turns[0] < timing.plans[0] < 2 * timing.turns[0]
+    assert timing.plans_per_turn(0) == timing.plans[0] / timing.turns[0]
+    assert timing.ms_per_plan(0) * timing.plans[0] == pytest.approx(
+        timing.ms_per_move[0] * timing.decisions[0]
+    )
+    assert timing.ms_per_plan(1) == timing.plans_per_turn(1) == 0
+    chunks = [
+        play_tournament((Counting, greedy), games=2),
+        play_tournament((Counting, greedy), games=2, base_seed=2),
+    ]
+    combined = combine(chunks).timing
+    assert (combined.plans, combined.turns) == (timing.plans, timing.turns)

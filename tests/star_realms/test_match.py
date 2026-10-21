@@ -39,6 +39,7 @@ from minimax_games.games.star_realms.catalogue import CATALOGUE, EXPLORER, SCOUT
 from minimax_games.games.star_realms.effect import Authority, Combat, Draw
 from minimax_games.games.star_realms.ismcts import IsmctsBot
 from minimax_games.games.star_realms.match import MatchTooLong, play_match
+from minimax_games.games.star_realms.planner import PlannerBot
 from minimax_games.games.star_realms.sampler import SamplerBot
 from minimax_games.games.star_realms.state import GameState
 from minimax_games.games.star_realms.view import View, observe, sample_world
@@ -539,3 +540,13 @@ def test_the_log_shows_ships_put_on_top_of_the_deck_given_and_acquired():
     assert transcript.describe(AcquireFreeShip(cutter), state) == (
         "Player 1 acquires Cutter for free on top of the deck"
     )
+
+
+def test_the_planner_is_only_ever_given_its_own_view():
+    # It plans over sampled worlds, never the state: it is no benchmark.
+    assert not isinstance(PlannerBot(0), BenchmarkBot)
+    for seed in range(2):
+        bots = (OnlyViews(GreedyBot(), 0), OnlyViews(PlannerBot(seed, 2, 80), 1))
+        with pytest.raises(MatchTooLong):
+            play_match(bots, seed, max_turns=4)
+        assert bots[1].calls > 0
