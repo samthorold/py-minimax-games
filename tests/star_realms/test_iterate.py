@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from minimax_games.games.star_realms import features, iterate, value
+from minimax_games.games.star_realms import features, iterate, td, value
 from minimax_games.games.star_realms.iterate import Settings
 from minimax_games.games.star_realms.sprt import Hypothesis, Sprt
 
@@ -407,3 +407,130 @@ def test_the_time_cap_counts_the_recorded_rounds(tmp_path: Path):
     assert total >= 3600
     assert total - state["rounds"][-1]["seconds"]["total"] < 3600
     assert "hours" in state["stopped"]
+
+
+# --- the targets ------------------------------------------------------------
+
+
+def test_targets_default_to_monte_carlo():
+    assert Settings().targets == "mc"
+
+
+def test_targets_are_mc_or_td_with_lambda_between_0_and_1():
+    with pytest.raises(ValueError, match="targets"):
+        Settings(targets="sarsa")
+    for lam in (-0.1, 1.5):
+        with pytest.raises(ValueError, match="lam"):
+            Settings(targets="td", lam=lam)
+    Settings(targets="td", lam=0.0)
+    Settings(targets="td", lam=1.0)
+
+
+def test_a_run_from_before_td_targets_resumes_with_monte_carlo(tmp_path: Path):
+    iterate.run(replace(TINY, max_rounds=1), tmp_path, log=lambda _: None)
+    path = tmp_path / "state.json"
+    state = json.loads(path.read_text())
+    del state["settings"]["targets"]
+    del state["settings"]["lam"]
+    path.write_text(json.dumps(state))
+    with pytest.raises(ValueError, match="targets"):
+        iterate.run(replace(TINY, max_rounds=1, targets="td"), tmp_path)
+    iterate.run(replace(TINY, max_rounds=1), tmp_path, log=lambda _: None)
+
+
+def test_a_resumed_run_keeps_its_target_settings(tmp_path: Path):
+    settings = replace(TINY, max_rounds=1, targets="td", lam=0.8)
+    iterate.run(settings, tmp_path, log=lambda _: None)
+    with pytest.raises(ValueError, match="targets"):
+        iterate.run(replace(settings, targets="mc"), tmp_path)
+    with pytest.raises(ValueError, match="lam"):
+        iterate.run(replace(settings, lam=0.5), tmp_path)
+    iterate.run(settings, tmp_path, log=lambda _: None)
+    assert _state(tmp_path)["settings"]["targets"] == "td"
+
+
+def _fitted_to(monkeypatch) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Each round's rows and labels, as `fit_candidates` receives them."""
+    seen: list[tuple[np.ndarray, np.ndarray]] = []
+    original = iterate.fit_candidates
+
+    def capturing(x, y, settings):
+        seen.append((x.copy(), y.copy()))
+        return original(x, y, settings)
+
+    monkeypatch.setattr(iterate, "fit_candidates", capturing)
+    return seen
+
+
+def _window_rows(out: Path, rounds: list[int]) -> list[dict[str, np.ndarray]]:
+    found = []
+    for r in rounds:
+        with np.load(out / "data" / f"round-{r:02d}.npz") as data:
+            found.append({key: data[key] for key in data.files})
+    return found
+
+
+def test_monte_carlo_fits_see_the_window_s_game_results(tmp_path: Path, monkeypatch):
+    seen = _fitted_to(monkeypatch)
+    iterate.run(replace(TINY, max_rounds=2), tmp_path, log=lambda _: None)
+    assert len(seen) == 2
+    for number, (x, y) in enumerate(seen, start=1):
+        rows = _window_rows(tmp_path, iterate.window(number, TINY.window))
+        assert np.array_equal(x, np.concatenate([r["x_train"] for r in rows]))
+        assert np.array_equal(y, np.concatenate([r["y_train"] for r in rows]))
+
+
+def test_a_round_saves_each_training_row_s_game_and_position(tmp_path: Path):
+    iterate.run(replace(TINY, max_rounds=1), tmp_path, log=lambda _: None)
+    (rows,) = _window_rows(tmp_path, [1])
+    games, positions = rows["game_train"], rows["position_train"]
+    assert len(games) == len(positions) == len(rows["y_train"])
+    assert np.all(games < TINY.train_games)
+    assert np.all(np.diff(games) >= 0)
+    starts = np.r_[True, games[1:] != games[:-1]]
+    assert np.all(positions[starts] == 0)
+
+
+def test_td_targets_bootstrap_from_the_champion_on_each_round(
+    tmp_path: Path, monkeypatch
+):
+    # round 1 promotes, so round 2's targets must use t01's values, not mlp's
+    monkeypatch.setattr(iterate, "pregate", lambda candidate, best: True)
+    monkeypatch.setattr(
+        iterate, "decide", lambda outcomes, test, limit: (Hypothesis.H1, 3)
+    )
+    seen = _fitted_to(monkeypatch)
+    settings = replace(TINY, max_rounds=2, prefix="t", targets="td", lam=0.8)
+    iterate.run(settings, tmp_path, log=lambda _: None)
+    assert len(seen) == 2
+    champions = [value.load("mlp"), value.Model.load(tmp_path / "models" / "t01.npz")]
+    for number, (x, y) in enumerate(seen, start=1):
+        rows = _window_rows(tmp_path, iterate.window(number, TINY.window))
+        best = champions[number - 1]
+        expected = np.concatenate(
+            [
+                td.targets(
+                    r["y_train"],
+                    r["game_train"],
+                    r["position_train"],
+                    best.predict(r["x_train"]),
+                    0.8,
+                )
+                for r in rows
+            ]
+        )
+        assert np.array_equal(x, np.concatenate([r["x_train"] for r in rows]))
+        assert np.allclose(y, expected, rtol=0, atol=1e-12)
+        assert not np.array_equal(y, np.concatenate([r["y_train"] for r in rows]))
+
+
+def test_td_targets_need_rounds_that_saved_games_and_positions(tmp_path: Path):
+    iterate.run(replace(TINY, max_rounds=1), tmp_path, log=lambda _: None)
+    data = tmp_path / "data" / "round-01.npz"
+    with np.load(data) as found:
+        old = {k: found[k] for k in found.files if not k.endswith("_train")}
+        old |= {k: found[k] for k in ("x_train", "y_train")}
+    np.savez(data, allow_pickle=False, **old)
+    (tmp_path / "state.json").unlink()
+    with pytest.raises(ValueError, match="game"):
+        iterate.run(replace(TINY, max_rounds=1, targets="td"), tmp_path)

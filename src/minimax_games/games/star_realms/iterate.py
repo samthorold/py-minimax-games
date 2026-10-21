@@ -13,7 +13,11 @@ Each round:
    of the last `window` rounds, each as an ensemble of `members` fits from
    seeds `fit_seed`, `fit_seed + 1`, ... (one member is a single fit), and
    keeps the one with the lower log-loss on this round's held-out games:
-   the candidate.
+   the candidate. The fits' labels (`targets`) are the states' game
+   results (Monte Carlo, the default) or, with `targets="td"`, their
+   TD(`lam`) returns, bootstrapping from the current best's values of the
+   window's states, computed afresh each round. Held-out log-loss is always
+   on game results.
 3. **Gates** it offline (`pregate`): its held-out log-loss must be below the
    current best's on the same states. Then in a match (`decide`), the
    candidate's planner against the current best's, same settings, played in
@@ -34,8 +38,9 @@ held-out games from `HELD_OUT_BASE + ...` and its gating games from
 
 **Outputs**, in the run's directory, are written as they complete:
 `state.json` (the settings and every finished round's record, rewritten
-after each round), `data/round-NN.npz` (a round's rows, so an interrupted
-round doesn't replay its games; never committed), `candidates/` (both
+after each round), `data/round-NN.npz` (a round's rows, with each training
+row's game and position for TD targets, so an interrupted round doesn't
+replay its games; never committed), `candidates/` (both
 forms' fits per round), `models/<name>.npz` (each promoted model), and
 per-seed results of every gating and ladder match, `gate-rNN.csv` and
 `ladder-rNN.csv` (seed, first, second, winner, turns), for later bots to be
@@ -55,7 +60,7 @@ from typing import Any
 
 import numpy as np
 
-from minimax_games.games.star_realms import features, selfplay, value
+from minimax_games.games.star_realms import features, selfplay, td, value
 from minimax_games.games.star_realms.fit import MAX_TURNS
 from minimax_games.games.star_realms.planner import BUDGET, WORLDS
 from minimax_games.games.star_realms.sprt import Hypothesis, Sprt
@@ -82,6 +87,9 @@ HELD_OUT_BASE = 2_000_000
 GATE_BASE = 3_000_000
 """Round `r` takes its training, held-out and gating seeds from these plus
 `STRIDE * (r - 1)`; the ladder's are 0 up, below them all."""
+
+TARGETS = ("mc", "td")
+"""Monte Carlo targets (game results) or TD(λ) targets."""
 
 KEPT = ("threads", "hours", "max_rounds", "patience")
 """Settings that may change when a run is resumed: they don't change any
@@ -118,6 +126,12 @@ class Settings:
     members: int = 1
     """Fits per candidate, from seeds `fit_seed` on; its value is the mean
     of theirs (`value.fit_ensemble`)."""
+    targets: str = "mc"
+    """What the fits are fitted to: "mc", each state's game result, or
+    "td", its TD(`lam`) return bootstrapping from the current best's value
+    (`targets`)."""
+    lam: float = 0.8
+    """The λ of TD targets; unused by Monte Carlo ones."""
     epochs: int = EPOCHS
     batch: int = BATCH
     learning_rate: float = LEARNING_RATE
@@ -147,6 +161,12 @@ class Settings:
             or self.members < 1
         ):
             msg = "window, patience, gate_batch and members must be at least 1"
+            raise ValueError(msg)
+        if self.targets not in TARGETS:
+            msg = f"targets must be one of {', '.join(TARGETS)}, not {self.targets!r}"
+            raise ValueError(msg)
+        if not 0 <= self.lam <= 1:
+            msg = f"lam must be between 0 and 1, not {self.lam}"
             raise ValueError(msg)
 
     def train_seeds(self, round: int) -> range:
@@ -276,6 +296,33 @@ def fit_candidates(
         )
         for name, form in forms.items()
     }
+
+
+def targets(rows: Any, best: Model, settings: Settings, round: int = 0) -> np.ndarray:
+    """The labels a round's training rows are fitted to: their game results
+    (`y_train`) for Monte Carlo targets, or for TD targets their TD(`lam`)
+    returns (`td.targets`) with `best`'s values of the round's own rows."""
+    if settings.targets == "mc":
+        return rows["y_train"]
+    if "game_train" not in rows or "position_train" not in rows:
+        msg = (
+            f"round {round}'s saved rows have no game or position, which TD"
+            " targets need: it was played before they were saved"
+        )
+        raise ValueError(msg)
+    return td.targets(
+        rows["y_train"],
+        rows["game_train"],
+        rows["position_train"],
+        best.predict(rows["x_train"]),
+        settings.lam,
+    )
+
+
+def _targets_name(settings: Settings) -> str:
+    if settings.targets == "td":
+        return f"TD({settings.lam:g}) targets"
+    return "Monte Carlo targets"
 
 
 @dataclass(slots=True)
@@ -461,6 +508,8 @@ def _round(
         rows = {
             "x_train": played.x[train],
             "y_train": played.y[train],
+            "game_train": played.game[train],
+            "position_train": played.position[train],
             "x_held": played.x[~train],
             "y_held": played.y[~train],
             "train_unfinished": np.array(sum(unfinished[: settings.train_games])),
@@ -489,11 +538,12 @@ def _round(
     # 2. fit both forms to the window
     began = clock()
     rounds = window(number, settings.window)
-    xs, ys = [rows["x_train"]], [rows["y_train"]]
+    best = _model(champion, out)
+    xs, ys = [rows["x_train"]], [targets(rows, best, settings, number)]
     for earlier in rounds[:-1]:
         with np.load(out / "data" / f"round-{earlier:02d}.npz") as found:
             xs.insert(-1, found["x_train"])
-            ys.insert(-1, found["y_train"])
+            ys.insert(-1, targets(found, best, settings, earlier))
     x, y = np.concatenate(xs), np.concatenate(ys)
     del xs, ys
     models = fit_candidates(x, y, settings)
@@ -505,7 +555,6 @@ def _round(
     losses = {
         form: log_loss(model.predict(held_x), held_y) for form, model in models.items()
     }
-    best = _model(champion, out)
     losses["champion"] = log_loss(best.predict(held_x), held_y)
     form = min(models, key=lambda f: losses[f])
     candidate = models[form]
@@ -517,7 +566,7 @@ def _round(
         f" ({window_states} states); held-out log-loss logistic"
         f" {losses['logistic']:.4f}, mlp {losses['mlp']:.4f}, champion"
         f" {losses['champion']:.4f}: {name} ({form}, {settings.members}"
-        f" member{'s' if settings.members > 1 else ''})"
+        f" member{'s' if settings.members > 1 else ''}, {_targets_name(settings)})"
         f" {'passes' if passed else 'fails'} the offline gate,"
         f" {seconds['fit']:.0f} s"
     )

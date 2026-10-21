@@ -974,6 +974,19 @@ def iterating(argv: list[str]) -> None:
         " (default: %(default)s)",
     )
     parser.add_argument(
+        "--targets",
+        choices=iterate.TARGETS,
+        default=defaults.targets,
+        help="fit to game results (mc) or TD(lam) returns bootstrapping from"
+        " the current best (td) (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--lam",
+        type=float,
+        default=defaults.lam,
+        help="the lambda of TD targets (default: %(default)s)",
+    )
+    parser.add_argument(
         "--prefix",
         default=defaults.prefix,
         help="round r's candidate is named <prefix><r> (default: %(default)s)",
