@@ -1730,3 +1730,39 @@ A heuristic decision costs about 6 µs against greedy's 2 µs, mostly from build
 **Floats.** The heuristic's scores are floats, but every term is a multiple of 0.5, so all its sums are exact in any order and the one rounded operation, the Trade Deck's average worth, is the same IEEE division as Python's; the port still adds in Python's order (design, "The heuristic bot").
 
 **Effort.** About 25 minutes of agent time end to end: reading the Python bot and the crate, the test, the port (about 400 lines of Rust with its unit tests), the benchmark and these docs. The port went cleanly for the engine's reasons: the Python bot's docstring and helpers already state each rule as one small function.
+
+## Milestone 7: Rust planner enumeration and feature encoder
+
+2026-10-21, #140 (tracked by #127), CPython 3.14, Apple M1 (8 GB) shared with other agents' builds and tests. The whole-turn planner's enumeration and the feature encoder are ported to Rust (`planner.rs`, `features.rs`), and the Python planner can use them as a backend, scoring the plan's feature matrix in one numpy call (design, Compiled engine, "The planner's enumeration").
+
+**Time per plan**, at every turn start of the heuristic-vs-heuristic games of seeds 0-19 (the turn-size measurement's 483 turns, Milestone 6), 4 worlds sampled from the mover's view, the default 20,000 states, the logistic value. "Plan" is the whole `planner.plan(..., backend="rust")` call (state dicts in, scoring and choice in Python); "enumeration" is `plan_ends` alone, encoding included. 421 of the 483 plans finished.
+
+| | q1 | median | q3 | p90 | p99 | max | mean |
+|---|---|---|---|---|---|---|---|
+| States visited | 136 | 566 | 3,159 | 15,546 | 20,000 | 20,000 | |
+| Plan, Rust backend (ms) | 0.54 | 1.95 | 15.0 | 71.2 | 127 | 161 | 16.9 |
+| Enumeration alone (ms) | 0.39 | 1.62 | 13.9 | 68.3 | 120 | 151 | 16.0 |
+
+By plan size:
+
+| States visited | Plans | Plan, median | Enumeration, per state |
+|---|---|---|---|
+| under 1,000 | 288 | 0.64 ms | 3.2 µs |
+| 1,000-5,000 | 93 | 7.8 ms | 4.2 µs |
+| 5,000-20,000 | 102 | 67 ms | 4.7 µs |
+
+Against the Python backend, on the 123 turn starts of seeds 0-4 (same worlds, both backends, every plan checked equal): **14 times faster** in all, 2.2 s against 30.7 s; the median plan 1.8 ms against 21.5 ms, the 90th percentile 77 ms against 1.14 s. The Python enumeration costs 44-71 µs per state (more on bigger turns), the Rust one 3-5 µs. Fixed costs per plan (converting the worlds to dicts, the numpy call, replaying the chosen line) are about 0.2-0.3 ms.
+
+**Where the Rust time goes.** Every state listed advances each of its legal actions (`advance_legal` clones the whole state, about 1.5 µs a call, Milestone 7 full deck), so a state costs a few advances. Two costs on top came out of profiling (`sample`) and were cut: hashing states with the standard SipHash, card by card, was about 40% of the time, so the tables use `rustc-hash` and each lookup hashes once (the hash-map entry API): 7.6 → 6.0 µs per state on the big plans; and seeding the Mersenne Twister for every reshuffle was a fifth, since most ends of a turn draw the next hand and reshuffle the discard pile from the world's seed, so shuffles are cached by seed and pile size: 6.0 → 4.7 µs. What is left is the engine's: piles as `Vec`s cloned whole on every advance, and legal actions and automatic play recomputed at every state.
+
+**Differential tests**, `tests/star_realms/test_native_planner.py`: 50 positions, 1-4 worlds, budgets 40-3,000 (some run out): the same ends as the states the Python planner scores, in its order, the same feature rows bit for bit, the same states visited and completeness; equal plans with both backends and both packaged models; two whole seeded planner games with identical transcripts, plans and replans. About 6 s.
+
+**Bugs differential testing caught: none.** The enumeration matched on its first run. Four injected bugs each failed the tests: not noting the ends below a reused state (Python's plan then asserts that a candidate reached no end: some candidates are worth only what a state found earlier reaches); noting only a reused state's direct ends; not sorting the discard pile in the merge key; and a world's share one state too big.
+
+**Effort.** About 70 minutes of agent time end to end: reading the planner, encoder and crate, the tests, the port (about 500 lines of Rust), the boundary, the profiling and two optimisations, these measurements and docs.
+
+**Surprises.**
+
+- Rust is only 14 times faster than CPython here, not the hundreds a compiled engine might suggest: the planner is bound by `advance`, which clones the state, and by hashing whole states. The design's "roughly a millisecond" of enumeration per plan holds at the median (1.6 ms) but not the tail (68 ms at the 90th percentile).
+- The enumeration doesn't need the value at all: which ends a candidate's best is taken over is fixed by the walk, so the scoring can wait until every end is listed and then run as one matrix call, with no callback into Python.
+- A batch of rows and a single row give model probabilities that differ in the last bit (numpy's matrix products sum in another order); the scores are rounded to whole points out of a million, so they agree.
