@@ -56,6 +56,15 @@ the same seeds pass `--z` standard deviations of noise. It prints each step.
 `--cache FILE` keeps every trial, so a stopped run resumes. `--screen` runs
 the cheap screen instead: per weight, the share of the cheat's decisions
 (every `--every`-th, in the games from `--base-seed`) its step changes.
+
+`python -m minimax_games.games.star_realms fit` fits learned values offline
+(see `fit`): it plays `--games` heuristic-vs-heuristic games from
+`--base-seed` and `--test-games` more after them, fits logistic regression
+and a one-hidden-layer network (`--hidden`) to the turn-boundary states of
+the first, and prints each one's held-out log-loss beside
+`sigmoid(evaluate / 16)`'s on the same states. Deterministic given the
+seeds; `--save DIR` writes the models there as `logistic.npz` and
+`mlp.npz`.
 """
 
 import argparse
@@ -68,6 +77,7 @@ from pathlib import Path
 from minimax_games.games.star_realms import (
     bench,
     cheat,
+    fit,
     profiling,
     tune,
     turn_sizes,
@@ -205,6 +215,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if argv[:1] == ["tune"]:
         tuning(argv[1:])
+        return
+    if argv[:1] == ["fit"]:
+        fitting(argv[1:])
         return
     parser = argparse.ArgumentParser(prog="python -m minimax_games.games.star_realms")
     parser.add_argument("--seed", type=int, default=0, help="the game's seed")
@@ -626,6 +639,101 @@ def tuning(argv: list[str]) -> None:
         log=lambda line: print(line, flush=True),
     )
     print(f"Weights: {tuned}")
+
+
+def fitting(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(
+        prog="python -m minimax_games.games.star_realms fit"
+    )
+    defaults = fit.Settings()
+    parser.add_argument(
+        "--games",
+        type=int,
+        default=defaults.train_games,
+        help="training games (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--test-games",
+        type=int,
+        default=defaults.test_games,
+        help="held-out games, the seeds after the training ones (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--base-seed",
+        type=int,
+        default=defaults.base_seed,
+        help="the first training game's seed (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--epsilon",
+        type=float,
+        default=defaults.epsilon,
+        help="the chance each move is random (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=defaults.seed,
+        help="seeds the fits' starting weights and shuffles (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=defaults.epochs,
+        help="passes over the training data (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--batch",
+        type=int,
+        default=defaults.batch,
+        help="minibatch size (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--learning-rate",
+        type=float,
+        default=defaults.learning_rate,
+        help="Adam's step size (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--l2",
+        type=float,
+        default=defaults.l2,
+        help="the weight penalty (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--hidden",
+        type=int,
+        default=defaults.hidden,
+        help="the network's hidden units (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--jobs", type=int, default=1, help="play the games in this many processes"
+    )
+    parser.add_argument("--save", type=Path, help="write the models to this directory")
+    args = parser.parse_args(argv)
+
+    settings = fit.Settings(
+        train_games=args.games,
+        test_games=args.test_games,
+        base_seed=args.base_seed,
+        epsilon=args.epsilon,
+        seed=args.seed,
+        epochs=args.epochs,
+        batch=args.batch,
+        learning_rate=args.learning_rate,
+        l2=args.l2,
+        hidden=args.hidden,
+        jobs=args.jobs,
+    )
+    result = fit.run(settings)
+    for line in fit.report(result, settings):
+        print(line)
+    if args.save is not None:
+        args.save.mkdir(parents=True, exist_ok=True)
+        for name, model in result.models.items():
+            path = args.save / f"{name}.npz"
+            model.save(path)
+            print(f"Wrote {path}")
 
 
 def report(played: Tournament, names: tuple[str, str]) -> list[str]:

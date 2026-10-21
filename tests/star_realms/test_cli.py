@@ -9,6 +9,7 @@ from minimax_games.games.star_realms.ismcts import ITERATIONS, IsmctsBot
 from minimax_games.games.star_realms.rollout import ROLLOUT_BUDGET, Rollout
 from minimax_games.games.star_realms.sampler import WORLDS, SamplerBot
 from minimax_games.games.star_realms.state import GameState
+from minimax_games.games.star_realms.value import Model
 from minimax_games.games.star_realms.view import observe
 
 
@@ -246,3 +247,19 @@ def test_tournament_plays_the_ismcts_bot_and_states_its_iterations(capsys):
     assert float(ismcts.split()[-1]) > 0  # it made timed decisions
     main([*argv, "--max-turns", "2", "--iterations", "7", "--jobs", "2"])
     assert capsys.readouterr().out.splitlines()[:3] == out[:3]
+
+
+def test_fit_prints_each_held_out_log_loss_and_saves_the_models(capsys, tmp_path):
+    main(
+        [
+            *("fit", "--games", "6", "--test-games", "3", "--epochs", "2"),
+            *("--hidden", "3", "--save", str(tmp_path)),
+        ]
+    )
+    out = capsys.readouterr().out
+    assert "Train: 6 games (seeds 20000-20005)" in out
+    assert "sigmoid(evaluate / 16):" in out
+    assert "logistic:" in out
+    assert "mlp:" in out
+    for name in ("logistic", "mlp"):
+        assert Model.load(tmp_path / f"{name}.npz").form == name

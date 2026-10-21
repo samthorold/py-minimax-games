@@ -1585,3 +1585,60 @@ Over the 450 complete turns: 739,789 ends, 258,292 up to pile order, and 984,080
 **20,000 states per plan, shared by the worlds**, enumerated depth first with the greedy policy's preferred moves first (design, Search). It lists every end of 88% of turns, and of 96% before turn 16, for about 1 s per plan on CPython, so 1-3 plans per turn cost at most a few seconds a turn (the median turn's plan takes 10 ms): playable for one tournament stopped by a sequential test, and about the per-decision cost the Rust engine has to cut for self-play. A smaller budget leaves too many mid-game turns unfinished (5,000 misses 20% of all turns and 34-54% from turn 16), and a larger one buys little: 100,000 still misses 7%, at five times the cost. With N worlds, each world after the shared part before the first chance event gets its share (5,000 at N = 4, which finishes 80% of turns).
 
 **The budget binds often enough in the late game (30-50% of turns from turn 21 at 20,000) that the exact fix comes first**, as the design says: canonical orderings of commuting actions, together with merging ends up to pile order, measured against this table. Expect about a factor of 3, which turns the 20,000 budget into one that finishes roughly the turns under 60,000 states today (between the 88% and 93% finished at 20,000 and 100,000). It will not close the tail: the capped turns are at least 100,000 states and some far more, so the planner must still play its best end found so far when the budget runs out, and approximate search within the turn is for those turns.
+
+## Milestone 8: offline value fit
+
+- Date: 2026-10-21
+- Commit: `9057198` (#135, the first commit of PR #146 on the `value-fit-135` branch): the feature encoder (`features`), the models and their fitting (`value`) and the data and gate (`fit`, the `fit` command). The committed models were trained by that commit's code with the command below.
+- Interpreter: CPython 3.14.0 (`uv run`), numpy 2.5.4.
+- Machine: Apple M1 MacBook, 8 GB, **shared** with three other jobs; at most 2 processes here.
+- Seeds: fit settings chosen on **10000-19999** (scratch runs, below), the result measured once on **20000-29999**, clear of every tournament's seeds.
+
+### What was fitted
+
+V(s), the probability that the player who has just ended their turn goes on to win, at the states `EndTurn` leaves (before the next player's automatic play), from the turn-boundary states of seeded heuristic-vs-heuristic games, each labelled with that player's result (Monte Carlo targets; no randomness beyond the deal, `--epsilon 0`).
+
+- **Features** (`features.encode`, 190 per state): per player, the player who just ended first, a count of each of the 49 cards in their draw pool (deck, hand, discard pile and cards in play: the hand was just drawn from the deck, so which cards it holds is deck order), a count of each of the 18 bases in play, Authority, base defense and the discards they owe; then the turn and a count of each card in the Trade Row. Standardised by the training data's mean and spread, stored with the model.
+- **Logistic regression** (191 parameters) and a **network with one hidden layer of 32 tanh units** (6,145 parameters), hand-written in numpy (`value.Logistic`, `value.Mlp`), loss the mean log-loss plus `l2 / 2` times the squared weights, gradients checked against central finite differences. Both fitted by Adam (learning rate 0.001, minibatches of 256, 10 epochs, `l2` 0.003, seed 0), about 1.5 and 2.5 s each.
+- **The gate**: mean log-loss on the held-out games' states, against `sigmoid(evaluate / 16)` for the same player on the same states, and against a constant (the training games' share of wins by the player who just ended).
+
+### Result (seeds 20000-29999)
+
+```sh
+uv run python -m minimax_games.games.star_realms fit --jobs 2 \
+    --save src/minimax_games/games/star_realms/models
+```
+
+(the defaults: `--games 8000 --test-games 2000 --base-seed 20000 --seed 0 --epochs 10 --batch 256 --learning-rate 0.001 --l2 0.003 --hidden 32 --epsilon 0`). 8,000 training games (seeds 20000-27999), **189,901 states**; 2,000 held-out games (seeds 28000-29999), **47,311 states**; every game finished. 40 s wall time (76 s CPU, nearly all of it generating the games), about 1 GB peak memory.
+
+| Predictor | Held-out log-loss |
+|---|---|
+| constant | 0.6930 |
+| `sigmoid(evaluate / 16)` | 0.6068 |
+| logistic regression | **0.5621** |
+| one hidden layer, 32 units | **0.5497** |
+
+**Both models beat `evaluate`**, by 0.045 and 0.057 nats per state, so both are committed: `src/minimax_games/games/star_realms/models/logistic.npz` and `mlp.npz` (`value.load("logistic")`, `value.load("mlp")`, wrapped as an evaluator by `value.ValueEvaluator`). The run is deterministic: rerunning it with `--jobs 1` writes byte-identical model files. `evaluate`'s 0.607 agrees with the 0.606 its scale was fitted to (Milestone 5: rollouts), on other games' turn starts.
+
+What the logistic regression learned, per raw unit: a point of Authority is worth 0.080 log-odds to the player who just ended and -0.075 to the opponent, and each Scout still owned costs 0.31, about 4 points of Authority (`evaluate` charges 1, plus what it dilutes the deck's average). The cards worth most are the big ships, Command Ship (1.2 per copy), Dreadnaught, Battle Blob and Flagship (0.75-1.0); a Cutter is worth 0.35.
+
+So one weight per card, fitted to outcomes, already does much better than `evaluate`'s hand-set weights, and a small network does better again: the linear form is not the whole limit. Whether that carries over to play is the next item of Milestone 8, a tournament of the planner with each value.
+
+### Choosing the fit settings (seeds 10000-19999)
+
+Scratch runs on 8,000 training games (seeds 10000-17999, 189,914 states) and 2,000 validation games (18000-19999, 47,695 states; `evaluate` 0.6048), all seed 0, Adam at 0.001, minibatches of 256:
+
+| Model | Epochs | `l2` | Train | Validation |
+|---|---|---|---|---|
+| logistic | 10 | 0 | 0.5601 | 0.5557 |
+| logistic | 10 | 0.003 | 0.5607 | 0.5567 |
+| 32 units | 20 | 0.001 | 0.4852 | 0.5642 |
+| 32 units | 10 | 0.003 | 0.5292 | **0.5420** |
+| 32 units | 20 | 0.003 | 0.5189 | 0.5416 |
+| 32 units | 40 | 0.003 | 0.5129 | 0.5439 |
+| 32 units | 20 | 0.01 | 0.5539 | 0.5538 |
+| 32 units | 20 | 0.03 | 0.5795 | 0.5770 |
+| 16 units | 20 | 0.003 | 0.5201 | 0.5424 |
+| 64 units | 20 | 0.003 | 0.5191 | 0.5430 |
+
+The network overfits easily: with `l2` 0.0001 and 30 epochs it scored 0.684 on 1,000 held-out games, worse than `evaluate`, and with half the training data (95,000 states) its best was 0.561, behind the logistic regression's 0.559. `l2` 0.003 is the best penalty tried, and the width matters little; 10 epochs were adopted, as good as 20 at half the time, for both models (the logistic regression barely changes with `l2`). More games would likely help the network most, and cost only seconds per thousand.
