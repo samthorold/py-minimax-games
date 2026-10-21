@@ -1543,7 +1543,7 @@ Raw outputs and scripts (not committed): `tempo/` (`fit_tempo.py <first seed> <g
 ## Milestone 6: full-deck turn sizes
 
 - Date: 2026-10-21
-- Commit: `6255db3` (#132's branch, on `main` at e884671); the counts don't depend on anything after it.
+- Commit: the merge of #132 (measured on its branch, from `main` at e884671).
 - Command: `python -m minimax_games.games.star_realms turn-sizes --games 20 --jobs 2` (or `task turn-sizes -- --games 20 --jobs 2`): every turn of the heuristic-vs-heuristic games of seeds 0-19, each enumerated up to 100,000 states. 2.4 minutes wall time.
 - Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0, shared with other jobs.
 
