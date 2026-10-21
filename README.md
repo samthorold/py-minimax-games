@@ -34,31 +34,11 @@ task test                   # uv run pytest (extra args: task test -- -k name)
 task lint                   # ruff check, ruff format --check, ty check
 task fmt                    # ruff fix + format
 task bench                  # Star Realms: the cheat's search speed (nodes/sec)
+task turn-sizes             # Star Realms: distinct ends per turn (planner workload)
 task profile                # Star Realms: profile the cheat's search
 task tune                   # Star Realms: tune evaluate's weights by tournament
 task pypy -- tournament ... # Star Realms: a long tournament under PyPy
 ```
-
-### Stopping a Star Realms tournament early (SPRT)
-
-`tournament --sprt` plays the paired match as usual (consecutive seeds,
-alternating seats) but stops as soon as a sequential probability ratio test
-decides between two hypotheses about bot A's win rate in finished games:
-`--h0` (0.5) against `--h1` (0.55), with error rates `--alpha` and `--beta`
-(0.05 each). `--games` is then the most it plays. It prints the decision (H0
-or H1 accepted, or undecided at the limit), the games played, A's win rate
-with its 95% Wilson interval, and the log-likelihood ratio and its bounds.
-A clear result settles in tens of games:
-
-```sh
-uv run python -m minimax_games.games.star_realms tournament --bots greedy heuristic --games 500 --sprt
-```
-
-accepts H0 after 44 games (greedy wins 18%). The test only weighs H0 against
-H1: accepting H0 means A is nearer 50% than 55%, or worse, not that the bots
-are equal. With `--jobs N` games are played ahead in N processes, but the
-decision is taken on completed games in seed order, so it is the same as one
-process's.
 
 ### Tuning the Star Realms evaluation
 
