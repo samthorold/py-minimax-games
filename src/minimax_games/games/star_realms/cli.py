@@ -6,8 +6,10 @@ picks the bots, first player first (both random by default): `random`,
 `greedy`, `heuristic`, `sampler` (search over worlds sampled from its
 view), `ismcts` (information-set Monte Carlo tree search from its
 view) or `planner` (the whole-turn planner, over worlds sampled from its
-view). `cheat` is a benchmark, not a legitimate player: it searches the
-true state.
+view, scoring with `evaluate`). `planner:<model>` is the planner scoring with
+a committed learned value instead (`value.load(<model>)`, e.g.
+`planner:mlp`), on the Rust enumeration. `cheat` is a benchmark, not a
+legitimate player: it searches the true state.
 
 `python -m minimax_games.games.star_realms tournament --bots greedy random
 --games 500` plays seeded games with alternating seats (`--base-seed`,
@@ -85,7 +87,7 @@ import argparse
 import sys
 from collections.abc import Callable
 from dataclasses import replace
-from functools import partial
+from functools import cache, partial
 from pathlib import Path
 from typing import assert_never
 
@@ -98,6 +100,7 @@ from minimax_games.games.star_realms import (
     profiling,
     tune,
     turn_sizes,
+    value,
 )
 from minimax_games.games.star_realms.bots import (
     AnyBot,
@@ -170,6 +173,28 @@ def _planner(
     )
 
 
+@cache
+def _value(model: str) -> value.ValueEvaluator:
+    """The committed model `model` as an evaluator, loaded once a process."""
+    return value.ValueEvaluator(value.load(model))
+
+
+def _learned_planner(
+    seed: int,
+    model: str,
+    budget: int = planner.BUDGET,
+    worlds: int = planner.WORLDS,
+) -> PlannerBot:
+    return PlannerBot(
+        seed, worlds=worlds, budget=budget, evaluator=_value(model), backend="rust"
+    )
+
+
+LEARNED = "planner:"
+"""The prefix of a planner scoring with a committed learned value, by name:
+`planner:mlp`."""
+
+
 BOTS: dict[str, Callable[[int], AnyBot]] = {
     "random": RandomBot,
     "greedy": _greedy,
@@ -184,6 +209,22 @@ BOTS: dict[str, Callable[[int], AnyBot]] = {
 functions, not lambdas, so `tournament --jobs` can send them to workers."""
 
 
+def bot_name(text: str) -> str:
+    """`text` if it names a bot (`BOTS`, or `planner:<model>` for a committed
+    model), for argparse: an unknown name or model is an argument error."""
+    if text in BOTS:
+        return text
+    model = text.removeprefix(LEARNED)
+    if model != text and model:
+        try:
+            _value(model)
+        except FileNotFoundError as error:
+            raise argparse.ArgumentTypeError(f"{text}: {error}") from None
+        return text
+    msg = f"no bot {text!r}: {_names()}, or {LEARNED}<model>"
+    raise argparse.ArgumentTypeError(msg)
+
+
 def configured(
     name: str,
     budget: int | None = None,
@@ -195,9 +236,10 @@ def configured(
     an alpha-beta search bot, `worlds` worlds if it is the sampler, `budget`
     states per plan, `worlds` worlds and `evaluator` if it is the planner, and
     `iterations` per decision if it is the ISMCTS bot (each left at its
-    default if None). A rollout evaluator's seed is set to each game's. A
-    `partial` of a module function, so `--jobs` can still send it to
-    workers."""
+    default if None). `planner:<model>` is the planner with the committed
+    learned value `<model>` and the Rust enumeration, whatever `evaluator`.
+    A rollout evaluator's seed is set to each game's. A `partial` of a
+    module function, so `--jobs` can still send it to workers."""
     if name == "cheat":
         return partial(
             _cheat,
@@ -217,6 +259,13 @@ def configured(
             budget=planner.BUDGET if budget is None else budget,
             worlds=planner.WORLDS if worlds is None else worlds,
             evaluator=evaluator,
+        )
+    if name.startswith(LEARNED):
+        return partial(
+            _learned_planner,
+            model=name.removeprefix(LEARNED),
+            budget=planner.BUDGET if budget is None else budget,
+            worlds=planner.WORLDS if worlds is None else worlds,
         )
     if name == "ismcts":
         return partial(
@@ -269,14 +318,18 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--bots",
         nargs=2,
-        choices=BOTS,
+        type=bot_name,
         default=["random", "random"],
         metavar="BOT",
-        help=f"the two bots, first player first: {_names()}",
+        help=f"the two bots, first player first: {_names()},"
+        f" or {LEARNED}<model> (a committed learned value)",
     )
     args = parser.parse_args(argv)
 
-    first, second = (BOTS[name](args.seed + i) for i, name in enumerate(args.bots))
+    first, second = (
+        (BOTS[name] if name in BOTS else configured(name))(args.seed + i)
+        for i, name in enumerate(args.bots)
+    )
     result = play_match((first, second), args.seed, log=print if args.log else None)
     if not args.log:
         print(f"Player {result.winner + 1} wins on turn {result.turns}")
@@ -314,10 +367,11 @@ def tournament(argv: list[str]) -> None:
     parser.add_argument(
         "--bots",
         nargs=2,
-        choices=BOTS,
+        type=bot_name,
         required=True,
         metavar="BOT",
-        help=f"bots A and B (A moves first in even games): {_names()}",
+        help=f"bots A and B (A moves first in even games): {_names()},"
+        f" or {LEARNED}<model> (the planner with a committed learned value)",
     )
     parser.add_argument(
         "--games",
