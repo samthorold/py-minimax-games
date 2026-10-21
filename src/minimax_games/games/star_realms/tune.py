@@ -30,7 +30,7 @@ from pathlib import Path
 from minimax_games.games.star_realms import cheat, profiling
 from minimax_games.games.star_realms.bots import HeuristicBot
 from minimax_games.games.star_realms.cheat import CheatBot
-from minimax_games.games.star_realms.evaluate import WEIGHTS, Weights
+from minimax_games.games.star_realms.evaluate import WEIGHTS, Linear, Weights
 from minimax_games.games.star_realms.state import GameState
 from minimax_games.games.star_realms.tournament import MAX_TURNS, play_tournament
 
@@ -49,7 +49,7 @@ type Outcomes = tuple[bool, ...]
 
 
 def _cheat(seed: int, budget: int, weights: Weights) -> CheatBot:
-    return CheatBot(budget=budget, weights=weights)
+    return CheatBot(budget=budget, evaluator=Linear(weights))
 
 
 def _heuristic(seed: int) -> HeuristicBot:
@@ -214,7 +214,7 @@ def decision_states(
 
 
 def _moves(states: Sequence[GameState], budget: int, weights: Weights) -> list[object]:
-    return [cheat.decide(state, 2, budget, weights).move for state in states]
+    return [cheat.decide(state, 2, budget, Linear(weights)).move for state in states]
 
 
 def screen(

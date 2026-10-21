@@ -14,7 +14,10 @@ and node budget, the sampler's worlds too) if it plays,
 win rates overall and by seat, unfinished games and each bot's mean time per
 move. `--jobs N` spreads the games over N processes, with the same results.
 `--budget N` sets the search bots' nodes per decision and `--worlds K` the
-sampler's worlds (both default to the bots' own defaults).
+sampler's worlds (both default to the bots' own defaults). `--eval rollout`
+has them score positions by rollouts (`rollout.Rollout`: `--rollouts`,
+`--rollout-turns`, `--epsilon`, seeded per game) instead of the linear
+evaluation, with `rollout.ROLLOUT_BUDGET` nodes unless `--budget` says.
 Game `seed` replays on its own with `--seed` and its bots in seat order,
 first player first: bot A moves first in games `base_seed`,
 `base_seed + 2`, ...
@@ -49,6 +52,7 @@ the cheap screen instead: per weight, the share of the cheat's decisions
 import argparse
 import sys
 from collections.abc import Callable
+from dataclasses import replace
 from functools import partial
 from pathlib import Path
 
@@ -61,7 +65,9 @@ from minimax_games.games.star_realms.bots import (
     RandomBot,
 )
 from minimax_games.games.star_realms.cheat import CheatBot
+from minimax_games.games.star_realms.evaluate import LINEAR, Evaluator
 from minimax_games.games.star_realms.match import play_match
+from minimax_games.games.star_realms.rollout import ROLLOUT_BUDGET, Rollout
 from minimax_games.games.star_realms.sampler import WORLDS, SamplerBot
 from minimax_games.games.star_realms.tournament import (
     MAX_TURNS,
@@ -78,12 +84,28 @@ def _heuristic(seed: int) -> HeuristicBot:
     return HeuristicBot()
 
 
-def _cheat(seed: int, budget: int = cheat.BUDGET) -> CheatBot:
-    return CheatBot(budget=budget)
+def _seeded(evaluator: Evaluator, seed: int) -> Evaluator:
+    """`evaluator`, its rollouts (if any) seeded from the game's `seed`."""
+    return (
+        replace(evaluator, seed=seed) if isinstance(evaluator, Rollout) else evaluator
+    )
 
 
-def _sampler(seed: int, budget: int = cheat.BUDGET, worlds: int = WORLDS) -> SamplerBot:
-    return SamplerBot(seed, worlds=worlds, budget=budget)
+def _cheat(
+    seed: int, budget: int = cheat.BUDGET, evaluator: Evaluator = LINEAR
+) -> CheatBot:
+    return CheatBot(budget=budget, evaluator=_seeded(evaluator, seed))
+
+
+def _sampler(
+    seed: int,
+    budget: int = cheat.BUDGET,
+    worlds: int = WORLDS,
+    evaluator: Evaluator = LINEAR,
+) -> SamplerBot:
+    return SamplerBot(
+        seed, worlds=worlds, budget=budget, evaluator=_seeded(evaluator, seed)
+    )
 
 
 BOTS: dict[str, Callable[[int], AnyBot]] = {
@@ -99,19 +121,28 @@ functions, not lambdas, so `tournament --jobs` can send them to workers."""
 
 
 def configured(
-    name: str, budget: int | None = None, worlds: int | None = None
+    name: str,
+    budget: int | None = None,
+    worlds: int | None = None,
+    evaluator: Evaluator = LINEAR,
 ) -> Callable[[int], AnyBot]:
-    """`BOTS[name]`, with `budget` nodes per decision if it is a search bot
-    and `worlds` worlds if it is the sampler (each left at its default if
-    None). A `partial` of a module function, so `--jobs` can still send it
-    to workers."""
-    if name == "cheat" and budget is not None:
-        return partial(_cheat, budget=budget)
-    if name == "sampler" and (budget is not None or worlds is not None):
+    """`BOTS[name]`, with `budget` nodes per decision and `evaluator` if it is
+    a search bot, and `worlds` worlds if it is the sampler (each left at its
+    default if None). A rollout evaluator's seed is set to each game's. A
+    `partial` of a module function, so `--jobs` can still send it to
+    workers."""
+    if name == "cheat":
+        return partial(
+            _cheat,
+            budget=cheat.BUDGET if budget is None else budget,
+            evaluator=evaluator,
+        )
+    if name == "sampler":
         return partial(
             _sampler,
             budget=cheat.BUDGET if budget is None else budget,
             worlds=WORLDS if worlds is None else worlds,
+            evaluator=evaluator,
         )
     return BOTS[name]
 
@@ -194,18 +225,54 @@ def tournament(argv: list[str]) -> None:
         "--budget",
         type=int,
         help="the search bots' nodes per decision, shared by the sampler's"
-        f" worlds (default: {cheat.BUDGET})",
+        f" worlds (default: {cheat.BUDGET}, or {ROLLOUT_BUDGET} with --eval"
+        " rollout, about the same time per decision)",
     )
     parser.add_argument(
         "--worlds",
         type=int,
         help=f"the sampler's worlds per decision (default: {WORLDS})",
     )
+    parser.add_argument(
+        "--eval",
+        choices=("linear", "rollout"),
+        default="linear",
+        help="how the search bots score positions: the linear evaluation, or"
+        " rollouts (playouts with the greedy policy; default: %(default)s)",
+    )
+    defaults = Rollout()
+    parser.add_argument(
+        "--rollouts",
+        type=int,
+        default=defaults.rollouts,
+        help="with --eval rollout, playouts per position (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--rollout-turns",
+        type=int,
+        default=defaults.turns,
+        help="with --eval rollout, turn ends each playout plays (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--epsilon",
+        type=float,
+        default=defaults.epsilon,
+        help="with --eval rollout, the chance a playout move is random"
+        " (default: %(default)s)",
+    )
     args = parser.parse_args(argv)
 
+    evaluator: Evaluator = LINEAR
+    budget = args.budget
+    if args.eval == "rollout":
+        evaluator = Rollout(
+            rollouts=args.rollouts, turns=args.rollout_turns, epsilon=args.epsilon
+        )
+        if budget is None:
+            budget = ROLLOUT_BUDGET
     a, b = args.bots
     factories = {
-        name: configured(name, args.budget, args.worlds)
+        name: configured(name, budget, args.worlds, evaluator)
         for name in dict.fromkeys(args.bots)
     }
     played = play_tournament(

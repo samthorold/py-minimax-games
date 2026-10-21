@@ -131,58 +131,65 @@ class GreedyBot:
     """
 
     def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
-        if (forced := _forced(view, actions)) is not None:
-            return min(forced, key=_cheapest)
-        if options := _choices(actions):
-            return min(
-                options,
-                key=lambda a: (-_trade(a.option) - _combat(a.option), _order(a)),
-            )
-        if recycles := _recycles(actions):
-            return min(recycles, key=_fewest_cheapest)
-        if frees := _free_ships(actions):
-            return min(frees, key=lambda a: (-a.card.cost, a.card.name))
-        if ScrapAndDraw((), ()) in actions:
-            return ScrapAndDraw((), ())
-        if copies := _copies(actions):
-            return min(
-                copies,
-                key=lambda a: (
-                    -_trade(a.card.primary) - _combat(a.card.primary),
-                    a.card.name,
-                ),
-            )
-        for action in actions:
-            if isinstance(action, PlayCard | UseAlly | UseBase):
-                return action
-        buys = [a for a in actions if isinstance(a, Acquire)]
-        if buys:
-            buy = min(buys, key=lambda a: (-a.card.cost, a.card.name))
-            return _on_top(buy, actions)
-        if AttackPlayer() in actions:
-            return AttackPlayer()
-        outposts = [
-            a
-            for a in actions
-            if isinstance(a, AttackBase) and a.card.type is CardType.OUTPOST
-        ]
-        if outposts:
-            return min(outposts, key=lambda a: (a.card.defense or 0, a.card.name))
-        return EndTurn()
+        return greedy_move(view.must_scrap, actions)
+
+
+def greedy_move(must_scrap: int, actions: tuple[Action, ...]) -> Action:
+    """`GreedyBot`'s choice among `actions`, the legal actions, when the
+    player owes `must_scrap` scraps from hand: all it reads, so a search's
+    playouts can call it on a state without building a view."""
+    if (forced := _forced(must_scrap, actions)) is not None:
+        return min(forced, key=_cheapest)
+    if options := _choices(actions):
+        return min(
+            options,
+            key=lambda a: (-_trade(a.option) - _combat(a.option), _order(a)),
+        )
+    if recycles := _recycles(actions):
+        return min(recycles, key=_fewest_cheapest)
+    if frees := _free_ships(actions):
+        return min(frees, key=lambda a: (-a.card.cost, a.card.name))
+    if ScrapAndDraw((), ()) in actions:
+        return ScrapAndDraw((), ())
+    if copies := _copies(actions):
+        return min(
+            copies,
+            key=lambda a: (
+                -_trade(a.card.primary) - _combat(a.card.primary),
+                a.card.name,
+            ),
+        )
+    for action in actions:
+        if isinstance(action, PlayCard | UseAlly | UseBase):
+            return action
+    buys = [a for a in actions if isinstance(a, Acquire)]
+    if buys:
+        buy = min(buys, key=lambda a: (-a.card.cost, a.card.name))
+        return _on_top(buy, actions)
+    if AttackPlayer() in actions:
+        return AttackPlayer()
+    outposts = [
+        a
+        for a in actions
+        if isinstance(a, AttackBase) and a.card.type is CardType.OUTPOST
+    ]
+    if outposts:
+        return min(outposts, key=lambda a: (a.card.defense or 0, a.card.name))
+    return EndTurn()
 
 
 type CardChoice = Discard | ScrapHandCard | ScrapDiscardCard
 """An action that is a choice of one of the player's cards to give up."""
 
 
-def _forced(view: View, actions: tuple[Action, ...]) -> list[CardChoice] | None:
+def _forced(must_scrap: int, actions: tuple[Action, ...]) -> list[CardChoice] | None:
     """The card choices of a decision the bot must make before anything else,
     if one is pending: the discards it owes, or the scraps from hand it owes
-    (`View.must_scrap`), else `None`."""
+    (`must_scrap`, as in `View.must_scrap`), else `None`."""
     discards: list[CardChoice] = [a for a in actions if isinstance(a, Discard)]
     if discards:
         return discards
-    if view.must_scrap:
+    if must_scrap:
         return [a for a in actions if isinstance(a, ScrapHandCard)]
     return None
 
@@ -426,7 +433,7 @@ class HeuristicBot:
     """
 
     def choose(self, view: View, actions: tuple[Action, ...]) -> Action:
-        if (forced := _forced(view, actions)) is not None:
+        if (forced := _forced(view.must_scrap, actions)) is not None:
             return _least_wanted(forced, view)
         if options := _choices(actions):
             return self._choose(view, options)

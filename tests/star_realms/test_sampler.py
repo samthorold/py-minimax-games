@@ -9,6 +9,7 @@ from minimax_games.games.star_realms.bots import GreedyBot
 from minimax_games.games.star_realms.catalogue import CATALOGUE, SCOUT, STARTING_DECK
 from minimax_games.games.star_realms.cheat import CheatBot, decide
 from minimax_games.games.star_realms.match import MatchTooLong, play_match
+from minimax_games.games.star_realms.rollout import Rollout
 from minimax_games.games.star_realms.sampler import SamplerBot, vote
 from minimax_games.games.star_realms.state import GameState, PlayerState
 from minimax_games.games.star_realms.view import observe, sample_world
@@ -124,3 +125,17 @@ def test_the_defaults_match_the_cheats_horizon_and_budget():
 def test_by_default_four_worlds_share_the_budget():
     # The default chosen in docs/star-realms-results.md, Milestone 3.
     assert SamplerBot(0).worlds == 4
+
+
+def test_with_only_one_possible_world_it_plays_what_the_cheat_plays_with_rollouts():
+    state = one_world()
+    rollout = Rollout(rollouts=2, turns=1, epsilon=0.5, seed=3)
+    view = observe(state, 0)
+    world = sample_world(view, random.Random(0))
+    expected = decide(world, 1, 100, rollout).move
+    bot = SamplerBot(seed=0, worlds=3, turns=1, budget=300, evaluator=rollout)
+    assert bot.choose(view, rules.legal_actions(state)) == expected
+    assert bot.settings() == (
+        "3 worlds, 1-turn horizon, budget 300 nodes per decision (100 per world),"
+        f" {rollout.describe()}"
+    )

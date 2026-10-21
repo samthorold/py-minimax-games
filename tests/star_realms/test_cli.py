@@ -3,7 +3,9 @@ import pytest
 from minimax_games.games.star_realms.action import Action
 from minimax_games.games.star_realms.bots import GreedyBot, HeuristicBot
 from minimax_games.games.star_realms.cheat import BUDGET, CheatBot
-from minimax_games.games.star_realms.cli import BOTS, main
+from minimax_games.games.star_realms.cli import BOTS, configured, main
+from minimax_games.games.star_realms.evaluate import LINEAR
+from minimax_games.games.star_realms.rollout import ROLLOUT_BUDGET, Rollout
 from minimax_games.games.star_realms.sampler import WORLDS, SamplerBot
 from minimax_games.games.star_realms.state import GameState
 from minimax_games.games.star_realms.view import observe
@@ -77,7 +79,9 @@ def test_tournament_plays_the_cheat_and_states_its_budget(capsys):
     argv = ["tournament", "--bots", "cheat", "greedy", "--games", "2"]
     main([*argv, "--max-turns", "4"])
     out = capsys.readouterr().out.splitlines()
-    assert f"cheat: 2-turn horizon, budget {BUDGET} nodes per decision" in out
+    assert (
+        f"cheat: 2-turn horizon, budget {BUDGET} nodes per decision, linear evaluation"
+    ) in out
     assert "Unfinished: 2 (seeds 0, 1)" in out
     cheat = next(line for line in out if line.split()[:2] == ["cheat", "0/0"])
     assert float(cheat.split()[-1]) > 0  # it made timed decisions
@@ -134,7 +138,8 @@ def test_tournament_plays_the_sampler_and_states_its_worlds_and_budget(capsys):
     out = capsys.readouterr().out.splitlines()
     assert (
         f"sampler: {WORLDS} worlds, 2-turn horizon,"
-        f" budget {BUDGET} nodes per decision ({BUDGET // WORLDS} per world)"
+        f" budget {BUDGET} nodes per decision ({BUDGET // WORLDS} per world),"
+        " linear evaluation"
     ) in out
     sampler = next(line for line in out if line.split()[:2] == ["sampler", "0/0"])
     assert float(sampler.split()[-1]) > 0  # it made timed decisions
@@ -145,13 +150,50 @@ def test_tournament_sets_the_search_bots_budget_and_the_samplers_worlds(capsys):
     tail = ["--max-turns", "2", "--budget", "60", "--worlds", "3"]
     main([*argv, *tail])
     out = capsys.readouterr().out.splitlines()
-    assert "cheat: 2-turn horizon, budget 60 nodes per decision" in out
+    assert "cheat: 2-turn horizon, budget 60 nodes per decision, linear evaluation" in (
+        out
+    )
     assert (
-        "sampler: 3 worlds, 2-turn horizon, budget 60 nodes per decision (20 per world)"
+        "sampler: 3 worlds, 2-turn horizon, budget 60 nodes per decision"
+        " (20 per world), linear evaluation"
     ) in out
     main([*argv, *tail, "--jobs", "2"])  # the configured bots reach the workers
     parallel = capsys.readouterr().out.splitlines()
     assert parallel[:4] == out[:4]  # the same settings and unfinished games
+
+
+def test_tournament_can_give_the_search_bots_the_rollout_evaluation(capsys):
+    argv = ["tournament", "--bots", "cheat", "sampler", "--games", "2"]
+    tail = ["--max-turns", "2", "--budget", "60", "--eval", "rollout"]
+    rollout = ["--rollouts", "3", "--rollout-turns", "1", "--epsilon", "0.2"]
+    main([*argv, *tail, *rollout])
+    out = capsys.readouterr().out.splitlines()
+    evaluator = "rollout evaluation (3 x 1 turns, epsilon 0.2, scale 16)"
+    assert f"cheat: 2-turn horizon, budget 60 nodes per decision, {evaluator}" in out
+    assert (
+        "sampler: 4 worlds, 2-turn horizon, budget 60 nodes per decision"
+        f" (15 per world), {evaluator}"
+    ) in out
+    main([*argv, *tail, *rollout, "--jobs", "2"])  # it reaches the workers
+    assert capsys.readouterr().out.splitlines()[:4] == out[:4]
+
+
+def test_with_rollouts_the_search_bots_budget_defaults_to_equal_compute(capsys):
+    argv = ["tournament", "--bots", "cheat", "greedy", "--games", "1"]
+    main([*argv, "--max-turns", "1", "--eval", "rollout"])
+    out = capsys.readouterr().out.splitlines()
+    assert out[1].startswith(f"cheat: 2-turn horizon, budget {ROLLOUT_BUDGET} nodes")
+
+
+def test_the_rollout_evaluation_is_seeded_per_game():
+    factory = configured("cheat", evaluator=Rollout(rollouts=2))
+    first, second = factory(7), factory(8)
+    assert isinstance(first, CheatBot) and isinstance(second, CheatBot)
+    assert first.evaluator == Rollout(rollouts=2, seed=7)
+    assert second.evaluator == Rollout(rollouts=2, seed=8)
+    default = BOTS["cheat"](7)
+    assert isinstance(default, CheatBot)
+    assert default.evaluator == LINEAR
 
 
 def test_tune_prints_each_step_and_resumes_from_its_cache(capsys, tmp_path):

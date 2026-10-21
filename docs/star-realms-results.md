@@ -1254,3 +1254,99 @@ Raw outputs (not committed): `m5/tune/` (`screen-5000.txt`, `tune-log.txt` (CPyt
 ### Search speed
 
 The cheat's nodes now carry their `Weights`. `bench` (CPython, contended), before (`origin/main`'s `node.py` and `cheat.py`) and after: the same trees (632,643 nodes at horizon 1, 941,416 at horizon 2) at the same speed, 49,600 and 49,200 nodes/s at horizon 1, 39,400 and 39,200 at horizon 2.
+
+## Milestone 5: rollouts
+
+- Date: 2026-10-21
+- Commit: `8ce2a04` (#116, the `issue-116-rollout` branch). The cheat and the sampler take an **evaluator** (`CheatBot(evaluator=...)`, `SamplerBot(..., evaluator=...)`, `cheat.decide(..., evaluator)`): `evaluate.Linear(weights)` (the default, `LINEAR`, the tuned linear evaluation of Milestone 5: tuning, unchanged) or `rollout.Rollout(...)`. The tournament command takes `--eval linear|rollout`, `--rollouts`, `--rollout-turns` and `--epsilon`, and prints the evaluator in each search bot's settings.
+- Interpreters: the tournaments ran on **PyPy 3.12.14** (`task pypy`'s `.venv-pypy`, installed from the commit above; a scratch script calling `tournament.play_tournament` with `cli.configured`'s bots, `--jobs 3`, so each chunk's per-seed results could be paired), the ms/decision used to match compute on **CPython 3.14.0** (`uv run`). Results are identical on both (Milestone 5: PyPy re-measured).
+- Machine: Apple M1 MacBook, 8 GB, **shared**: other jobs ran at times (load average 2.5-5 during the CPython timings), so timings are contended; the CPython ones below were taken back to back to keep the comparison fair.
+- Seeds: settings chosen on **4000-4199**, measured once on **2000-2499**, clear of the ladder's 0-499 and of #115's 1000-1499 and 3000-3399. Alternating seats, max 300 turns, `--jobs 3`.
+
+### The rollout evaluation
+
+`rollout.Rollout(rollouts, turns, epsilon, scale, seed, weights)` scores a leaf by `rollouts` playouts, each playing `turns` more turn ends (the rest of the current turn counts as one) with the greedy bot's moves, then scoring the state reached as a win probability for the searching player: 1 or 0 if the game ended, else `sigmoid(evaluate / scale)`. The mean is mapped into the integer scores alpha-beta compares, `round(SPAN * (2p - 1))` with `SPAN = 10**6`, strictly inside `-WIN..WIN`, so a game won or lost inside the search tree still ranks beyond any rollout. A finished leaf scores `WIN` or `-WIN`, as with `evaluate`.
+
+- **The playout policy** (`rollout.greedy`) is `GreedyBot`'s, read from the state: it needs only the legal actions and the scraps owed (`bots.greedy_move`), so it reads only the mover's hand and the public state, not the opponent's hand or deck order, and builds no view. With probability `epsilon` a move is instead uniformly random among the moves other than `EndTurn` (when there are any): random play would otherwise end turns with trade and combat unspent (#117's research, §2.5). A playout also stops at turn 300.
+- **Determinism**: the playouts' rng is seeded from the settings' `seed`, the perspective, and the state's own shuffle seed and turn, so the same state and settings give the same score in any order of evaluation and in any process (no `hash`, no sets). Leaves of the same turn usually share a shuffle seed, so they are played out with common random numbers. The tournament command seeds the rollouts with each game's seed. `Rollout.value(state, perspective, rng)` takes an rng instead, for a search outside alpha-beta (ISMCTS, #117).
+- **`scale` = 16** `evaluate` points per unit of log-odds, by one-dimensional maximum likelihood of `P(win) = sigmoid(evaluate(s, 0) / scale)` over the turn starts of 300 heuristic-vs-heuristic games (seeds 5000-5299, 7,141 states, best 15.7, mean log-loss 0.606 against 0.650 at half and 0.624 at double). Greedy-vs-greedy games (seeds 5300-5599, 7,995 states) gave 19.0. A scratch script (`fit_scale.py`), seconds on CPython. Refit it if the weights change.
+
+### Cost, and matching compute
+
+ms per cheat decision against the heuristic on CPython. First 4 games (seeds 4000-4003) at a 500-node budget, to see what each setting costs:
+
+| Rollouts × turns, epsilon | ms/decision at 500 nodes |
+|---|---|
+| 1 × 1, 0.1 | 29.5 |
+| 1 × 2, 0 | 48.0 |
+| 1 × 2, 0.1 | 52.8 |
+| 1 × 4, 0.1 | 85.3 |
+| 4 × 2, 0.1 | 158 |
+
+The linear cheat at its default 5,000 nodes took 64.6 ms on the same games. Each setting was then given the budget that brings it to about that: 1 × 1 at 1,100 nodes, 1 × 2 at 650-700, 1 × 4 at 380 (4 × 2 would leave only about 200 nodes, too few to search 2 turns, so it was not tried). A rollout's cost is mostly the greedy playout's `legal_actions` and `advance` calls: per node of budget, the rollout cheat costs about 7 times the linear one (700 nodes take as long as 5,000).
+
+Checked on 10 games (seeds 4000-4009) back to back, `tournament --bots cheat heuristic --games 10 --base-seed 4000 [--eval rollout] [--budget N]`:
+
+| Cheat | ms/decision (CPython) |
+|---|---|
+| linear, 5,000 nodes (default) | 67.7 |
+| rollout 1 × 2, epsilon 0, **700 nodes** (equal compute) | 72.5 |
+| linear, 20,000 nodes | 218 |
+| rollout 1 × 2, epsilon 0, **2,800 nodes** (the larger setting) | 252 |
+
+So 700 nodes matches the default linear cheat (+7%), and 2,800 matches the linear cheat at 20,000 nodes (+16%), both slightly in the rollouts' favour.
+
+### Choosing the settings (seeds 4000-4199)
+
+200 games each, cheat vs heuristic, paired with the linear cheat on the same seeds (the bots are deterministic, so only discordant seeds carry information; exact two-sided sign test):
+
+| Cheat | Wins | Against linear (paired) |
+|---|---|---|
+| linear, 5,000 nodes | 82/200 (41.0%) | |
+| rollout 1 × 2, epsilon 0, 700 nodes | 84/200 (42.0%) | +2 on 78 discordant, p = 0.91 |
+| rollout 1 × 2, epsilon 0.1, 650 nodes | 80/200 (40.0%) | -2 on 72, p = 0.91 |
+| rollout 1 × 1, epsilon 0.1, 1,100 nodes | 65/200 (32.5%) | -17 on 57, p = 0.03 |
+| rollout 1 × 4, epsilon 0.1, 380 nodes | 55/200 (27.5%) | -27 on 79, p = 0.003 |
+
+Two turns per playout is the best length at equal compute: one turn plays only the mover's next turn, so the leaf is scored with the opponent's reply missing, and four leave too few nodes for the search. Randomness made no difference in the cheat (the cheat searches the true state, so a greedy playout already sees the real deck order), so epsilon 0 was kept: cheaper, and with it `rollouts` above 1 would only repeat the same playout. Hence the defaults `Rollout()` = 1 × 2 turns, epsilon 0, and `rollout.ROLLOUT_BUDGET` = 700 nodes, which the tournament command uses with `--eval rollout` unless `--budget` is given.
+
+### cheat-with-rollouts vs heuristic, against the linear cheat (seeds 2000-2499)
+
+500 games each on the same seeds, PyPy, `--jobs 3`, as foreground chunks of consecutive seeds (an even number of games each, so seats alternate as in one run) combined with `tournament.combine`: the linear cheats and the 700-node rollouts in chunks of 200, 200 and 100, the 2,800-node rollouts and 20,000-node linear in chunks of 60-100.
+
+| Cheat | Wins | Win% | 95% interval | As 1st | As 2nd | ms/move (PyPy) |
+|---|---|---|---|---|---|---|
+| linear, 5,000 nodes (default) | 216/500 | 43.2% | 38.9-47.6% | 133/250 | 83/250 | 63.4 |
+| rollout, 700 nodes (equal compute) | 195/500 | 39.0% | 34.8-43.3% | 109/250 | 86/250 | 74.9 |
+| linear, 20,000 nodes | 257/500 | 51.4% | 47.0-55.8% | 153/250 | 104/250 | 189 |
+| rollout, 2,800 nodes (equal to linear at 20,000) | 241/500 | 48.2% | 43.9-52.6% | 133/250 | 108/250 | 228 |
+
+0 unfinished in every run, mean 24.3-24.9 turns, 70-72 cheat decisions per game. Wall time (PyPy, `--jobs 3`, chunks added up): 13.0, 16.0, 41.0 and 50.3 minutes.
+
+**Paired**, on the same 500 seeds:
+
+| Comparison | Result |
+|---|---|
+| rollout 700 vs linear 5,000 (equal compute) | **-21** on 209 discordant (94 won, 115 lost), p = 0.17 |
+| rollout 2,800 vs linear 20,000 (equal compute, larger) | **-16** on 190 (87, 103), p = 0.28 |
+| rollout 2,800 vs linear 5,000 (4x compute) | +25 on 197 (111, 86), p = 0.09 |
+| rollout 2,800 vs rollout 700 | +46 on 146 (96, 50), p < 0.001 |
+| linear 20,000 vs linear 5,000 | **+41** on 81 (61, 20), p < 0.001 |
+
+The linear cheat scores 43.2% on these seeds, between its 52.0% on 0-499 and 43.8% on 1000-1499: as Milestone 5: tuning found, only comparisons on the same seeds mean anything.
+
+### Verdict
+
+**The linear evaluation stays the default.** At equal compute the rollout evaluation is no better than the tuned linear one, and a little worse: -21 games of 500 at the default compute and -16 at four times it, neither significant on its own, but both the same way, as the selection seeds were level (+2). Each node scored by a playout costs about 7 times a linear one, and the better leaf is not worth the search it costs: with a seventh of the nodes, far fewer of the 2-turn searches finish.
+
+**The finding that matters more is about budget.** Four times the nodes lifts the linear cheat from 43.2% to 51.4% against the heuristic (+41 on 81 discordant seeds, p < 0.001; the rollout cheat gains as much, +46). Milestone 3 found more nodes didn't help on the 30-card deck, but on the full deck with card values (#114) they do: half the turn starts of mid and late game didn't finish even the 1-turn search at 5,000 nodes (Milestone 4: search speed on the full deck). So the next lift is likely from search efficiency (a canonical order for buys and attacks, as #105 found) or a larger default budget, not the leaf evaluation. Raising the default (and the sampler's, which shares it) is a separate decision with its cost in tournament time: about 3x per decision.
+
+For ISMCTS (#117): `Rollout.value(state, perspective, rng)` and `rollout.playout` / `rollout.win_probability` are usable outside alpha-beta; the 2-turn greedy playout with `sigmoid(evaluate / 16)` is the better leaf of those tried here, though epsilon was not shown to matter in the cheat (where the true state is searched) and may in sampled worlds.
+
+Limits: one seed set for choosing settings (200 games, so a small difference between epsilon 0 and 0.1 is not excluded), playout lengths of 1, 2 and 4 turns only, no playouts to the end of the game (3.5-7.5 ms each, #117's measurements: under 20 per decision at equal compute), and the sampler with rollouts not measured (its evaluator is the cheat's, per world).
+
+### Search speed
+
+The linear path now calls its evaluator through `Linear.__call__`. `bench` (CPython, contended), before (`93589cf`, main) and after: the same trees (632,643 nodes at horizon 1, 941,416 at horizon 2), 47,500 against 47,500 and 46,400 nodes/s at horizon 1, 38,100 against 37,900 and 37,700 at horizon 2: within noise.
+
+Raw outputs (not committed): `m5/rollout/` (`cost-*.txt`, the CPython costs; `cpu-*-4000-10.txt`, the equal-compute timings; `sel-*-4000.{txt,pkl}`, the selection runs; `fin-*-<first seed>.{txt,pkl}` and the combined `fin-*-500.txt`, the final runs; `fin-paired-*.txt`; `bench-{before,after,after-2}.txt`; `scripts/` (`fit_scale.py`, `cost.sh`, `run_part.py`, `paired.py`, `combine_all.py`)).
