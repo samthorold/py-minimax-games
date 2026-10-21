@@ -87,31 +87,47 @@ class Dataset:
     """Rows of features (`x`, float32: every feature is a small integer),
     whether the player who just ended won (`y`),
     and `sigmoid(evaluate / SCALE)` for that player (`evaluate`), one per
-    turn-boundary state of the finished games."""
+    turn-boundary state of the finished games, with each state's game (its
+    index among the seeds) and its position in that game (0 for the first
+    turn's end), so temporal-difference targets can be built (`td`)."""
 
     x: np.ndarray
     y: np.ndarray
     evaluate: np.ndarray
     games: int
+    game: np.ndarray
+    position: np.ndarray
 
 
-def _rows(seeds: Sequence[int], epsilon: float) -> Dataset:
+def _rows(seeds: Sequence[int], first: int = 0, *, epsilon: float) -> Dataset:
+    """The data of `seeds`, the first of them game number `first`."""
     xs: list[np.ndarray] = []
     ys: list[float] = []
     ps: list[float] = []
+    index: list[int] = []
+    positions: list[int] = []
     games = 0
-    for seed in seeds:
+    for i, seed in enumerate(seeds):
         game = boundaries(seed, epsilon)
         if game.winner is None:
             continue
         games += 1
         xs.append(features.encode_all(game.states).astype(np.float32))
-        for state in game.states:
+        for position, state in enumerate(game.states):
             ended = 1 - state.current
             ys.append(float(game.winner == ended))
             ps.append(win_probability(state, ended, SCALE))
+            index.append(first + i)
+            positions.append(position)
     x = np.concatenate(xs) if xs else np.zeros((0, len(features.NAMES)), np.float32)
-    return Dataset(x, np.array(ys), np.array(ps), games)
+    return Dataset(
+        x,
+        np.array(ys),
+        np.array(ps),
+        games,
+        np.array(index, dtype=np.int64),
+        np.array(positions, dtype=np.int64),
+    )
 
 
 def dataset(seeds: Iterable[int], epsilon: float = 0.0, jobs: int = 1) -> Dataset:
@@ -121,14 +137,22 @@ def dataset(seeds: Iterable[int], epsilon: float = 0.0, jobs: int = 1) -> Datase
     size = -(-len(seeds) // jobs) if seeds else 1
     chunks = [seeds[i : i + size] for i in range(0, len(seeds), size)]
     if jobs == 1 or len(chunks) <= 1:
-        return _rows(seeds, epsilon)
+        return _rows(seeds, epsilon=epsilon)
     with ProcessPoolExecutor(jobs) as pool:
-        parts = list(pool.map(partial(_rows, epsilon=epsilon), chunks))
+        parts = list(
+            pool.map(
+                partial(_rows, epsilon=epsilon),
+                chunks,
+                range(0, len(seeds), size),
+            )
+        )
     return Dataset(
         np.concatenate([p.x for p in parts]),
         np.concatenate([p.y for p in parts]),
         np.concatenate([p.evaluate for p in parts]),
         sum(p.games for p in parts),
+        np.concatenate([p.game for p in parts]),
+        np.concatenate([p.position for p in parts]),
     )
 
 

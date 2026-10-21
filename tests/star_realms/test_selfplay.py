@@ -130,6 +130,8 @@ def test_heuristic_games_give_the_rows_fit_builds():
     assert played.x.dtype == np.float32
     assert np.array_equal(played.x, data.x)
     assert np.array_equal(played.y, data.y)
+    assert np.array_equal(played.game, data.game)
+    assert np.array_equal(played.position, data.position)
     assert played.winners == tuple(fit.boundaries(seed).winner for seed in seeds)
 
 
@@ -159,6 +161,7 @@ def test_results_are_the_same_whatever_the_number_of_threads():
         assert np.array_equal(other.x, one.x)
         assert np.array_equal(other.y, one.y)
         assert np.array_equal(other.game, one.game)
+        assert np.array_equal(other.position, one.position)
         assert other.winners == one.winners
         assert other.turns == one.turns
         assert np.array_equal(other.plans, one.plans)

@@ -689,7 +689,8 @@ fn seat_player(d: &Bound<'_, PyDict>) -> PyResult<Player> {
 /// released, each game stopping unfinished past `max_turns`. Returns a
 /// dict: `features`, the turn-boundary states' rows of the finished games
 /// in game order (float32), with each row's label `y` (1.0 if the player
-/// who just ended won) and `game` (its index in `games`); per game its
+/// who just ended won), `game` (its index in `games`) and `position` (its
+/// place in that game, 0 for the first turn's end); per game its
 /// `winner` (`None` if unfinished) and `turns`, and `plans` and `diverged`
 /// (int64, a column per seat); with `record`, each game's decisions as
 /// `actions`.
@@ -731,6 +732,7 @@ fn self_play<'py>(
     let mut x: Vec<f32> = Vec::new();
     let mut y: Vec<f64> = Vec::new();
     let mut game = Vec::new();
+    let mut position = Vec::new();
     let mut counts = Vec::with_capacity(2 * played.len());
     let mut diverged = Vec::with_capacity(2 * played.len());
     for (i, p) in played.iter().enumerate() {
@@ -743,6 +745,7 @@ fn self_play<'py>(
         x.extend(p.rows.iter().map(|&v| v as f32));
         y.extend(p.ended.iter().map(|&e| f64::from(u8::from(e == won_by))));
         game.extend(std::iter::repeat_n(int(i), p.ended.len()));
+        position.extend((0..p.ended.len()).map(int));
     }
     let d = PyDict::new(py);
     let rows = y.len();
@@ -750,6 +753,7 @@ fn self_play<'py>(
     d.set_item("features", x.into_pyarray(py))?;
     d.set_item("y", y.into_pyarray(py))?;
     d.set_item("game", int_array(py, game))?;
+    d.set_item("position", int_array(py, position))?;
     let winners: Vec<Option<usize>> = played.iter().map(|p| p.winner).collect();
     d.set_item("winner", winners)?;
     let turns: Vec<u32> = played.iter().map(|p| p.turns).collect();

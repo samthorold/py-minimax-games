@@ -13,9 +13,11 @@ stops unfinished past `max_turns`, as `fit.boundaries` does.
 
 The rows are `fit.Dataset`'s `x` and `y`: the features of each state
 `EndTurn` leaves (`features.encode`), labelled 1.0 if the player who just
-ended went on to win, for the finished games, in game order. `value.fit`
-fits them directly. (`fit.Dataset.evaluate`, the gate's comparison, needs
-the Python `evaluate`, so it isn't produced: self-play rounds are gated by
+ended went on to win, for the finished games, in game order, with each
+row's game and position in it (`fit.Dataset` records the same), from which
+`td` builds temporal-difference targets. `value.fit` fits them directly.
+(`fit.Dataset.evaluate`, the gate's comparison, needs the Python
+`evaluate`, so it isn't produced: self-play rounds are gated by
 tournaments.)
 """
 
@@ -97,6 +99,9 @@ class SelfPlay:
     """Each row's label: 1.0 if the player who just ended won."""
     game: np.ndarray
     """Each row's game, as its index in the batch."""
+    position: np.ndarray
+    """Each row's place in its game: 0 for the state the first turn's
+    `EndTurn` leaves, then 1, 2, ..., one per turn."""
     winners: tuple[int | None, ...]
     """Each game's winner, `None` if it passed `max_turns`."""
     turns: tuple[int, ...]
@@ -144,6 +149,7 @@ def play(
         x=found["features"],
         y=found["y"],
         game=found["game"],
+        position=found["position"],
         winners=tuple(found["winner"]),
         turns=tuple(found["turns"]),
         plans=found["plans"],

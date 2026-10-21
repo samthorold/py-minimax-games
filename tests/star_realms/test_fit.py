@@ -42,10 +42,19 @@ def test_a_dataset_labels_each_state_for_the_player_who_just_ended():
     )
 
 
+def test_a_dataset_records_each_state_s_game_and_position_in_it():
+    data = dataset(range(10, 13))
+    lengths = [len(boundaries(seed).states) for seed in range(10, 13)]
+    assert data.game.tolist() == [g for g, n in enumerate(lengths) for _ in range(n)]
+    assert data.position.tolist() == [i for n in lengths for i in range(n)]
+
+
 def test_a_dataset_is_the_same_in_any_number_of_processes():
     one, two = dataset(range(4)), dataset(range(4), jobs=2)
     assert np.array_equal(one.x, two.x)
     assert np.array_equal(one.y, two.y)
+    assert np.array_equal(one.game, two.game)
+    assert np.array_equal(one.position, two.position)
 
 
 def test_a_run_is_deterministic_and_reports_every_log_loss():
