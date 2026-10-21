@@ -67,14 +67,6 @@ tasks:
     cmds:
       - uv run python -m minimax_games.games.star_realms fit {{.CLI_ARGS}}
 
-  pypy:
-    desc: "Run a Star Realms command under PyPy 3.12 in .venv-pypy, for long tournaments: task pypy -- tournament --bots cheat greedy --games 60"
-    cmds:
-      # PyPy has no 3.13: --python-version 3.13 lets the project (requires-python >=3.13) install on 3.12.
-      - uv venv --quiet --allow-existing --python pypy@3.12 .venv-pypy
-      - uv pip install --quiet --python .venv-pypy --python-version 3.13 --reinstall-package minimax-games .
-      - .venv-pypy/bin/python -m minimax_games.games.star_realms {{.CLI_ARGS}}
-
   native-bench:
     desc: "Time the Rust engine: first-slice greedy games/s and advance calls/s: task native-bench -- [--games N]"
     cmds:
