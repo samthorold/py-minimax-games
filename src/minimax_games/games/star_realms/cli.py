@@ -51,8 +51,9 @@ over candidate state budgets, and both by turn number.
 
 `python -m minimax_games.games.star_realms native-bench` times the Rust
 engine (`minimax_games._native.star_realms`) on `--games` full-deck
-greedy-vs-greedy games from `--base-seed`: games per second, and `advance`
-calls per second over their recorded decisions.
+greedy-vs-greedy games from `--base-seed`: games per second, `advance` calls
+per second over their recorded decisions, and heuristic-vs-heuristic games
+per second.
 
 `python -m minimax_games.games.star_realms profile` profiles the cheat's
 budgeted decisions (see `profiling`) at the same positions and in the first
@@ -283,7 +284,8 @@ def main(argv: list[str] | None = None) -> None:
 
 def native_bench(argv: list[str]) -> None:
     """Time the Rust engine on full-deck greedy-vs-greedy games: games per
-    second, and `advance` calls per second over their recorded decisions."""
+    second, and `advance` calls per second over their recorded decisions;
+    then heuristic-vs-heuristic games per second."""
     parser = argparse.ArgumentParser(
         prog="python -m minimax_games.games.star_realms native-bench"
     )
@@ -298,6 +300,11 @@ def native_bench(argv: list[str]) -> None:
     )
     calls, seconds = native.bench_advance(args.games, args.base_seed)
     print(f"advance: {calls} calls in {seconds:.3f} s, {calls / seconds:,.0f} calls/s")
+    games, decisions, seconds = native.bench_heuristic_games(args.games, args.base_seed)
+    print(
+        f"heuristic games: {games} in {seconds:.3f} s,"
+        f" {games / seconds:,.0f} games/s, {decisions / seconds:,.0f} decisions/s"
+    )
 
 
 def tournament(argv: list[str]) -> None:

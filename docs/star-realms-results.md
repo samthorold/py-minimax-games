@@ -1708,3 +1708,25 @@ Against the first slice (Milestone 7, tracer bullet), a game is 1.6 times slower
 
 - Stealth Needle's copies were the one design question: a Python copy is a new `Card` made at run time. In Rust it is a card variant naming its target, `NeedleAs(i)`, whose data is built once on first use, which keeps cards two bytes and `Copy`, so piles and actions needed no change.
 - The boundary's actions had to grow: `Choose`, `Recycle` and `ScrapAndDraw` carry more than one card name, so actions now cross as `(kind, *fields)` tuples, not `(kind, card)` pairs.
+
+## Milestone 7: Rust heuristic bot
+
+2026-10-21, #139 (tracked by #127), CPython 3.14, Apple M1 (8 GB) shared with other agents' builds and tests. The Rust engine gains the heuristic bot, `bots.HeuristicBot` ported to `heuristic.rs`, choosing from views (design, Compiled engine, "The heuristic bot").
+
+**Speed**, `task native-bench -- --games 5000` (seeds 0-4999, heuristic vs heuristic, full deck, release build, three runs):
+
+| Measure | Result |
+|---|---|
+| Heuristic games | 1,270-1,300 games/s (0.78 ms per game) |
+| Decisions in those games | 163,000-167,000/s (128 per game) |
+| Greedy games, same runs | 3,120-3,300 games/s (152 decisions per game) |
+
+A heuristic decision costs about 6 µs against greedy's 2 µs, mostly from building the view before every decision (`observe` clones every pile and sorts the hidden ones), which greedy doesn't need. Unoptimised, as the engine is; at this speed the heuristic is no bottleneck as a self-play opponent beside the planner's milliseconds per decision.
+
+**Differential tests**, `tests/star_realms/test_native.py`: 60 heuristic-vs-heuristic, 60 heuristic-vs-greedy and 60 heuristic-vs-random games (seeds 0-59, seats alternating), comparing the Rust heuristic's choice with the Python one's at every decision of every player (19,613 decisions), plus `play_heuristic`'s winner and turns. The heuristic chooses every kind of action across them (the rarest, `Recycle`, twice), and the test fails if one goes missing. About 2 s. Once, outside the suite: the same three pairings on seeds 1000-1999 (random games up to 400 turns), 3,000 games and 333,084 decisions, all identical, in 24 s.
+
+**Bugs differential testing caught: none.** The port matched the Python bot on the first run. Injected bugs: drawing with Blob World at 2 Blob cards instead of 3 failed at seed 39, action 107, turn 24. Three others passed, each for a reason worth knowing: breaking ties to the last least key rather than the first (every key ends in a name or an option index, so equal keys are the same action); scrapping from the Trade Row when its card is worth exactly the refill's average (never exactly equal in these games); and an off-by-one in the opponent's turn for that scrap (it differs only on turn 4, when no Trade Row scrap came up). So the tests pin down what changes choices in practice, not every line.
+
+**Floats.** The heuristic's scores are floats, but every term is a multiple of 0.5, so all its sums are exact in any order and the one rounded operation, the Trade Deck's average worth, is the same IEEE division as Python's; the port still adds in Python's order (design, "The heuristic bot").
+
+**Effort.** About 25 minutes of agent time end to end: reading the Python bot and the crate, the test, the port (about 400 lines of Rust with its unit tests), the benchmark and these docs. The port went cleanly for the engine's reasons: the Python bot's docstring and helpers already state each rule as one small function.
