@@ -1,6 +1,6 @@
 [project]
 name = "minimax-games"
-version = "0.6.0"
+version = "0.7.0"
 description = "Minimax search to play various games."
 authors = [
     {name = "Sam Thorold", email = "sam.thorold@gmail.com"},
