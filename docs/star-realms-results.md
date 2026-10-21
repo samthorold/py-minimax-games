@@ -1695,6 +1695,41 @@ Scratch runs on 8,000 training games (seeds 10000-17999, 189,914 states) and 2,0
 
 The network overfits easily: with `l2` 0.0001 and 30 epochs it scored 0.684 on 1,000 held-out games, worse than `evaluate`, and with half the training data (95,000 states) its best was 0.561, behind the logistic regression's 0.559. `l2` 0.003 is the best penalty tried, and the width matters little; 10 epochs were adopted, as good as 20 at half the time, for both models (the logistic regression barely changes with `l2`). More games would likely help the network most, and cost only seconds per thousand.
 
+## Milestone 8: the planner with a learned value
+
+- Date: 2026-10-21
+- Commit: `071deb4` (main after #155) with this PR's CLI change (#136): `planner:<model>` names the planner scoring with a committed learned value (`value.load(<model>)`), on the Rust enumeration. The planner's moves are unchanged by it; the merge of #157 (Rust self-play) since then doesn't touch the planner.
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0, **shared** with another agent, so timings are contended.
+- Seeds: from 0, as in Milestone 6: planner vs heuristic. Alternating seats, max 300 turns, `--jobs 2`, alpha and beta 0.05 (bounds ±2.94).
+
+The learned value is the **mlp** (one hidden layer of 32 units, the better of the two committed models offline: held-out log-loss 0.550 against the logistic regression's 0.562 and `evaluate`'s 0.607; Milestone 8: offline value fit). Both planners have the defaults: 4 worlds, 20,000 states per plan. The one on `evaluate` uses the Python enumeration (the Rust one needs a learned value); the backends list the same ends in the same order (Milestone 7: Rust planner enumeration), so only the value differs.
+
+```sh
+uv run python -m minimax_games.games.star_realms tournament --bots planner:mlp planner \
+    --games 500 --base-seed 0 --jobs 2 --sprt --h0 0.5 --h1 0.6
+uv run python -m minimax_games.games.star_realms tournament --bots planner:mlp heuristic \
+    --games 1000 --base-seed 0 --jobs 2 --sprt --h0 0.5 --h1 0.6
+uv run python -m minimax_games.games.star_realms tournament --bots planner:mlp heuristic \
+    --games 500 --base-seed 0 --jobs 2
+```
+
+The hypotheses: H0 50% (no better) against H1 60%, a gain of 10 points, for both questions: does the learned value beat `evaluate` in the planner, and does the learned planner beat the heuristic. The last match, against the heuristic over all of seeds 0-499, isn't a test: at 2 minutes it was cheap enough to give a rate comparable with the ladder's 500-game runs.
+
+| Match (first bot's results) | Decision | Games | Wins | Win% | 95% interval | As 1st | As 2nd | ms/move | Plans per turn, ms per plan | Wall time |
+|---|---|---|---|---|---|---|---|---|---|---|
+| planner:mlp vs planner (`evaluate`) | **H1 accepted** (LLR 2.95) | 94 | 59/94 | **62.8%** | 52.7-71.9% | 34/47 | 25/47 | 6.19 (planner 69.1) | 2.40, 15.8 (planner 2.53, 146) | 3.8 min |
+| planner:mlp vs heuristic | **H1 accepted** (LLR 2.97) | 83 | 53/83 | 63.9% | 53.1-73.4% | 32/42 | 21/41 | 7.59 | 2.47, 19.0 | 28 s |
+| planner:mlp vs heuristic, seeds 0-499 | (fixed) | 500 | 345/500 | **69.0%** | 64.8-72.9% | 189/250 | 156/250 | 6.56 | 2.49, 16.1 | 2.1 min |
+
+No game was unfinished. Mean 22.8, 24.2 and 24.4 turns.
+
+### Reading it
+
+- **The learned value beats `evaluate` in the planner**, 62.8% head to head (52.7-71.9%) after 94 games, at the same budget and worlds. The offline gate's ranking (log-loss 0.550 against 0.607) carried over to play.
+- **The planner with the mlp is the first legitimate bot to beat the heuristic**, and clearly: 69.0% (64.8-72.9%) on seeds 0-499, against 48.3% for the planner on `evaluate` (seeds 0-444, Milestone 6: planner vs heuristic; z = 6.5, unpaired) and 34.6% for ISMCTS. It also beats the cheat's 52.0% on the same seeds, which sees every hidden card but scores with `evaluate`. Milestone 6 said the micro-action tree was the main limit and the leaf the next; with the tree replaced, a better leaf is worth about 20 more points against the heuristic.
+- **It is about ten times faster too**, 6-8 ms per decision (Rust enumeration) against 68-80 ms for the Python planner on `evaluate`.
+- **The mlp is the ladder's current best**: `planner:mlp`, the committed `src/minimax_games/games/star_realms/models/mlp.npz` (trained by the Milestone 8 offline value fit's command). It is the bar the rounds of policy iteration on the Rust engine (design, Milestone 8) have to beat, with the heuristic kept among the opponents. The logistic regression wasn't played; with its worse log-loss it isn't needed to name the best.
+
 ## Milestone 7: Rust tracer bullet (toolchain and first-slice engine)
 
 2026-10-21, #137 (tracked by #127), CPython 3.14, Apple M1 (8 GB) shared with three other agents' builds and tests. The first end-to-end path through Rust: maturin builds `minimax_games._native` from `rust/`, and its Star Realms engine plays the starter decks and the 30-card first slice (design, Compiled engine).
