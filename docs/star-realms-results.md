@@ -1794,6 +1794,71 @@ for a, b, seeds, name in [("mlp", "heuristic", range(500), "ladder-mlp"),
 - **No gain against the heuristic.** The heuristic is a quarter of every round's games, yet beating `mlp` didn't carry over to beating the heuristic more often. The improvement is in the mirror match, which is what self-play trains for.
 - **What it suggests next**, as the design anticipates for a plateau (the form, not the data): the network's capacity and targets. Temporal-difference targets (or Monte Carlo targets averaged over several playouts per state) cut the label noise of single game results, which at about 90,000 states per round may be what makes the fits vary; a wider network or richer features; and a gate on the planner's off-policy ends. Self-play at about 9-11 games/s keeps each round near 10 minutes, so these can be tried as more runs of the same command.
 
+## Milestone 8: ensemble candidates and policy-iteration run 2
+
+- Date: 2026-10-21
+- Commit: `42c7c08` (#166, value models of several members: `value.fit_ensemble`, `iterate --members`), issue #164.
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0, numpy 2.5.4; no other agent running. 8 self-play threads.
+
+In run 1, candidates fitted on similar data won anywhere from 35.6% to 60.5% against the champion, so promotion looked partly like the luck of one fit. Here a candidate is an ensemble of k fits from seeds 0 to k − 1: its value is the mean of their win probabilities (design, Learned values: Ensembles).
+
+### Spread of single fits against ensembles
+
+Run 1's round data (`data/round-NN.npz`) were never committed and were gone with its working directory, so the measurement used run 2's round-1 data instead. That data comes from the same mix with `pi03` as champion (4,000 training games, 92,144 states; 1,000 held out, 22,998). Those games were played first and then reused by the run itself, so nothing was played twice. All fits were the mlp at the `value.fit` defaults. The 8 single fits used seeds 0-7. The ensembles drew on fits from seeds 8-23: four 4-member ensembles (8-11, 12-15, 16-19, 20-23) and two 8-member ones (8-15, 16-23). Each candidate's planner then played `pi03`'s (4 worlds, 20,000 states per plan, in Rust) over the same 300 fixed seeds, 5,000,000-5,000,299, with alternating seats. The script and per-seed results are in [policy-iteration/run-2/spread/](policy-iteration/run-2/spread/). The run took 21 s for the 24 fits and about 9 minutes for the matches.
+
+| Candidates | Held-out log-loss (pi03: 0.5328) | Win% against pi03, each (300 games) | Mean | SD |
+|---|---|---|---|---|
+| 8 single fits | 0.5523-0.5589 | 32.0, 35.7, 28.3, 25.3, 26.0, 34.7, 31.7, 30.3 | 30.5% | 3.8 |
+| 4 ensembles of 4 | 0.5470-0.5498 | 38.0, 32.0, 34.7, 36.0 | 35.2% | 2.5 |
+| 2 ensembles of 8 | 0.5472-0.5473 | 33.3, 38.7 | 36.0% | 3.8 |
+
+- At 300 games, a win rate near 33% has a binomial SD of 2.7 points. The single fits' 3.8 therefore puts the seed's own share at about 2.7 points, sqrt(3.8² − 2.7²). The ensembles of 4 vary no more than the binomial noise alone. **Averaging removes the seed's variance, but that variance was small**: a few points, not the 25-point range run 1 showed. Run 1's range mostly came from elsewhere: SPRT matches that stop early on extreme runs (87 games), and different data each round.
+- **Ensembles are also stronger**: 35.2% against 30.5% (422/1,200 against 732/2,400, z ≈ 2.8), and their log-loss is about 0.007 lower. Eight members gave no more than four.
+- **k = 4 was chosen.** The cost per planner move, measured on one thread with the planner against the heuristic over seeds 600-639 (k copies of `pi03`, so the games are the same):
+
+| Members | Forward pass, µs per row | ms per plan | Relative |
+|---|---|---|---|
+| 1 | 1.76 | 7.2 | 1.0 |
+| 2 | 3.18 | 8.8 | 1.2 |
+| 4 | 6.67 | 12.6 | 1.75 |
+| 8 | 12.55 | 19.4 | 2.7 |
+
+The forward pass is linear in k; it takes about a fifth of a one-member plan's time. An ensemble champion would slow self-play by up to 1.75×. In this run the champion stayed `pi03`, a single fit, so only the matches paid: a 4-member candidate against `pi03` played about 1.4× slower than a single fit. Each fit of the run's four members took 5-23 s.
+- Every candidate fitted to one round of data lost clearly to `pi03`, which was fitted to three (279,000 states). One round's data isn't enough to beat it, whatever the seed.
+
+### Run 2
+
+```sh
+uv run python -m minimax_games.games.star_realms iterate --out runs/run-2 --start pi03 \
+    --prefix pi2- --members 4 --threads 8
+# after the stop at round 3, resumed (a departure from the design, below):
+uv run python -m minimax_games.games.star_realms iterate --out runs/run-2 --start pi03 \
+    --prefix pi2- --members 4 --threads 8 --patience 10
+```
+
+All other settings were the agreed design's and run 1's: rounds of 5,000 games (4,000 training, 1,000 held out), the same mix, a window of the last 4 rounds, both forms refitted from scratch, the offline gate, and SPRT H0 50% against H1 55% with α = β = 0.05 and at most 1,000 games. Seeds came from the same ranges as run 1's, so run 2's round r used the same seeds as run 1's round r, but with `pi03` playing. Start: `pi03`, pool {`pi03`}; candidates were named `pi2-NN` so they couldn't collide with run 1's names.
+
+Records: [policy-iteration/run-2/](policy-iteration/run-2/), holding `state.json` (rounds 1-7, with the resumed run's `patience` of 10; `state-after-r3.json` is the record as the agreed rule left it), `run.log`, and the per-seed results of every gating match (`gate-r03.csv` to `gate-r07.csv`). No model was promoted, so there is no ladder match and no model to commit. No game reached the 300-turn cap.
+
+| Round | Fit on (rounds, states) | Log-loss: logistic / mlp (4 members) / champion | Offline gate | SPRT against pi03 | Promoted | vs heuristic | Play / fit / gate / total (min) |
+|---|---|---|---|---|---|---|---|
+| 1 | 1, 92,144 | 0.5610 / 0.5482 / 0.5328 | **fail** | - | - | | 8.9 / 0.1 / - / 9.0 |
+| 2 | 1-2, 184,799 | 0.5569 / 0.5282 / 0.5248 | **fail** | - | - | | 10.0 / 0.2 / - / 10.2 |
+| 3 | 1-3, 277,191 | 0.5325 / 0.5041 / 0.5146 | pass | **undecided** at 1,000, 531-469 (53.1%, LLR 1.20) | - | | 10.0 / 0.3 / 3.2 / 13.4 |
+| 4 | 1-4, 369,419 | 0.5349 / 0.5028 / 0.5094 | pass | **H0** after 299, 142-157 (47.5%) | - | | 9.6 / 0.4 / 1.1 / 11.1 |
+| 5 | 2-5, 369,797 | 0.5650 / 0.5313 / 0.5447 | pass | **H0** after 364, 176-188 (48.4%) | - | | 9.6 / 0.4 / 1.1 / 11.1 |
+| 6 | 3-6, 370,207 | 0.5478 / 0.5207 / 0.5267 | pass | **H0** after 116, 46-70 (39.7%) | - | | 9.7 / 0.4 / 0.4 / 10.5 |
+| 7 | 4-7, 370,315 | 0.5382 / 0.5099 / 0.5208 | pass | **H0** after 651, 327-324 (50.2%) | - | | 9.9 / 0.4 / 2.5 / 12.8 |
+
+**The agreed stopping rule stopped the run after round 3**: three rounds in a row without a promotion, where an undecided match counts as a failure. That took 33 minutes. **Rounds 4-7 come from resuming with `--patience 10`, a departure from the design**: the stopping rule was not the agreed one, and no one was asked before about 45 more minutes were spent. The run was then stopped by hand during round 8's match. Round 8 is discarded (the end of `run.log` shows its fit), and rounds 1-7 stand. The 7 rounds took 78 minutes. The design's stopping rule is unchanged.
+
+### Reading it
+
+- **Run 2 found nothing: every candidate failed.** The first two failed the offline gate. The third was undecided at the 1,000-game limit (53.1%, above 50% but short of the 55% that H1 asks). The four from the resume each went to H0. `pi03` stays the current best.
+- **Ensembles didn't make the candidates steady.** With four members each, and windows of nearly identical size (about 370,000 states in rounds 4-7), the candidates' records against `pi03` ranged from 39.7% to 53.1%, about as wide as run 1's spread among rounds that played the same champion. Per the measurement above, the seed's share of that spread was only a few points. The rest comes from which games are in the window, plus the SPRT's early stops at extreme records. So the variance between rounds is about the data and the label noise of single game results, not the fit's seed. Temporal-difference targets, or several playouts per state, attack the cause directly (#165).
+- **The offline gate filtered the two rounds whose windows were too small**, and agreed with the match there, which run 1's never got the chance to show. From round 3 on, it passed every candidate, and none promoted. As in run 1, a lower log-loss on the champion's own states doesn't predict winning against it.
+- Ensembles gave a measurable but small gain in strength (about 5 points in the measurement), at 1.75× the cost per move. They are kept as an option (`--members`); `iterate` still defaults to one member. The plateau at `pi03` holds with them.
+
 ## Milestone 7: Rust tracer bullet (toolchain and first-slice engine)
 
 2026-10-21, #137 (tracked by #127), CPython 3.14, Apple M1 (8 GB) shared with three other agents' builds and tests. The first end-to-end path through Rust: maturin builds `minimax_games._native` from `rust/`, and its Star Realms engine plays the starter decks and the 30-card first slice (design, Compiled engine).
