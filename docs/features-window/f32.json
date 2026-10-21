@@ -1,0 +1,17 @@
+{
+  "candidate": "f32",
+  "extra": 28,
+  "train_log_loss": 0.4963,
+  "held_out_log_loss": 0.5088,
+  "fit_seconds": 18.8,
+  "match": {
+    "games": 300,
+    "wins": 169,
+    "finished": 300,
+    "win_pct": 56.3,
+    "wilson_low": 50.7,
+    "wilson_high": 61.8,
+    "wins_as_first": 98,
+    "seconds": 49.5
+  }
+}

@@ -1987,6 +1987,57 @@ Script, log, summary and per-seed results (seed, first, second, winner, turns) o
 - **Why features and not width**: the extra features are ratios and differences of counts (combat over the pool's size, pairs over the pool's size squared, combat against Authority). A tanh network over standardised counts can only approximate a division, and with this much data and regularisation it doesn't learn one; given the ratios directly, it uses them.
 - **Not enough to promote**, by the design's bar: level with pi03 is not beating it. But pi03 was fitted to three times as much data (279,000 states), and in run 2 one round's data gave candidates 35-40% where three rounds gave 53%. Whether the features at the window's size beat pi03 is what a policy-iteration run would test; per the design, that run is a separate decision, not part of this issue.
 
+## Milestone 8: hand-made features at pi03's data size, offline
+
+- Date: 2026-10-22
+- Commit: `49e01ea` (#174's merge; nothing in the package changed for the test), issue #175.
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0, numpy 2.5.4. 8 self-play threads.
+- Seeds: the match 8,000,000-8,000,299, the gate 8,100,000 on (it used 8,100,000-8,100,548), the confirmation 8,200,000-8,200,499, the ladder 0-499. All are clear of every earlier range (`iterate.Settings`, below 4,000,000 for up to 100 rounds; 4,000,000-4,000,499; 5,000,000-5,000,299; 6,000,000-6,200,299; 7,000,000-7,000,299), and of each other.
+
+#173's offline test, at the data size pi03 was fitted to. In #173, `features.EXTRA` drew a candidate fitted to one round of data level with pi03 (50.3%), and pi03 had seen about 3 times as much. No games were played for training and no policy-iteration run was made.
+
+```sh
+uv run python docs/features-window/window.py runs/features-175 runs/run-2/data
+```
+
+- **The data**: run 2's saved rounds 1-4 (`runs/run-2/data/round-01.npz` to `round-04.npz`, read in place): pi03's games under policy iteration's mix, **369,419 training states** (the window pi03's successors were fitted to in run 2's round 4) and **92,354 held-out states**, the four rounds' held-out sets together. Round 8, incomplete, wasn't used. pi03 was fitted to other games (run 1's), so its log-loss here is out of sample on both sets: 0.5210 on the training states, 0.5204 held out.
+- **The candidates**, each a 4-member mlp ensemble (`value.fit_ensemble`, seeds 0-3, the `value.fit` defaults: width 32, 10 epochs, batch 256, Adam at 0.001, `l2` 0.003), fitted to game results (Monte Carlo targets): `b32`, today's form, and `f32`, the same with `features.EXTRA`. `b32` is bit-identical to run 2's round-4 candidate `pi2-04` (same rows, same settings), which lost its gating match to pi03 (H0 after 299 games, 47.5%).
+- **The match**: each candidate's planner against pi03's (4 worlds, 20,000 states per plan, both in Rust) on the same 300 seeds, seats alternating, compared seed by seed. The bar for gating: `f32`'s Wilson interval above 50%, or over 55% won.
+- **The gate**, since `f32` cleared that bar: `iterate`'s SPRT, H0 50% against H1 55%, α = β = 0.05 (bounds ±2.94), at most 1,000 games, undecided failing, played in batches of 128 with the decision taken game by game in seed order. **The checks**, since it passed: 500 fresh seeds against pi03, and seeds 0-499 against the heuristic (the ladder).
+
+Script, log, summaries and the per-seed results (seed, first, second, winner, turns) of every match: [features-window/](features-window/).
+
+| Candidate | Extra features | Training log-loss (pi03 0.5210) | Held-out log-loss (pi03 0.5204) | Wins against pi03 (300) | Win% | 95% interval | As 1st | Fit / match (s) |
+|---|---|---|---|---|---|---|---|---|
+| `b32` (baseline) | - | 0.5022 | 0.5137 | 134 | 44.7% | 39.1-50.3% | 76/150 | 15 / 42 |
+| `f32` | 28 | **0.4963** | **0.5088** | **169** | **56.3%** | **50.7-61.8%** | 98/150 | 19 / 50 |
+
+(Wilson intervals.) **Paired by seed**, `f32` won 71 games `b32` lost and `b32` 36 that `f32` lost: a sign test of z = (71 − 36) / √107 ≈ **3.4**.
+
+`f32` clearly beat pi03 by the bar, so the gate ran:
+
+| Match (`f32`'s results) | Seeds | Result | Win% | 95% interval | As 1st | Time |
+|---|---|---|---|---|---|---|
+| The gate, SPRT against pi03 | 8,100,000-8,100,548 | **H1 after 549**, 303-246 (LLR 2.96) | 55.2% | 51.0-59.3% | | 119 s |
+| Confirmation against pi03 | 8,200,000-8,200,499 | 270/500 | 54.0% | 49.6-58.3% | 147/250 | 93 s |
+| The ladder, against the heuristic | 0-499 | 370/500 | **74.0%** | 70.0-77.7% | 196/250 | 71 s |
+
+- Against pi03 over all three matches, on 1,349 different seeds: 742 won, **55.0%** (52.3-57.6%).
+- On the ladder's seeds, paired with pi03's ladder match (Milestone 8: policy iteration, `ladder-r03.csv`, 351/500): `f32` alone won 80 and pi03 alone 61, z ≈ 1.6.
+- No game reached the 300-turn cap.
+
+**Promoted: `f32` is committed as `pf01`** (`src/minimax_games/games/star_realms/models/pf01.npz`, `value.load("pf01")`, `planner:pf01`), the new current best.
+
+6.9 minutes of compute in all (413 s wall): 34 s of fits, 92 s for the two 300-game matches, 2.0 minutes for the gate, 1.6 for the confirmation and 1.2 for the ladder, plus a few seconds loading the data, and under a minute of tests.
+
+### Reading it
+
+- **At the window's size the features beat pi03.** The same data and fit without them gave 44.7% (and, as run 2's `pi2-04`, lost its gate); with them, 56.3%, and the paired gain, 35 games in 300 (z ≈ 3.4), is about what #173 measured on one round's data (29 games, z ≈ 2.9). The gain from the features and the gain from more data add up: one round with features was level with pi03, four rounds without them about 45%, four rounds with them about 55%.
+- **The SPRT passed, and the fresh seeds agree on the size, if not the certainty.** 55.2% in the gate, then 54.0% on 500 fresh seeds, whose interval just reaches 50% (49.6%). An SPRT stopping on H1 tends to stop on a lucky run, so the confirmation, not the gate, is the unbiased estimate. Over all 1,349 games against pi03 it is 55.0% (52.3-57.6%), but the 300-game match was what chose to run the gate, so that pool is biased upward a little too. The fair reading: `pf01` is about 4-5 points better than pi03 head to head; smaller than pi03's step over `mlp` (58%), and real.
+- **Against the heuristic it gains a little**: 74.0% against pi03's 70.2% on the same seeds (z ≈ 1.6, not significant alone). It's the first value since `mlp` with any sign of improving against the scripted bot.
+- **Both losses fell with the features again**, by 0.006 training and 0.005 held out, less than the 0.015 on one round: with four times the data the plain form gets closer by itself, yet the match gain held. As before, log-loss understates what the planner gets from the value.
+- **Costs**: by #173's measurements on seeds 600-639, a 4-member model with the features plans in about 14.9 ms, against 7.2 for a one-member model like pi03: about 2× per move (1.75× for the members, 1.45× for the features, measured separately on different baselines, so roughly), so self-play with `pf01` as champion will be slower. Not measured again here. The next step the issue sets is the features as an option on `iterate`, without a run.
+
 ## Milestone 7: Rust tracer bullet (toolchain and first-slice engine)
 
 2026-10-21, #137 (tracked by #127), CPython 3.14, Apple M1 (8 GB) shared with three other agents' builds and tests. The first end-to-end path through Rust: maturin builds `minimax_games._native` from `rust/`, and its Star Realms engine plays the starter decks and the 30-card first slice (design, Compiled engine).

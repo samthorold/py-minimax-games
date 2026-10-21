@@ -1,0 +1,12 @@
+rounds 1-4: 369419 training states, 92354 held out
+pi03 log-loss: {'train_log_loss': 0.521, 'held_out_log_loss': 0.5204}
+{'candidate': 'b32', 'extra': 0, 'train_log_loss': 0.5022, 'held_out_log_loss': 0.5137, 'fit_seconds': 15.4, 'match': {'games': 300, 'wins': 134, 'finished': 300, 'win_pct': 44.7, 'wilson_low': 39.1, 'wilson_high': 50.3, 'wins_as_first': 76, 'seconds': 42.3}}
+{'candidate': 'f32', 'extra': 28, 'train_log_loss': 0.4963, 'held_out_log_loss': 0.5088, 'fit_seconds': 18.8, 'match': {'games': 300, 'wins': 169, 'finished': 300, 'win_pct': 56.3, 'wilson_low': 50.7, 'wilson_high': 61.8, 'wins_as_first': 98, 'seconds': 49.5}}
+paired f32 vs b32: {'only_features': 71, 'only_baseline': 36, 'sign_z': 3.38}
+f32 clearly beats pi03: True
+gate: {'decision': 'H1', 'games': 549, 'wins': 303, 'losses': 246, 'llr': 2.96, 'seconds': 118.5}
+confirmation: {'games': 500, 'wins': 270, 'finished': 500, 'win_pct': 54.0, 'wilson_low': 49.6, 'wilson_high': 58.3, 'wins_as_first': 147, 'seconds': 93.0}
+ladder: {'games': 500, 'wins': 370, 'finished': 500, 'win_pct': 74.0, 'wilson_low': 70.0, 'wilson_high': 77.7, 'wins_as_first': 196, 'seconds': 70.8}
+real 413.23
+user 2566.08
+sys 20.05
