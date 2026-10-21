@@ -20,13 +20,18 @@ makes the comparison between them less noisy.
 
 import math
 import random
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from minimax_games.games.star_realms import rules
 from minimax_games.games.star_realms.action import Action, EndTurn
-from minimax_games.games.star_realms.bots import greedy_move
+from minimax_games.games.star_realms.bots import HeuristicBot, greedy_move
 from minimax_games.games.star_realms.evaluate import WEIGHTS, WIN, Weights, evaluate
 from minimax_games.games.star_realms.state import GameState
+from minimax_games.games.star_realms.view import observe
+
+type Policy = Callable[[GameState, tuple[Action, ...]], Action]
+"""A playout policy: the mover's choice among the legal actions in a state."""
 
 SPAN = 10**6
 """Rollout scores lie in `-SPAN..SPAN`: a sure loss to a sure win."""
@@ -57,13 +62,27 @@ def greedy(state: GameState, actions: tuple[Action, ...]) -> Action:
     return greedy_move(state.must_scrap, actions)
 
 
+_HEURISTIC = HeuristicBot()
+
+
+def heuristic(state: GameState, actions: tuple[Action, ...]) -> Action:
+    """The heuristic bot's move among `actions`, the legal actions in
+    `state`, from the mover's view: no clairvoyance, but it costs a view
+    (`observe`) per move."""
+    return _HEURISTIC.choose(observe(state, state.current), actions)
+
+
 def playout(
-    state: GameState, turns: int, epsilon: float, rng: random.Random
+    state: GameState,
+    turns: int,
+    epsilon: float,
+    rng: random.Random,
+    policy: Policy = greedy,
 ) -> GameState:
     """`state` after `turns` more turn ends (or the end of the game), each
-    move greedy's or, with probability `epsilon`, a random move other than
-    ending the turn (when there is one): random play would otherwise end
-    turns with trade and combat unspent."""
+    move `policy`'s (greedy's by default) or, with probability `epsilon`, a
+    random move other than ending the turn (when there is one): random play
+    would otherwise end turns with trade and combat unspent."""
     end = state.turn + turns
     last = min(end, MAX_TURNS)
     while state.turn < last and rules.winner(state) is None:
@@ -72,7 +91,7 @@ def playout(
             moves = [a for a in actions if not isinstance(a, EndTurn)] or actions
             action = moves[rng.randrange(len(moves))]
         else:
-            action = greedy(state, actions)
+            action = policy(state, actions)
         state = rules.advance_legal(state, action)
     return state
 

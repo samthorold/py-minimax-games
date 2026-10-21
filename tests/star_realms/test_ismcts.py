@@ -11,7 +11,7 @@ from minimax_games.games.star_realms.ismcts import ITERATIONS, IsmctsBot, StarRe
 from minimax_games.games.star_realms.match import MatchTooLong, play_match
 from minimax_games.games.star_realms.rollout import (
     SCALE,
-    Rollout,
+    heuristic,
     playout,
     win_probability,
 )
@@ -75,7 +75,7 @@ def test_it_states_its_settings():
 
 
 def test_a_leaf_is_player_0s_win_probability():
-    game = StarRealms(Rollout(turns=1, epsilon=0.1))
+    game = StarRealms(turns=1, epsilon=0.1)
     rng = random.Random(0)
     state = lethal()
     won = rules.advance_legal(state, AttackPlayer())
@@ -111,7 +111,7 @@ def test_a_seeded_game_replays_identically():
 
 def test_with_a_horizon_every_leaf_is_played_out_to_the_same_turn():
     start = rules.auto_play(rules.new_game(3))
-    game = StarRealms(Rollout(turns=1, epsilon=0.1), until=start.turn + 2)
+    game = StarRealms(turns=1, epsilon=0.1, until=start.turn + 2)
 
     def leaf(state: GameState, turns: int) -> float:
         end = playout(state, turns, 0.1, random.Random(1))
@@ -135,3 +135,20 @@ def test_with_a_horizon_it_states_it_and_still_takes_a_winning_attack():
     assert bot.choose(observe(state, 0), rules.legal_actions(state)) == AttackPlayer()
     with pytest.raises(ValueError, match="at least 1 turn"):
         IsmctsBot(0, horizon=0)
+
+
+def test_a_leaf_can_be_played_out_by_the_heuristic():
+    start = rules.auto_play(rules.new_game(3))
+    game = StarRealms(turns=1, epsilon=0.1, policy=heuristic)
+    end = playout(start, 1, 0.1, random.Random(2), policy=heuristic)
+    assert game.value(start, random.Random(2)) == win_probability(end, 0, SCALE)
+    bot = IsmctsBot(0, iterations=50, policy="heuristic")
+    assert bot.settings() == (
+        "50 iterations per decision, exploration 0.7,"
+        " leaf: epsilon-heuristic playout to the end of the turn (epsilon 0.1),"
+        " scale 16"
+    )
+    state = lethal()
+    assert bot.choose(observe(state, 0), rules.legal_actions(state)) == AttackPlayer()
+    with pytest.raises(ValueError, match="greedy or heuristic"):
+        IsmctsBot(0, policy="random")
