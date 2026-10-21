@@ -42,7 +42,7 @@ states, over `--jobs` processes: their distribution, the share of turns
 over candidate state budgets, and both by turn number.
 
 `python -m minimax_games.games.star_realms native-bench` times the Rust
-engine (`minimax_games._native.star_realms`) on `--games` first-slice
+engine (`minimax_games._native.star_realms`) on `--games` full-deck
 greedy-vs-greedy games from `--base-seed`: games per second, and `advance`
 calls per second over their recorded decisions.
 
@@ -248,7 +248,7 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def native_bench(argv: list[str]) -> None:
-    """Time the Rust engine on first-slice greedy-vs-greedy games: games per
+    """Time the Rust engine on full-deck greedy-vs-greedy games: games per
     second, and `advance` calls per second over their recorded decisions."""
     parser = argparse.ArgumentParser(
         prog="python -m minimax_games.games.star_realms native-bench"
