@@ -802,6 +802,14 @@ def advance_legal(state: GameState, action: Action) -> GameState:
     return auto_play(_apply(state, action))
 
 
+def apply_legal(state: GameState, action: Action) -> GameState:
+    """`apply` for an action taken from `legal_actions(state)`, without its
+    legality check: the bare rules, no automatic play. The whole-turn planner
+    takes `EndTurn` with it, so an end of turn is the state as `EndTurn`
+    leaves it, before the next player's automatic play."""
+    return _apply(state, action)
+
+
 def apply(state: GameState, action: Action) -> GameState:
     """Return the state after the current player takes `action`.
 

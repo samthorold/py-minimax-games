@@ -3,10 +3,10 @@
 import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from minimax_games.games.star_realms.action import Action
-from minimax_games.games.star_realms.bots import AnyBot, BenchmarkBot, Bot
+from minimax_games.games.star_realms.bots import AnyBot, BenchmarkBot, Bot, Planning
 from minimax_games.games.star_realms.match import MatchTooLong, play_match
 from minimax_games.games.star_realms.state import GameState
 from minimax_games.games.star_realms.view import View
@@ -75,6 +75,10 @@ class Timing:
     seconds: tuple[float, float]
     wall_seconds: float
     """The whole tournament, rules included."""
+    plans: tuple[int, int] = (0, 0)
+    """Plans each bot made, if it plans (`bots.Planning`), else 0."""
+    turns: tuple[int, int] = (0, 0)
+    """Turns each planning bot played, else 0."""
 
     @property
     def ms_per_move(self) -> tuple[float, float]:
@@ -84,6 +88,18 @@ class Timing:
     def _ms_per_move(self, bot: int) -> float:
         n = self.decisions[bot]
         return 1000 * self.seconds[bot] / n if n else 0.0
+
+    def ms_per_plan(self, bot: int) -> float:
+        """A planning bot's mean milliseconds per plan: all its time per
+        decision, since a decision it doesn't plan for only plays the plan's
+        next move (0 if it made no plan)."""
+        n = self.plans[bot]
+        return 1000 * self.seconds[bot] / n if n else 0.0
+
+    def plans_per_turn(self, bot: int) -> float:
+        """A planning bot's mean plans per turn played (0 if it played none)."""
+        n = self.turns[bot]
+        return self.plans[bot] / n if n else 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +114,15 @@ class _Clock:
     def __init__(self) -> None:
         self.decisions = 0
         self.seconds = 0.0
+        self.plans = 0
+        self.turns = 0
+
+    def count_plans(self, bot: AnyBot) -> None:
+        """Add the plans and turns of `bot`, which has played its game, if it
+        plans."""
+        if isinstance(bot, Planning):
+            self.plans += bot.plans
+            self.turns += bot.turns
 
 
 class _Timed:
@@ -171,10 +196,9 @@ def play_tournament(
     for i in range(games):
         seed = base_seed + i
         first = i % 2
-        seats = (
-            _timed(bots[first](seed), clocks[first]),
-            _timed(bots[1 - first](seed + 1), clocks[1 - first]),
-        )
+        players = (bots[first](seed), bots[1 - first](seed + 1))
+        seated = (clocks[first], clocks[1 - first])
+        seats = (_timed(players[0], seated[0]), _timed(players[1], seated[1]))
         try:
             match = play_match(seats, seed, max_turns=max_turns)
         except MatchTooLong:
@@ -182,11 +206,15 @@ def play_tournament(
         else:
             winner = first if match.winner == 0 else 1 - first
             turns = match.turns
+        for player, clock in zip(players, seated, strict=True):
+            clock.count_plans(player)
         played.append(Game(seed=seed, first=first, winner=winner, turns=turns))
     timing = Timing(
         decisions=(clocks[0].decisions, clocks[1].decisions),
         seconds=(clocks[0].seconds, clocks[1].seconds),
         wall_seconds=time.perf_counter() - start,
+        plans=(clocks[0].plans, clocks[1].plans),
+        turns=(clocks[0].turns, clocks[1].turns),
     )
     return Tournament(result=TournamentResult(games=tuple(played)), timing=timing)
 
@@ -215,11 +243,7 @@ def _play_parallel(
             )
         )
     combined = combine(parts)
-    timing = Timing(
-        decisions=combined.timing.decisions,
-        seconds=combined.timing.seconds,
-        wall_seconds=time.perf_counter() - start,
-    )
+    timing = replace(combined.timing, wall_seconds=time.perf_counter() - start)
     return Tournament(result=combined.result, timing=timing)
 
 
@@ -228,7 +252,7 @@ def combine(parts: Sequence[Tournament]) -> Tournament:
 
     Each part after the first must start an even number of games after the
     first part's base seed, so its seats alternate as in one long run; then
-    the result is exactly that run's. Decisions and their time add up, and
+    the result is exactly that run's. Decisions, plans, turns and time add up, and
     so does the wall time (the time the parts took one after another).
     """
     timings = [part.timing for part in parts]
@@ -246,5 +270,7 @@ def combine(parts: Sequence[Tournament]) -> Tournament:
                 sum(t.seconds[1] for t in timings),
             ),
             wall_seconds=sum(t.wall_seconds for t in timings),
+            plans=(sum(t.plans[0] for t in timings), sum(t.plans[1] for t in timings)),
+            turns=(sum(t.turns[0] for t in timings), sum(t.turns[1] for t in timings)),
         ),
     )

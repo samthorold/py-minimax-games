@@ -1,11 +1,13 @@
 import pytest
 
+from minimax_games.games.star_realms import planner
 from minimax_games.games.star_realms.action import Action
 from minimax_games.games.star_realms.bots import GreedyBot, HeuristicBot
 from minimax_games.games.star_realms.cheat import BUDGET, CheatBot
 from minimax_games.games.star_realms.cli import BOTS, configured, main
 from minimax_games.games.star_realms.evaluate import LINEAR
 from minimax_games.games.star_realms.ismcts import ITERATIONS, IsmctsBot
+from minimax_games.games.star_realms.planner import PlannerBot
 from minimax_games.games.star_realms.rollout import ROLLOUT_BUDGET, Rollout
 from minimax_games.games.star_realms.sampler import WORLDS, SamplerBot
 from minimax_games.games.star_realms.state import GameState
@@ -271,3 +273,31 @@ def test_native_bench_times_the_rust_engine(capsys):
     assert "greedy games: 3 in" in out
     assert "games/s" in out
     assert "calls/s" in out
+
+
+def test_a_single_game_plays_the_planner(capsys, monkeypatch):
+    bot = BOTS["planner"](7)
+    assert isinstance(bot, PlannerBot)
+    assert (bot.budget, bot.worlds) == (planner.BUDGET, planner.WORLDS)
+    monkeypatch.setitem(BOTS, "planner", lambda seed: PlannerBot(seed, budget=40))
+    main(["--seed", "7", "--bots", "planner", "greedy"])
+    assert "wins on turn" in capsys.readouterr().out
+
+
+def test_tournament_plays_the_planner_and_reports_its_plans(capsys):
+    argv = ["tournament", "--bots", "planner", "greedy", "--games", "2"]
+    main([*argv, "--max-turns", "3", "--budget", "60", "--worlds", "2"])
+    out = capsys.readouterr().out.splitlines()
+    assert f"planner: {PlannerBot(0, worlds=2, budget=60).settings()}" in out
+    plans = next(line for line in out if "plans per turn" in line)
+    assert plans.startswith("planner: ")
+    assert plans.endswith(" ms per plan")
+    main([*argv, "--max-turns", "3", "--budget", "60", "--worlds", "2", "--jobs", "2"])
+    assert capsys.readouterr().out.splitlines()[:3] == out[:3]
+
+
+def test_the_planner_keeps_its_own_budget_with_rollouts():
+    bot = configured("planner", None, None, Rollout())(3)
+    assert isinstance(bot, PlannerBot)
+    assert bot.budget == planner.BUDGET
+    assert bot.evaluator == Rollout(seed=3)
