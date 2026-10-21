@@ -26,13 +26,25 @@ Tooling is managed with [uv](https://docs.astral.sh/uv/): ruff (lint + format),
 ty (type checking) and pytest (tests + doctests). Common commands are in
 `Taskfile.yml`, run with [Task](https://taskfile.dev) (`brew install go-task`).
 
+The package includes a Rust extension module, `minimax_games._native` (the
+compiled Star Realms engine, from the crate in `rust/`), built by
+[maturin](https://www.maturin.rs) as the package's build backend. It needs
+[rustup](https://rustup.rs): `rust-toolchain.toml` pins the Rust version, which
+rustup installs on first use. `uv sync` compiles the extension, and `uv run`
+recompiles it whenever the Rust sources change, so there is no separate build
+step. cargo fmt, clippy and cargo test run as pre-commit hooks beside the
+Python ones.
+
 ```sh
-uv sync                     # create .venv with dev tools
+uv sync                     # create .venv with dev tools, compile the extension
 uv run pre-commit install   # install git hooks
+uv run pre-commit run --all-files  # everything CI runs
 task                        # list tasks
 task test                   # uv run pytest (extra args: task test -- -k name)
-task lint                   # ruff check, ruff format --check, ty check
-task fmt                    # ruff fix + format
+task cargo-test             # the Rust engine's own tests
+task lint                   # ruff, ty, cargo fmt --check, clippy
+task fmt                    # ruff fix + format, cargo fmt
+task native-bench           # Star Realms: the Rust engine's speed (games/s, advance calls/s)
 task bench                  # Star Realms: the cheat's search speed (nodes/sec)
 task turn-sizes             # Star Realms: distinct ends per turn (planner workload)
 task profile                # Star Realms: profile the cheat's search
@@ -79,6 +91,11 @@ them. Results: "Milestone 8: offline value fit" in
 [docs/star-realms-results.md](docs/star-realms-results.md).
 
 ### Long Star Realms tournaments under PyPy
+
+**Broken since the Rust extension (#137):** maturin builds a PyPy-specific
+wheel, which uv refuses under the `--python-version 3.13` workaround below, so
+`task pypy` no longer installs. The compiled engine is the path to speed now;
+whether to drop this or install PyPy's copy another way is open.
 
 Search-bot tournaments run about 1.5-1.6x faster under PyPy 3.12, with
 identical results (Milestone 5 in `docs/star-realms-results.md`). The project

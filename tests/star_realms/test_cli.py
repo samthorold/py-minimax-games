@@ -263,3 +263,11 @@ def test_fit_prints_each_held_out_log_loss_and_saves_the_models(capsys, tmp_path
     assert "mlp:" in out
     for name in ("logistic", "mlp"):
         assert Model.load(tmp_path / f"{name}.npz").form == name
+
+
+def test_native_bench_times_the_rust_engine(capsys):
+    main(["native-bench", "--games", "3"])
+    out = capsys.readouterr().out
+    assert "greedy games: 3 in" in out
+    assert "games/s" in out
+    assert "calls/s" in out

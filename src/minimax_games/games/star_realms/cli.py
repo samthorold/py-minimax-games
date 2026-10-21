@@ -41,6 +41,11 @@ ends of every turn of `--games` seeded heuristic-vs-heuristic games from
 states, over `--jobs` processes: their distribution, the share of turns
 over candidate state budgets, and both by turn number.
 
+`python -m minimax_games.games.star_realms native-bench` times the Rust
+engine (`minimax_games._native.star_realms`) on `--games` first-slice
+greedy-vs-greedy games from `--base-seed`: games per second, and `advance`
+calls per second over their recorded decisions.
+
 `python -m minimax_games.games.star_realms profile` profiles the cheat's
 budgeted decisions (see `profiling`) at the same positions and in the first
 `--game-turns` turns of a seeded cheat-vs-heuristic game, and writes a report
@@ -74,6 +79,7 @@ from dataclasses import replace
 from functools import partial
 from pathlib import Path
 
+from minimax_games._native import star_realms as native
 from minimax_games.games.star_realms import (
     bench,
     cheat,
@@ -219,6 +225,9 @@ def main(argv: list[str] | None = None) -> None:
     if argv[:1] == ["fit"]:
         fitting(argv[1:])
         return
+    if argv[:1] == ["native-bench"]:
+        native_bench(argv[1:])
+        return
     parser = argparse.ArgumentParser(prog="python -m minimax_games.games.star_realms")
     parser.add_argument("--seed", type=int, default=0, help="the game's seed")
     parser.add_argument("--log", action="store_true", help="print the transcript")
@@ -236,6 +245,25 @@ def main(argv: list[str] | None = None) -> None:
     result = play_match((first, second), args.seed, log=print if args.log else None)
     if not args.log:
         print(f"Player {result.winner + 1} wins on turn {result.turns}")
+
+
+def native_bench(argv: list[str]) -> None:
+    """Time the Rust engine on first-slice greedy-vs-greedy games: games per
+    second, and `advance` calls per second over their recorded decisions."""
+    parser = argparse.ArgumentParser(
+        prog="python -m minimax_games.games.star_realms native-bench"
+    )
+    parser.add_argument("--games", type=int, default=2000, help="how many games")
+    parser.add_argument("--base-seed", type=int, default=0, help="the first seed")
+    args = parser.parse_args(argv)
+
+    games, decisions, seconds = native.bench_games(args.games, args.base_seed)
+    print(
+        f"greedy games: {games} in {seconds:.3f} s, {games / seconds:,.0f} games/s,"
+        f" {decisions / seconds:,.0f} decisions/s"
+    )
+    calls, seconds = native.bench_advance(args.games, args.base_seed)
+    print(f"advance: {calls} calls in {seconds:.3f} s, {calls / seconds:,.0f} calls/s")
 
 
 def tournament(argv: list[str]) -> None:

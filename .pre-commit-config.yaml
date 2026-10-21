@@ -30,7 +30,7 @@ repos:
         name: ty check
         entry: uv run --locked ty check
         language: system
-        types: [python]
+        types_or: [python, pyi]
         pass_filenames: false
 
       # actionlint also runs shellcheck on `run:` steps, since both are in the venv.
@@ -46,9 +46,36 @@ repos:
         language: system
         types: [shell]
 
+      # The Rust extension module (rust/), with the toolchain rust-toolchain.toml
+      # pins. clippy lints the Python boundary too (`--all-features`), so it runs
+      # through uv: PyO3's build script then finds the venv's Python.
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --manifest-path rust/Cargo.toml --check
+        language: system
+        files: ^(rust/|rust-toolchain\.toml$)
+        pass_filenames: false
+
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: uv run --locked cargo clippy --manifest-path rust/Cargo.toml --all-targets --all-features -- -D warnings
+        language: system
+        files: ^(rust/|rust-toolchain\.toml$)
+        pass_filenames: false
+
+      - id: cargo-test
+        name: cargo test
+        entry: cargo test --manifest-path rust/Cargo.toml
+        language: system
+        files: ^(rust/|rust-toolchain\.toml$)
+        pass_filenames: false
+
+      # Also on Rust and TOML changes: `uv run` rebuilds the extension module
+      # (`cache-keys` in pyproject.toml), and the differential tests check it
+      # against the Python engine.
       - id: pytest
         name: pytest (incl. doctests)
         entry: uv run --locked pytest -q
         language: system
-        types: [python]
+        types_or: [python, pyi, rust, toml]
         pass_filenames: false

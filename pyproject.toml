@@ -22,15 +22,34 @@ dev = [
     "ty==0.0.89",
 ]
 
+# maturin builds the package with its Rust extension module,
+# `minimax_games._native`, from the crate in rust/ (docs/star-realms.md,
+# "Compiled engine"). Bounded to a minor version, as uv_build was: upgrade it
+# deliberately, checking that `uv build` still makes the sdist and the wheel.
 [build-system]
-requires = ["uv_build>=0.13.1,<0.14"]
-build-backend = "uv_build"
+requires = ["maturin>=1.15.0,<1.16"]
+build-backend = "maturin"
+
+[tool.maturin]
+manifest-path = "rust/Cargo.toml"
+module-name = "minimax_games._native"
+python-source = "src"
+features = ["python"]
+# So a wheel built from the sdist uses the pinned toolchain too.
+include = [{ path = "rust-toolchain.toml", format = "sdist" }]
 
 # The one place uv's version is pinned: setup-uv reads it in CI, and uv refuses
-# to run locally at any other version. Upgrade it together with the uv_build
-# bound above.
+# to run locally at any other version.
 [tool.uv]
 required-version = "==0.13.1"
+# uv rebuilds the editable install, and so the extension module, when one of
+# these changes. Without the Rust files it would keep a stale build.
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "rust/Cargo.toml" },
+    { file = "rust/Cargo.lock" },
+    { file = "rust/src/**/*.rs" },
+]
 
 [tool.uv.sources]
 superenums = { git = "https://github.com/samthorold/superenums", tag = "v0.4.0" }
