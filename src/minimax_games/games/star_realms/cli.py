@@ -81,6 +81,16 @@ the first, and prints each one's held-out log-loss beside
 `sigmoid(evaluate / 16)`'s on the same states. Deterministic given the
 seeds; `--save DIR` writes the models there as `logistic.npz` and
 `mlp.npz`.
+
+`python -m minimax_games.games.star_realms iterate` runs policy iteration
+(see `iterate`): rounds of Rust self-play with the current best value, a
+refit of both forms on a window of recent rounds, an offline gate and an
+SPRT match against the current best, into `--out` (`runs/iterate/` by
+default, which git ignores), each round's records written as it finishes.
+Run it again with the same `--out` to resume after the last finished round.
+`--threads` plays the games on that many threads; `--rounds`, `--patience`
+and `--hours` are the stopping rules; the round's sizes and the planner's
+settings default to the agreed design's.
 """
 
 import argparse
@@ -96,6 +106,7 @@ from minimax_games.games.star_realms import (
     bench,
     cheat,
     fit,
+    iterate,
     planner,
     profiling,
     tune,
@@ -308,6 +319,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if argv[:1] == ["fit"]:
         fitting(argv[1:])
+        return
+    if argv[:1] == ["iterate"]:
+        iterating(argv[1:])
         return
     if argv[:1] == ["native-bench"]:
         native_bench(argv[1:])
@@ -917,6 +931,62 @@ def fitting(argv: list[str]) -> None:
             path = args.save / f"{name}.npz"
             model.save(path)
             print(f"Wrote {path}")
+
+
+def iterating(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(
+        prog="python -m minimax_games.games.star_realms iterate"
+    )
+    defaults = iterate.Settings()
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=Path("runs/iterate"),
+        help="the run's directory, resumed if it has rounds (default: %(default)s)",
+    )
+    for flag, field, text in (
+        ("--threads", "threads", "threads playing the games"),
+        ("--rounds", "max_rounds", "stop after this many rounds"),
+        ("--patience", "patience", "stop after this many rounds without promotion"),
+        ("--train-games", "train_games", "training games per round"),
+        ("--held-out-games", "held_out_games", "held-out games per round"),
+        ("--window", "window", "rounds of training games each fit sees"),
+        ("--gate-games", "gate_games", "the match's most games"),
+        ("--ladder-games", "ladder_games", "a promoted value's games vs heuristic"),
+        ("--worlds", "worlds", "the planner's worlds"),
+        ("--budget", "budget", "the planner's states per plan"),
+        ("--epochs", "epochs", "the fits' passes over the data"),
+        ("--hidden", "hidden", "the network's hidden units"),
+    ):
+        parser.add_argument(
+            flag,
+            type=int,
+            dest=field,
+            default=getattr(defaults, field),
+            help=f"{text} (default: %(default)s)",
+        )
+    parser.add_argument(
+        "--hours",
+        type=float,
+        default=defaults.hours,
+        help="start no round once the rounds have taken this long"
+        " (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--prefix",
+        default=defaults.prefix,
+        help="round r's candidate is named <prefix><r> (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--start",
+        type=lambda name: bot_name(LEARNED + name).removeprefix(LEARNED),
+        default=defaults.start,
+        help="the starting champion, a committed model (default: %(default)s)",
+    )
+    args = vars(parser.parse_args(argv))
+    out = args.pop("out")
+    settings = iterate.Settings(**args)
+    iterate.run(settings, out)
 
 
 def sprt_report(played: SprtTournament, name: str, max_games: int) -> list[str]:

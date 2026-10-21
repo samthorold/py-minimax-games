@@ -142,7 +142,15 @@ def test_a_missing_model_name_says_where_it_looked():
         value.load("no-such-model")
 
 
-@pytest.mark.parametrize("name", ["logistic", "mlp"])
+PACKAGED = sorted(path.stem for path in value._models().glob("*.npz"))
+"""Every committed model: the first fits and each rung of the ladder."""
+
+
+def test_the_first_fits_are_packaged():
+    assert {"logistic", "mlp"} <= set(PACKAGED)
+
+
+@pytest.mark.parametrize("name", PACKAGED)
 def test_the_packaged_models_load_by_name_for_the_current_features(name: str):
     evaluator = ValueEvaluator(value.load(name))
     state = rules.apply(rules.auto_play(rules.new_game(0)), EndTurn())
