@@ -22,6 +22,8 @@ class Game:
     def state(self) -> dict[str, Any]: ...
     def winner(self) -> int | None: ...
     def greedy_move(self) -> NativeAction: ...
+    def heuristic_move(self) -> NativeAction:
+        """The heuristic bot's choice from the current player's view."""
     def observe(self, observer: int) -> dict[str, Any]:
         """What `observer` knows (`view.observe`)."""
     def sample_world(self, observer: int, seed: int) -> Game:
@@ -33,6 +35,12 @@ def cards() -> list[dict[str, Any]]:
 
 def play_greedy(seed: int, max_turns: int = 1000) -> tuple[int | None, int, int]:
     """A greedy-vs-greedy game: `(winner, turns, decisions)`."""
+
+def play_heuristic(seed: int, max_turns: int = 1000) -> tuple[int | None, int, int]:
+    """A heuristic-vs-heuristic game: `(winner, turns, decisions)`."""
+
+def bench_heuristic_games(games: int, base_seed: int) -> tuple[int, int, float]:
+    """Time heuristic games: `(games, decisions, seconds)`."""
 
 def bench_games(games: int, base_seed: int) -> tuple[int, int, float]:
     """Time greedy games: `(games, decisions, seconds)`."""

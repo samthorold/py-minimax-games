@@ -18,6 +18,7 @@ use pyo3::types::{PyDict, PyList, PyTuple};
 use crate::star_realms::bots::{greedy_move, play_greedy};
 use crate::star_realms::card::{Card, Effect};
 use crate::star_realms::features;
+use crate::star_realms::heuristic::{heuristic_move, play_heuristic};
 use crate::star_realms::planner::enumerate;
 use crate::star_realms::rng::Random;
 use crate::star_realms::rules::{
@@ -313,6 +314,13 @@ impl Game {
         to_py(py, action)
     }
 
+    /// The heuristic bot's choice now, from the current player's view
+    /// (`bots.HeuristicBot.choose`).
+    fn heuristic_move<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        let view = observe(&self.state, self.state.current);
+        to_py(py, heuristic_move(&view, &legal_actions(&self.state)))
+    }
+
     /// What `observer` knows (`view.observe`), as a dict of the `View`
     /// fields.
     fn observe<'py>(&self, py: Python<'py>, observer: usize) -> PyResult<Bound<'py, PyDict>> {
@@ -401,6 +409,28 @@ fn cards(py: Python<'_>) -> PyResult<Vec<Bound<'_, PyDict>>> {
 fn py_play_greedy(seed: u64, max_turns: u32) -> (Option<usize>, u32, u64) {
     let result = play_greedy(seed, max_turns);
     (result.winner, result.turns, result.decisions)
+}
+
+/// Play a heuristic-vs-heuristic game from `seed`: `(winner, turns,
+/// decisions)`, the winner `None` if it passed `max_turns`.
+#[pyfunction]
+#[pyo3(name = "play_heuristic", signature = (seed, max_turns=1000))]
+fn py_play_heuristic(seed: u64, max_turns: u32) -> (Option<usize>, u32, u64) {
+    let result = play_heuristic(seed, max_turns);
+    (result.winner, result.turns, result.decisions)
+}
+
+/// Time `games` heuristic-vs-heuristic games from `base_seed` on: `(games,
+/// decisions, seconds)`.
+#[pyfunction]
+fn bench_heuristic_games(py: Python<'_>, games: u64, base_seed: u64) -> (u64, u64, f64) {
+    py.detach(|| {
+        let start = Instant::now();
+        let decisions: u64 = (base_seed..base_seed + games)
+            .map(|seed| play_heuristic(seed, 1000).decisions)
+            .sum();
+        (games, decisions, start.elapsed().as_secs_f64())
+    })
 }
 
 /// Time `games` greedy-vs-greedy games from `base_seed` on: `(games,
@@ -533,6 +563,8 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     star_realms.add_function(wrap_pyfunction!(cards, &star_realms)?)?;
     star_realms.add_function(wrap_pyfunction!(py_play_greedy, &star_realms)?)?;
     star_realms.add_function(wrap_pyfunction!(bench_games, &star_realms)?)?;
+    star_realms.add_function(wrap_pyfunction!(py_play_heuristic, &star_realms)?)?;
+    star_realms.add_function(wrap_pyfunction!(bench_heuristic_games, &star_realms)?)?;
     star_realms.add_function(wrap_pyfunction!(bench_advance, &star_realms)?)?;
     star_realms.add_function(wrap_pyfunction!(plan_ends, &star_realms)?)?;
     m.add_submodule(&star_realms)?;

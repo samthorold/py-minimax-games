@@ -67,6 +67,26 @@ def test_tournament_jobs_split_the_games_without_changing_the_results(capsys):
     assert results("--jobs", "3") == results()
 
 
+def test_tournament_with_sprt_stops_once_decided_and_says_why(capsys):
+    argv = ["tournament", "--bots", "heuristic", "random", "--games", "100"]
+    main([*argv, "--sprt", "--h0", "0.5", "--h1", "0.7"])
+    out = capsys.readouterr().out
+    assert "heuristic vs random: SPRT, at most 100 games, seeds 0-99" in out
+    assert "SPRT: H0 heuristic wins 50.0%, H1 70.0%; alpha 0.05, beta 0.05" in out
+    decision = next(line for line in out.splitlines() if line.startswith("Decision"))
+    assert decision.startswith("Decision: H1 accepted after ")
+    assert "LLR " in out
+    assert "bounds [-2.94, 2.94]" in out
+    assert "95% interval" in out
+
+
+def test_tournament_with_sprt_reports_an_undecided_limit(capsys):
+    argv = ["tournament", "--bots", "random", "random", "--games", "2", "--sprt"]
+    main(argv)
+    out = capsys.readouterr().out
+    assert "Decision: undecided after 2 games (the limit)" in out
+
+
 def test_tournament_lists_unfinished_games_and_tells_same_bots_apart(capsys):
     argv = ["tournament", "--bots", "random", "random", "--games", "2"]
     main([*argv, "--max-turns", "5"])
@@ -273,6 +293,7 @@ def test_native_bench_times_the_rust_engine(capsys):
     assert "greedy games: 3 in" in out
     assert "games/s" in out
     assert "calls/s" in out
+    assert "heuristic games: 3 in" in out
 
 
 def test_a_single_game_plays_the_planner(capsys, monkeypatch):
@@ -294,6 +315,16 @@ def test_tournament_plays_the_planner_and_reports_its_plans(capsys):
     assert plans.endswith(" ms per plan")
     main([*argv, "--max-turns", "3", "--budget", "60", "--worlds", "2", "--jobs", "2"])
     assert capsys.readouterr().out.splitlines()[:3] == out[:3]
+
+
+def test_tournament_with_sprt_plays_the_planner_and_reports_its_plans(capsys):
+    argv = ["tournament", "--bots", "planner", "greedy", "--games", "2", "--sprt"]
+    main([*argv, "--max-turns", "3", "--budget", "60", "--worlds", "2"])
+    out = capsys.readouterr().out.splitlines()
+    assert "Decision: undecided after 2 games (the limit)" in out
+    plans = next(line for line in out if "plans per turn" in line)
+    assert plans.startswith("planner: ")
+    assert plans.endswith(" ms per plan")
 
 
 def test_the_planner_keeps_its_own_budget_with_rollouts():
