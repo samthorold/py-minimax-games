@@ -1,0 +1,25 @@
+{
+  "pf01": {
+    "train_log_loss": 0.4963,
+    "held_out_log_loss": 0.5088,
+    "ms_per_plan": 14.52
+  },
+  "paired": {
+    "m32": {
+      "only_it": 32,
+      "only_baseline": 29,
+      "sign_z": 0.38
+    },
+    "p32x1": {
+      "only_it": 48,
+      "only_baseline": 44,
+      "sign_z": 0.42
+    },
+    "p32x2": {
+      "only_it": 25,
+      "only_baseline": 30,
+      "sign_z": -0.67
+    }
+  },
+  "clearly_beats_pf01": false
+}
