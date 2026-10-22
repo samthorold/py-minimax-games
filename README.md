@@ -160,6 +160,14 @@ and Trade Row scraps are worth less in its own deck than kept from the
 opponent, beside the heuristic's in its own games on the same seeds (recorded
 in Rust, a few seconds). Results: "Milestone 9: probe, denial".
 
+`task probe -- investment` weighs trade against combat: it adds, apart, a
+ship giving only trade and one of the same cost giving only combat to the
+deck of the player who just ended, and prints what each added per unit by
+phase; then it plays the heuristic against itself on the same seeds and
+prints the share of each player's buys that are economy, combat, mixed or
+neither, by turn. About 2 minutes. Results: "Milestone 9: probe, investment
+against the race".
+
 ### Profiling the Star Realms search
 
 `task profile` (`python -m minimax_games.games.star_realms profile`) runs the

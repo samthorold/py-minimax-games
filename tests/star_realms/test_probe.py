@@ -7,7 +7,9 @@ import pytest
 
 from minimax_games._native import star_realms as native
 from minimax_games.games.star_realms import features, fit, probe, selfplay
+from minimax_games.games.star_realms.catalogue import CATALOGUE
 from minimax_games.games.star_realms.state import GameState
+from minimax_games.games.star_realms.value import load
 
 
 def _moved(state: GameState, name: str) -> GameState:
@@ -556,3 +558,259 @@ def test_the_denial_share_is_given_for_buys_and_scraps_by_phase():
     assert shares["early", "scrap"].share == 1.0
     assert shares["late", "scrap"].share == 0.0
     assert shares["middle", "scrap"].choices == 0
+
+
+def _per_unit(trade: float, combat: float) -> probe.Judgement:
+    """A judgement linear in the trade and the combat the ended player's
+    cards give when played: `trade` per unit of trade, `combat` per unit of
+    combat."""
+    w = np.zeros(len(features.NAMES))
+    for name in features.CARDS:
+        card = CATALOGUE[name]
+        w[_pool(name)] = trade * probe.output(card, "trade") + combat * probe.output(
+            card, "combat"
+        )
+
+    def judge(x: np.ndarray) -> np.ndarray:
+        return 0.3 + np.asarray(x) @ w
+
+    return judge
+
+
+def test_a_judgement_linear_in_trade_and_combat_gains_its_weight_per_unit(
+    rows: np.ndarray,
+):
+    found = probe.investment(_per_unit(0.004, 0.001), rows)
+    assert found.pairs
+    for economy, combat in found.pairs:
+        trade = probe.output(CATALOGUE[economy], "trade")
+        hits = probe.output(CATALOGUE[combat], "combat")
+        made = ~np.isnan(found.chance.card_gap[economy, combat])
+        assert made.sum() > len(rows) / 2
+        assert np.allclose(found.chance.trade[economy][made], 0.004)
+        assert np.allclose(found.chance.combat[combat][made], 0.001)
+        assert np.allclose(
+            found.chance.card_gap[economy, combat][made], 0.004 * trade - 0.001 * hits
+        )
+
+
+def test_the_comparable_cards_are_ships_of_one_cost_giving_only_trade_or_combat():
+    assert probe.PAIRS == (
+        ("Federation Shuttle", "Blob Fighter"),
+        ("Freighter", "Blob Destroyer"),
+    )
+    assert probe.output(CATALOGUE["Patrol Mech"], "trade") == 3
+    assert probe.output(CATALOGUE["Patrol Mech"], "combat") == 5
+    assert probe.output(CATALOGUE["Command Ship"], "combat") == 5
+
+
+def test_every_position_the_investment_probe_judges_is_valid_and_differs_in_one_card(
+    rows: np.ndarray,
+):
+    judged: list[np.ndarray] = []
+
+    def judge(x: np.ndarray) -> np.ndarray:
+        judged.append(np.array(x))
+        return np.full(len(x), 0.5)
+
+    probe.investment(judge, rows)
+    real = {row.tobytes() for row in rows.astype(np.float64)}
+    allowed = {_pool(name) for pair in probe.PAIRS for name in pair}
+    for x in judged:
+        for row in x:
+            if row.tobytes() in real:
+                continue
+            # one card of a pair more in the ended player's pool than a real row
+            changed = np.flatnonzero(np.abs(x[: len(rows)] - row).sum(axis=1) == 1)
+            assert len(changed), "a judged row is one card away from a real one"
+            column = int(np.flatnonzero(row - x[changed[0]])[0])
+            assert column in allowed
+
+
+def test_on_the_logit_scale_a_logistic_judgement_gains_its_weight_per_unit(
+    rows: np.ndarray,
+):
+    linear = _per_unit(0.3, 0.1)
+
+    def judge(x: np.ndarray) -> np.ndarray:
+        return 1 / (1 + np.exp(-(linear(x) - 3)))
+
+    found = probe.investment(judge, rows)
+    for economy, combat in found.pairs:
+        made = ~np.isnan(found.chance.card_gap[economy, combat])
+        assert not np.allclose(found.chance.trade[economy][made], 0.3)
+        assert np.allclose(found.logit.trade[economy][made], 0.3)
+        assert np.allclose(found.logit.combat[combat][made], 0.1)
+
+
+def test_the_investment_summary_gives_trade_against_combat_by_phase(
+    rows: np.ndarray,
+):
+    # trade weighs 0.004 a unit up to turn 8 and 0.001 after; combat 0.002
+    early, late = _per_unit(0.004, 0.002), _per_unit(0.001, 0.002)
+    turn = rows[:, features.NAMES.index("turn")]
+
+    def judge(x: np.ndarray) -> np.ndarray:
+        x = np.asarray(x)
+        at = x[:, features.NAMES.index("turn")] <= 8
+        return np.where(at, early(x), late(x))
+
+    found = probe.investment(judge, rows)
+    summary = probe.investment_summary(found)
+    for phase, (first, last) in probe.PHASES.items():
+        weight = 0.004 if phase == "early" else 0.001
+        for economy, combat in probe.PAIRS:
+            line = next(
+                s for s in summary if s.phase == phase and s.pair == (economy, combat)
+            )
+            made = ~np.isnan(found.chance.card_gap[economy, combat])
+            at = (turn >= first) & (turn <= last) & made
+            assert line.positions == at.sum() > 0
+            assert np.isclose(line.trade, weight)
+            assert np.isclose(line.combat, 0.002)
+            assert np.isclose(line.trade_sd, 0)
+            assert np.isclose(line.unit_gap, weight - 0.002)
+            assert np.isclose(line.unit_gap_se, 0)
+            trade = probe.output(CATALOGUE[economy], "trade")
+            hits = probe.output(CATALOGUE[combat], "combat")
+            assert np.isclose(line.card_gap, weight * trade - 0.002 * hits)
+            assert line.economy_more == float(weight * trade > 0.002 * hits)
+    every = [s for s in summary if s.phase == "all"]
+    assert len(every) == len(probe.PAIRS)
+    logit = probe.investment_summary(found, logit=True)
+    assert len(logit) == len(summary)
+
+
+@pytest.mark.filterwarnings("error")
+def test_a_pair_with_no_copy_left_of_either_card_leaves_the_position_out(
+    rows: np.ndarray,
+):
+    economy, combat = probe.PAIRS[0]
+    taken = rows[:3].copy()
+    for i, name in ((0, economy), (1, combat)):
+        taken[i, features.NAMES.index(f"next: pool {name}")] += probe.available(
+            taken[i], name
+        )
+    found = probe.investment(_per_unit(0.004, 0.001), taken)
+    gap = found.chance.card_gap[economy, combat]
+    assert np.isnan(gap[:2]).all()
+    assert np.isnan(found.chance.trade[economy][:2]).all()
+    assert np.isnan(found.chance.combat[combat][:2]).all()
+    assert not np.isnan(gap[2])
+
+
+def test_a_buy_is_economy_or_combat_by_what_its_card_s_primary_ability_gives():
+    kinds = {name: probe.kind(CATALOGUE[name]) for name in probe.BUYABLE}
+    assert "Scout" not in kinds
+    assert "Viper" not in kinds
+    assert kinds["Explorer"] == "economy"
+    assert kinds["Freighter"] == "economy"
+    assert kinds["Trading Post"] == "economy"  # Authority or trade
+    assert kinds["Survey Ship"] == "economy"  # trade, and a draw
+    assert kinds["Blob Fighter"] == "combat"
+    assert kinds["Defense Center"] == "combat"  # Authority or combat
+    assert kinds["Fleet HQ"] == "combat"  # every ship gains combat
+    assert kinds["Patrol Mech"] == "mixed"  # trade or combat
+    assert kinds["Battle Station"] == "neither"
+    assert kinds["Stealth Needle"] == "neither"
+    assert set(kinds.values()) == {"economy", "combat", "mixed", "neither"}
+
+
+def test_buys_are_attributed_to_the_turn_and_seat_they_were_made_in():
+    games = [
+        [
+            ("Acquire", "Explorer"),
+            ("AttackPlayer",),
+            ("EndTurn",),
+            ("EndTurn",),
+            ("PlayCard", "Freighter"),
+            ("AcquireOnTop", "Blob Fighter"),
+            ("Acquire", "Patrol Mech"),
+            ("EndTurn",),
+        ],
+        [("EndTurn",), ("Acquire", "Battle Station"), ("AcquireFreeShip", "Ram")],
+    ]
+    found = probe.buys(games)
+    assert found.card == (
+        "Explorer",
+        "Blob Fighter",
+        "Patrol Mech",
+        "Battle Station",
+    )
+    assert found.game.tolist() == [0, 0, 0, 1]
+    assert found.turn.tolist() == [1, 3, 3, 2]
+    assert found.seat.tolist() == [0, 0, 0, 1]
+    assert found.kind == ("economy", "combat", "mixed", "neither")
+
+
+def test_buy_shares_count_each_kind_by_band_of_turns():
+    end = ("EndTurn",)
+    game = [
+        ("Acquire", "Explorer"),
+        ("Acquire", "Blob Fighter"),
+        end,
+        ("Acquire", "Freighter"),
+        end,
+        ("Acquire", "Ram"),
+        end,
+        ("Acquire", "Patrol Mech"),
+        ("Acquire", "Battle Station"),
+    ]
+    shares = probe.buy_shares(probe.buys([game]), bands=((1, 2), (3, 10)))
+    assert [s.band for s in shares] == [(1, 10), (1, 2), (3, 10)]
+    whole, first, second = shares
+    assert first.buys == 3
+    assert first.share == {
+        "economy": 2 / 3,
+        "combat": 1 / 3,
+        "mixed": 0.0,
+        "neither": 0.0,
+    }
+    assert second.buys == 3
+    assert second.share["combat"] == 1 / 3
+    assert second.share["mixed"] == 1 / 3
+    assert whole.buys == 6
+    assert whole.share["economy"] == 2 / 6
+    # the Explorer, always in the market, is economy, and counted apart too
+    assert first.explorer == 1 / 3
+    assert second.explorer == 0.0
+    empty = probe.buy_shares(probe.buys([game]), bands=((20, 30),))[1]
+    assert empty.buys == 0
+    assert np.isnan(empty.share["economy"])
+
+
+def test_the_champion_s_recorded_games_are_the_games_its_positions_come_from():
+    champion = selfplay.Planner(load("pf01"), worlds=1, budget=40)
+    seeds = range(700, 703)
+    games = probe.games(champion, seeds, threads=2, record=True)
+    assert games.actions is not None
+    assert len(games.actions) == len(seeds)
+    assert np.array_equal(games.x, probe.positions(champion, seeds, threads=2))
+
+
+def test_the_buys_of_real_games_are_where_replaying_them_puts_them():
+    seeds = range(500, 503)
+    played = probe.games("heuristic", seeds, record=True)
+    assert played.actions is not None
+    found = probe.buys(played.actions)
+    expected = []
+    for i, (seed, actions) in enumerate(zip(seeds, played.actions, strict=True)):
+        game = native.Game(seed)
+        for action in actions:
+            if action[0] in ("Acquire", "AcquireOnTop"):
+                state = game.state()
+                expected.append((i, state["turn"], state["current"], action[1]))
+            game.advance(action)
+    assert len(expected) > 30
+    assert (
+        list(
+            zip(
+                found.game.tolist(),
+                found.turn.tolist(),
+                found.seat.tolist(),
+                found.card,
+                strict=True,
+            )
+        )
+        == expected
+    )

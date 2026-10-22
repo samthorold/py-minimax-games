@@ -135,7 +135,10 @@ each pair's interaction. `probe denial` reports, from the same games, the
 judged effect of a Trade Row card the next player would value against one
 they wouldn't, by phase, and the share of the champion's buys and Trade Row
 scraps that are denial, beside the heuristic's in its own games on the same
-seeds.
+seeds. `probe investment` reports what a ship giving only trade and one of
+the same cost giving only combat add per unit, by phase, and the share of
+economy and combat buys by turn in those games and in the heuristic's
+against itself on the same seeds.
 """
 
 import argparse
@@ -1175,7 +1178,7 @@ def probing(argv: list[str]) -> None:
     )
     parser.add_argument(
         "probe",
-        choices=["synergy", "faction-pair", "denial"],
+        choices=["synergy", "faction-pair", "denial", "investment"],
         help="the probe to run",
     )
     parser.add_argument(
@@ -1227,6 +1230,9 @@ def probing(argv: list[str]) -> None:
     seeds = range(args.base_seed, args.base_seed + args.games)
     if args.probe == "denial":
         _denial(args, model, champion, seeds)
+        return
+    if args.probe == "investment":
+        _investment(args, model, champion, seeds)
         return
     start = time.perf_counter()
     rows = probe.positions(champion, seeds, threads=args.threads)
@@ -1289,6 +1295,44 @@ def _denial(
         print(line)
     print()
     for line in probe.share_report(shares):
+        print(line)
+    print(f"Games {playing:.1f} s, probe {probed:.1f} s")
+
+
+def _investment(
+    args: argparse.Namespace,
+    model: value.Model,
+    champion: selfplay.Planner,
+    seeds: range,
+) -> None:
+    start = time.perf_counter()
+    played = probe.games(champion, seeds, threads=args.threads, record=True)
+    heuristic = probe.games("heuristic", seeds, threads=args.threads, record=True)
+    playing = time.perf_counter() - start
+    assert played.actions is not None
+    assert heuristic.actions is not None
+    found = probe.investment(model.predict, played.x)
+    probed = time.perf_counter() - start - playing
+    print(
+        f"Investment probe of {args.model}: {len(played.x)} positions from its"
+        f" games against itself on seeds {seeds.start}-{seeds.stop - 1}"
+        f" ({args.worlds} worlds, {args.budget} states per plan)"
+    )
+    for line in probe.investment_report(found):
+        print(line)
+    print()
+    for line in probe.investment_report(found, logit=True):
+        print(line)
+    print()
+    print(
+        f"{args.model} against itself, and the heuristic against itself,"
+        f" on seeds {seeds.start}-{seeds.stop - 1}"
+    )
+    players = {
+        args.model: probe.buys(played.actions),
+        "heuristic": probe.buys(heuristic.actions),
+    }
+    for line in probe.buys_report(players):
         print(line)
     print(f"Games {playing:.1f} s, probe {probed:.1f} s")
 

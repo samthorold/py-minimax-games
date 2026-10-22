@@ -27,16 +27,33 @@ into the Trade Row in place of the same card (`denial`) keeps the row at
 its five cards and every card in one place. In games, a card a player buys
 or scraps from the Trade Row is denial when the judgement finds it worth
 less in their own deck than kept from the opponent (`worth`).
+
+The investment probe (strategy.md, The race and the investment) weighs
+trade against combat: in each position it adds, apart, each card of a pair
+of comparable cards (`PAIRS`: ships of one cost, one giving only trade, the
+other only combat) and reports what each adds per unit of what it gives,
+and which of the two the judgement would rather have. Beside it, `buys`
+reads every card bought in recorded games, by turn, each an economy or a
+combat buy by its card's `kind`.
 """
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 
+from minimax_games._native import star_realms as native
 from minimax_games.games.star_realms import features
-from minimax_games.games.star_realms.card import Faction
+from minimax_games.games.star_realms.card import Card, CardType, Faction
 from minimax_games.games.star_realms.catalogue import CATALOGUE
+from minimax_games.games.star_realms.effect import (
+    Choice,
+    Combat,
+    Effect,
+    ShipsGainCombat,
+    Trade,
+)
 from minimax_games.games.star_realms.selfplay import (
     Planner,
     Player,
@@ -741,6 +758,296 @@ def denial_summary(found: Denial, logit: bool = False) -> list[DenialLine]:
     return lines
 
 
+type Output = Literal["trade", "combat"]
+
+
+def _primary(card: Card) -> Iterable[Effect]:
+    """`card`'s primary effects, and each option's of a choice."""
+    for e in card.primary:
+        if isinstance(e, Choice):
+            for option in e.options:
+                yield from option
+        else:
+            yield e
+
+
+def output(card: Card, kind: Output) -> int:
+    """The most trade or combat `card`'s primary ability gives when played
+    (the larger option of a choice)."""
+    effect = Trade if kind == "trade" else Combat
+    unconditional = sum(e.amount for e in card.primary if isinstance(e, effect))
+    options = [
+        sum(e.amount for e in option if isinstance(e, effect))
+        for e in card.primary
+        if isinstance(e, Choice)
+        for option in e.options
+    ]
+    return unconditional + max(options, default=0)
+
+
+def _pure(card: Card) -> Output | None:
+    """ "trade" or "combat" if `card` is a Trade Deck ship whose primary
+    ability gives that and nothing else, else None."""
+    if card.type is not CardType.SHIP or card.faction is None:
+        return None
+    if all(isinstance(e, Trade) for e in card.primary):
+        return "trade"
+    if all(isinstance(e, Combat) for e in card.primary):
+        return "combat"
+    return None
+
+
+def _pairs() -> tuple[tuple[str, str], ...]:
+    pure = {name: _pure(card) for name, card in CATALOGUE.items()}
+    return tuple(
+        (economy, combat)
+        for economy, kind in pure.items()
+        if kind == "trade"
+        for combat, other in pure.items()
+        if other == "combat" and CATALOGUE[combat].cost == CATALOGUE[economy].cost
+    )
+
+
+PAIRS: tuple[tuple[str, str], ...] = _pairs()
+"""The comparable cards of the investment probe: Trade Deck ships of the
+same cost whose primary ability gives only trade (the first) or only combat
+(the second), so a pair differs in little but what it gives."""
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class Gains:
+    """What one card of each pair added to the judgement, per position, on
+    one scale: NaN where either card of the pair had no copy left."""
+
+    trade: dict[str, np.ndarray]
+    """Per economy card, what it added per unit of its trade."""
+    combat: dict[str, np.ndarray]
+    """Per combat card, what it added per unit of its combat."""
+    card_gap: dict[tuple[str, str], np.ndarray]
+    """Per pair, what the economy card added less what the combat card
+    added: which of two cards of the same cost the judgement would rather
+    the player had bought."""
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class Investment:
+    """The investment probe's gains, in judged chance and in logit (as
+    `Synergy`'s), per position."""
+
+    pairs: tuple[tuple[str, str], ...]
+    chance: Gains
+    logit: Gains
+    turn: np.ndarray
+    """Each position's turn, for its phase."""
+
+
+def investment(
+    judgement: Judgement, rows: np.ndarray, pairs: tuple[tuple[str, str], ...] = PAIRS
+) -> Investment:
+    """For each pair of comparable cards and each position in `rows`, add
+    the economy card, and separately the combat card, to the deck of the
+    player who just ended, and judge both. Plays no games."""
+    x = np.asarray(rows, dtype=np.float64)
+    scales: dict[str, Gains] = {
+        scale: Gains(trade={}, combat={}, card_gap={}) for scale in ("chance", "logit")
+    }
+    for economy, other in pairs:
+        made = (_out_of_sight(x, (economy, other)) >= 1).all(axis=1)
+        added = []
+        for name in (economy, other):
+            changed = x.copy()
+            changed[:, _COLUMN[f"ended: pool {name}"]] += 1
+            added.append(changed)
+        chances = np.asarray(judgement(np.concatenate([x, *added]))).reshape(3, -1)
+        for scale, judged in (("chance", chances), ("logit", _logit(chances))):
+            gains = np.where(made, judged[1:] - judged[0], np.nan)
+            found = scales[scale]
+            found.trade[economy] = gains[0] / output(CATALOGUE[economy], "trade")
+            found.combat[other] = gains[1] / output(CATALOGUE[other], "combat")
+            found.card_gap[economy, other] = gains[0] - gains[1]
+    return Investment(
+        pairs=pairs,
+        chance=scales["chance"],
+        logit=scales["logit"],
+        turn=x[:, _COLUMN["turn"]],
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PairLine:
+    """One pair's investment gains over one phase's positions."""
+
+    phase: str
+    pair: tuple[str, str]
+    positions: int
+    """The positions both cards of the pair could be added to."""
+    trade: float
+    """The economy card's mean gain per unit of trade."""
+    trade_sd: float
+    """Its standard deviation across the positions."""
+    combat: float
+    """The combat card's mean gain per unit of combat."""
+    combat_sd: float
+    unit_gap: float
+    """The mean of a unit of trade's gain less a unit of combat's, per
+    position: above 0, the judgement weighs trade above combat."""
+    unit_gap_se: float
+    """The standard error of `unit_gap`."""
+    card_gap: float
+    """The mean of the economy card's gain less the combat card's."""
+    card_gap_se: float
+    economy_more: float
+    """The share of positions where the economy card added more than the
+    combat card of the same cost."""
+
+
+def investment_summary(found: Investment, logit: bool = False) -> list[PairLine]:
+    """Each pair's gains, over all positions and then by phase, in chances
+    or with `logit` on the logit scale."""
+    gains = found.logit if logit else found.chance
+    nan = float("nan")
+    lines = []
+    for phase, at in _phases(found.turn):
+        for economy, combat in found.pairs:
+            card_gap = gains.card_gap[economy, combat]
+            keep = at & ~np.isnan(card_gap)
+            trade, hits = gains.trade[economy][keep], gains.combat[combat][keep]
+            gap = card_gap[keep]
+            n = int(keep.sum())
+            lines.append(
+                PairLine(
+                    phase=phase,
+                    pair=(economy, combat),
+                    positions=n,
+                    trade=float(trade.mean()) if n else nan,
+                    trade_sd=float(trade.std()) if n else nan,
+                    combat=float(hits.mean()) if n else nan,
+                    combat_sd=float(hits.std()) if n else nan,
+                    unit_gap=float((trade - hits).mean()) if n else nan,
+                    unit_gap_se=_se(trade - hits),
+                    card_gap=float(gap.mean()) if n else nan,
+                    card_gap_se=_se(gap),
+                    economy_more=float((gap > 0).mean()) if n else nan,
+                )
+            )
+    return lines
+
+
+type Kind = Literal["economy", "combat", "mixed", "neither"]
+
+BUYABLE: tuple[str, ...] = (*TRADE_DECK, "Explorer")
+"""The cards a player can buy: the Trade Deck's and the Explorer."""
+
+
+def kind(card: Card) -> Kind:
+    """What buying `card` invests in, by what its primary ability gives
+    every time it is played (through either option of a choice): "economy"
+    if trade and no combat, "combat" if combat (or combat for every ship,
+    Fleet HQ's) and no trade, "mixed" if either (Patrol Mech's choice), and
+    "neither" if neither (cards that only draw, scrap, copy or defend).
+    Ally and scrap abilities don't count: they give only sometimes."""
+    effects = list(_primary(card))
+    trade = any(isinstance(e, Trade) for e in effects)
+    combat = any(isinstance(e, Combat | ShipsGainCombat) for e in effects)
+    if trade and combat:
+        return "mixed"
+    if trade:
+        return "economy"
+    return "combat" if combat else "neither"
+
+
+_BUYS = frozenset({"Acquire", "AcquireOnTop"})
+"""The decisions that buy a card; a free ship (`AcquireFreeShip`) costs no
+trade, so it isn't one."""
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class Buys:
+    """Every card bought in some games, in order. Unlike `choices`, it
+    counts Explorers, every game (finished or not) and every turn, the last
+    included, and no free ship: it is about what players spend trade on,
+    not about positions."""
+
+    game: np.ndarray
+    """Each buy's game, as its index among the games."""
+    turn: np.ndarray
+    """The turn it was bought in, as the game numbers them: 1 for the first
+    player's first, both players' counted."""
+    seat: np.ndarray
+    """The seat that bought it (0 moves first)."""
+    card: tuple[str, ...]
+    kind: tuple[Kind, ...]
+    """Each card's `kind`."""
+
+
+def buys(games: Iterable[Sequence[native.NativeAction]]) -> Buys:
+    """The buys in each game's decisions (`SelfPlay.actions`, played with
+    `record`)."""
+    game, turn, card = [], [], []
+    for i, actions in enumerate(games):
+        now = 1
+        for action in actions:
+            if action[0] == "EndTurn":
+                now += 1
+            elif action[0] in _BUYS:
+                game.append(i)
+                turn.append(now)
+                card.append(action[1])
+    turns = np.array(turn, dtype=np.int64)
+    return Buys(
+        game=np.array(game, dtype=np.int64),
+        turn=turns,
+        seat=(turns - 1) % 2,
+        card=tuple(card),
+        kind=tuple(kind(CATALOGUE[name]) for name in card),
+    )
+
+
+BANDS: tuple[tuple[int, int], ...] = (
+    *((first, first + 3) for first in range(1, 25, 4)),
+    (25, 10**9),
+)
+"""Bands of turns for buy shares, first and last inclusive: four turns
+(two of each player's) at a time, to 24, then the rest."""
+
+KINDS: tuple[Kind, ...] = ("economy", "combat", "mixed", "neither")
+
+
+@dataclass(frozen=True, slots=True)
+class BuyShare:
+    """The buys over one band of turns."""
+
+    band: tuple[int, int]
+    buys: int
+    share: dict[Kind, float]
+    """Each kind's share of the buys (NaN if there were none)."""
+    explorer: float
+    """The Explorers' share (part of "economy"): the one card always for
+    sale, so a buy that says least about the Trade Row."""
+
+
+def buy_shares(
+    found: Buys, bands: tuple[tuple[int, int], ...] = BANDS
+) -> list[BuyShare]:
+    """Each kind's share of the buys in `found`, over every turn the bands
+    cover and then by band."""
+    kinds = np.array(found.kind, dtype=object)
+    explorers = np.array([card == "Explorer" for card in found.card], dtype=bool)
+    lines = []
+    whole = (bands[0][0], bands[-1][1])
+    for first, last in (whole, *bands):
+        at = (found.turn >= first) & (found.turn <= last)
+        n = int(at.sum())
+        share = {
+            k: float((kinds[at] == k).mean()) if n else float("nan") for k in KINDS
+        }
+        explorer = float(explorers[at].mean()) if n else float("nan")
+        lines.append(
+            BuyShare(band=(first, last), buys=n, share=share, explorer=explorer)
+        )
+    return lines
+
+
 BASE_SEED = 12_000_000
 """The first seed of the games probe positions come from: clear of every
 policy-iteration range (`iterate.Settings`, below 4,000,000 for up to 100
@@ -880,4 +1187,61 @@ def share_report(players: dict[str, list[ShareLine]]) -> list[str]:
                 f"{player:<10} {line.phase:<7} {line.kind:<5} {line.choices:>7}"
                 f" {line.share:>7.1%} {line.own:>+8.4f} {line.kept:>+8.4f}"
             )
+    return lines
+
+
+def investment_report(found: Investment, logit: bool = False) -> list[str]:
+    """`investment_summary` as a table: per phase and pair, the positions,
+    the economy card's gain per unit of trade and the combat card's per
+    unit of combat (mean, sd across positions), a unit of trade less a unit
+    of combat and the economy card less the combat card (mean, se), and the
+    share of positions where the economy card added more."""
+    scale = "logit" if logit else "chance"
+    lines = [
+        f"Judged gain ({scale}) per unit of trade and of combat (mean, sd across"
+        " positions); trade less combat per unit, and economy card less combat"
+        " card (mean, se):",
+        f"{'phase':<7} {'economy / combat card':<34} {'positions':>9}"
+        f" {'trade':>17} {'combat':>17} {'unit gap':>18} {'card gap':>18}"
+        f" {'econ>comb':>9}",
+    ]
+    for line in investment_summary(found, logit=logit):
+        pair = " / ".join(line.pair)
+        lines.append(
+            f"{line.phase:<7} {pair:<34} {line.positions:>9}"
+            f" {line.trade:>+8.4f} ({line.trade_sd:.4f})"
+            f" {line.combat:>+8.4f} ({line.combat_sd:.4f})"
+            f" {line.unit_gap:>+9.4f} ({line.unit_gap_se:.4f})"
+            f" {line.card_gap:>+9.4f} ({line.card_gap_se:.4f})"
+            f" {line.economy_more:>9.1%}"
+        )
+    return lines
+
+
+def _band(band: tuple[int, int]) -> str:
+    first, last = band
+    return f"{first}+" if last >= 10**9 else f"{first}-{last}"
+
+
+def buys_report(players: dict[str, Buys]) -> list[str]:
+    """Each player's `buy_shares`, side by side by band of turns: the buys,
+    and the economy, combat, mixed and neither shares of them."""
+    shares = {name: buy_shares(found) for name, found in players.items()}
+    header = f"{'turns':<7}"
+    for name in players:
+        header += f" | {name:<9} {'buys':>6}" + "".join(f" {k:>8}" for k in KINDS)
+        header += f" {'explorer':>8}"
+    lines = [
+        "Buys by turn (both players' turns counted; explorer is part of economy):",
+        header,
+    ]
+    for i, band in enumerate([(0, 0), *BANDS]):
+        line = f"{'all' if i == 0 else _band(band):<7}"
+        for name in players:
+            s = shares[name][i]
+            line += f" | {'':<9} {s.buys:>6}" + "".join(
+                f" {s.share[k]:>8.1%}" for k in KINDS
+            )
+            line += f" {s.explorer:>8.1%}"
+        lines.append(line)
     return lines

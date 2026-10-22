@@ -529,6 +529,22 @@ def test_probe_reports_the_champion_s_denial_by_phase_beside_the_heuristic_s(
     assert "heuristic" in out
 
 
+def test_probe_investment_reports_trade_against_combat_and_the_buys(capsys):
+    argv = [
+        *("probe", "investment", "--model", "pf01", "--games", "2"),
+        *("--worlds", "1", "--budget", "40"),
+    ]
+    main(argv)
+    out = capsys.readouterr().out
+    assert "Investment probe of pf01" in out
+    for word in ("Federation Shuttle", "Blob Destroyer", "early", "late", "logit"):
+        assert word in out
+    assert "Buys by turn" in out
+    for word in ("pf01", "heuristic", "economy", "combat", "mixed", "neither"):
+        assert word in out
+    assert "25+" in out
+
+
 def test_worlds_compares_the_plans_by_count_then_plays_the_paired_match(
     capsys: pytest.CaptureFixture[str],
 ):
