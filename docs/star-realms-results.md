@@ -2260,6 +2260,50 @@ The second card against the first on the logit scale, by phase (turns 1-8: 1,400
 - **What the probe can't separate**: the added cards are drawn at random across factions, and `pf01` reads each faction's density and expected pairs in a hand (`features.EXTRA`), so some of what a second card adds is faction synergy; random draws average it over, and the control carries the same mix. The row can't tell the Trade Deck from the scrap heap, so a copy that was scrapped can count as one left to add. And the probe measures the judgement, not the game: it says what `pf01` believes, not whether the lore is true, so the strategy doc's label stays [lore].
 - **What it points to** (How its understanding is judged): same-function synergy for draw and scrap is an idea the judgement hasn't built for itself, so describing it directly is a candidate experiment for Milestone 10. #178's per-player densities of draw, scrap and discard cards added nothing measurable, but a density is linear in the count; the probe's question is about pairs, as `features.EXTRA`'s expected same-faction pairs in a hand was for factions.
 
+### Milestone 9: probe, faction pairs
+
+- Date: 2026-10-22
+- Commit: this PR (#190; on `72534cc`): `probe.faction_pairs`, `mostly`, `pairs` and their report, and `probe faction-pair`.
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0. Games on 2 threads, with three other agents' builds and runs on the machine at the same time.
+- Seeds: the same 200 games as the synergy probe, 12,000,000-12,000,199 (`probe.BASE_SEED`), so the same 4,548 positions; the cards' draws seed 0.
+
+**The belief**: *some factions pair particularly well* (star-realms/strategy.md, Synergy, [lore]): beyond a faction's own ally abilities, a card of the right second faction adds more to a deck of the first than other factions' cards do. The probe asks whether `pf01`'s judgement singles out any pair.
+
+```sh
+uv run python -m minimax_games.games.star_realms probe faction-pair --model pf01 --games 200 --threads 2
+```
+
+- **The probe**: in each position, one card of each faction is added to the deck of the player who just ended, drawn at random from that faction's Trade Deck cards with a copy out of sight (as the synergy probe adds them), and `pf01` judges the position before and after. Four draws per position, averaged.
+- **Mostly one faction**: the deck (draw pool and bases in play) holds **at least 4 faction cards and one faction has a strict majority of them** (Scouts, Vipers and Explorers belong to none). Below 4, one purchase decides the majority, and a tie isn't "mostly" anything. Of the 4,548 positions, 1,112 qualify, close to evenly: **Blob 276, Trade Federation 295, Star Empire 271, Machine Cult 270**; the other 3,436 (early decks and two-faction decks) are left out. A threshold of 6 cards keeps 167-186 per faction and gives the same picture.
+- **Reading a pair**: a cell's gain mixes what any card adds to such a deck (its row: a weaker deck gains more from anything), what such a card adds to any deck (its column) and the pair's own part. The **interaction** takes the first two out: the cell less its row's and column's means, plus the table's. Its standard error adds the rows' variances (disjoint positions); it counts positions of one game as independent, so it understates the error somewhat. Tested on constructed judgements: one linear in each faction's cards has no interaction, one with a Blob × Trade Federation product singles out exactly those two pairs.
+
+Judged gain on the logit scale of one card of each faction (columns) in decks mostly of each (rows): mean (standard deviation across positions), standard error about 0.012-0.020:
+
+| Deck mostly of | Positions | + Blob | + Trade Federation | + Star Empire | + Machine Cult |
+|---|---|---|---|---|---|
+| Blob | 276 | **+0.678** (0.323) | +0.325 (0.299) | +0.365 (0.227) | +0.277 (0.250) |
+| Trade Federation | 295 | +0.383 (0.273) | **+0.583** (0.328) | +0.375 (0.205) | +0.401 (0.226) |
+| Star Empire | 271 | +0.489 (0.280) | +0.449 (0.309) | **+0.638** (0.236) | +0.373 (0.231) |
+| Machine Cult | 270 | +0.402 (0.255) | +0.497 (0.331) | +0.412 (0.199) | **+0.455** (0.264) |
+
+Each pair's interaction (logit, ± standard error):
+
+| Deck mostly of | + Blob | + Trade Federation | + Star Empire | + Machine Cult |
+|---|---|---|---|---|
+| Blob | **+0.223 ± 0.011** | −0.106 ± 0.011 | −0.050 ± 0.010 | −0.067 ± 0.009 |
+| Trade Federation | −0.097 ± 0.011 | **+0.128 ± 0.012** | −0.064 ± 0.009 | **+0.033 ± 0.009** |
+| Star Empire | −0.042 ± 0.012 | −0.058 ± 0.012 | **+0.147 ± 0.009** | −0.047 ± 0.009 |
+| Machine Cult | −0.084 ± 0.011 | +0.036 ± 0.012 | −0.034 ± 0.009 | **+0.081 ± 0.009** |
+
+In chances the tables have the same shape (a card adds 0.046-0.112; diagonal interactions +0.015 to +0.035, Machine Cult into Trade Federation +0.005 ± 0.002). About 2 minutes in all (115 s for the games, 0.4 s for the probe; a first run took 120 s).
+
+#### Reading it
+
+- **The judgement's strongest pairing is a faction with itself**: in every faction a card adds most to a deck mostly of its own faction, by 0.08 (Machine Cult) to 0.22 (Blob) in logit beyond its row and column, 9-20 standard errors. That is ally abilities, which `pf01` sees directly through `features.EXTRA`'s expected same-faction pairs in a hand, so it is the expected result and a check that the probe reads what the features say.
+- **Of the twelve pairs of different factions, it singles out one, slightly**: a Machine Cult card in a deck mostly of Trade Federation, +0.033 ± 0.009, which holds with a second seed of draws (+0.039) and with the 6-card threshold (+0.030). The reverse, a Trade Federation card in a Machine Cult deck, reads +0.036 here but +0.010 with the second draw seed, so it isn't settled. Every other cross-faction pair is below zero, which is partly arithmetic: each row and column of interactions sums to zero, so a large diagonal pushes the rest down, and among them only the Trade Federation and Machine Cult pair stands out from the rest.
+- **On the belief**: `pf01`'s judgement values a faction's own cards far above any pairing, and beyond that values one cross-faction pair a little (Machine Cult cards with Trade Federation decks, under half the smallest same-faction interaction and a seventh of the largest). Whether that pair is in fact a good one, or other pairs are better than the judgement thinks, the probe can't say: it reports what the judgement learned, not the game, so the strategy doc's label stays [lore].
+- **Row effects** are visible too, though they aren't the question: Star Empire decks gain the most from any card (mean +0.49) and Machine Cult decks' own cards add least to them (+0.455, against 0.58-0.68 for the other factions); why is not tested here.
+
 ### Milestone 9: the judgement's errors by reshuffle distance and rare cards, and turns not examined
 
 - Date: 2026-10-22
