@@ -57,6 +57,11 @@ tasks:
     cmds:
       - uv run python -m minimax_games.games.star_realms worlds {{.CLI_ARGS}}
 
+  examine:
+    desc: "Does examining more change the champion's plan where its budget runs out, and a paired match: task examine -- [--games N] [--match-seeds N] [--jobs N]"
+    cmds:
+      - uv run python -m minimax_games.games.star_realms examine {{.CLI_ARGS}}
+
   profile:
     desc: "Profile the cheat's budgeted decisions, report in profiles/: task profile -- [--budget N] [--game-turns N]"
     cmds:
