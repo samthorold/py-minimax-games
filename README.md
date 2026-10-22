@@ -52,7 +52,7 @@ task profile                # Star Realms: profile the cheat's search
 task tune                   # Star Realms: tune evaluate's weights by tournament
 task fit                    # Star Realms: fit learned values, gated against evaluate
 task population -- pf01     # Star Realms: a player against the reference population
-task probe -- synergy       # Star Realms: probe the champion's judgement
+task probe -- synergy       # Star Realms: probe the champion's judgement (or: denial)
 ```
 
 ### Stopping a Star Realms tournament early (SPRT)
@@ -152,6 +152,13 @@ card added, by game phase, in chances and in logits. The games take about 3
 minutes; the probe itself plays none and takes a second or two. Results:
 "Milestone 9: probe, same-function synergy" in
 [docs/star-realms-results.md](docs/star-realms-results.md).
+
+`task probe -- denial` asks whether a position is judged worse for the player
+who just ended when a card the next player would value is in the Trade Row
+(against one they wouldn't), by phase, and how many of the champion's buys
+and Trade Row scraps are worth less in its own deck than kept from the
+opponent, beside the heuristic's in its own games on the same seeds (recorded
+in Rust, a few seconds). Results: "Milestone 9: probe, denial".
 
 ### Profiling the Star Realms search
 

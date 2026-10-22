@@ -2304,6 +2304,51 @@ In chances the tables have the same shape (a card adds 0.046-0.112; diagonal int
 - **On the belief**: `pf01`'s judgement values a faction's own cards far above any pairing, and beyond that values one cross-faction pair a little (Machine Cult cards with Trade Federation decks, under half the smallest same-faction interaction and a seventh of the largest). Whether that pair is in fact a good one, or other pairs are better than the judgement thinks, the probe can't say: it reports what the judgement learned, not the game, so the strategy doc's label stays [lore].
 - **Row effects** are visible too, though they aren't the question: Star Empire decks gain the most from any card (mean +0.49) and Machine Cult decks' own cards add least to them (+0.455, against 0.58-0.68 for the other factions); why is not tested here.
 
+### Milestone 9: probe, denial
+
+- Date: 2026-10-22
+- Commit: this PR (#192; on `72534cc`): the denial probe (`probe.denial`), Trade Row choices from recorded games and their judged worth (`probe.choices`, `probe.worth`, `probe.denial_shares`), and the `probe denial` command.
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0. Games on 2 threads, with three other agents' builds and runs on the machine at the same time.
+- Seeds: the champion's games, and the heuristic's against itself, on 19,200,000-19,200,199, clear of every earlier range. The probe draws nothing at random.
+
+**The belief**: *keeping a card from the opponent has value, even when you don't want it* (star-realms/strategy.md, Denial, [lore]). The probe asks whether `pf01`'s judgement holds it: whether a position is judged worse for the player who just ended when the Trade Row shows a card the next player would value, and whether the champion buys or scraps cards for denial.
+
+```sh
+uv run python -m minimax_games.games.star_realms probe denial --model pf01 --games 200 --base-seed 19200000 --threads 2
+```
+
+- **Positions**: every turn's end in 200 games of `pf01`'s planner against itself (4 worlds, 20,000 states per plan, in Rust, every decision recorded): 4,415 positions.
+- **A card the next player would value** is the judgement's own answer, since the probe asks what the judgement believes: of the Trade Deck cards with a copy out of sight, the one whose copy added to the next player's draw pool lowers the judged chance of the player who just ended most (the *most valued*), and as the contrast the one that lowers it least (the *least valued*). The extremes give the largest contrast to read a small effect against, and each position's own pair (rather than one fixed list of good cards) keeps what the opponent values in that position, with their deck and the turn.
+- **The effect**: each of the Trade Row's distinct cards in turn is swapped for the most valued card and, separately, for the least valued one (the swapped-out copy goes out of sight, the new one comes from out of sight, so the row still shows five cards and every card is in one place; tested), and the effect is the judged chance with the most valued card in the row less that with the least valued, averaged over the row's cards. *Valued* is how much more the next player owning the most valued card costs than owning the least valued; **seen** = −effect / valued is the share of that the judgement sees in the card being in the Trade Row for them: 0 if the row means nothing for the next buyer, 1 if a card in the row is as good as theirs. A card in the row can also be bought later by the player who just ended, so the effect is the net of both; denial shows as an effect below 0.
+- **Denial in games**: for each Trade Row card a player acquired (bought, or taken free by Blob Carrier) or scrapped from the Trade Row, judged in the position its turn ended in, without the card (for a card acquired, its copy taken from the chooser's draw pool and put out of sight; for a card scrapped, the position itself): **own** is what the chooser owning it adds to their judged chance, **kept** what the opponent owning it would take away. A choice is denial when own < kept. Kept is an upper bound on what denial saves, since the opponent might not have bought the card; Explorers aren't Trade Row cards and are left out. The heuristic's buys and scraps are from its own games against itself on the same seeds, judged by `pf01`; its Trade Row scraps follow a scripted denial rule (the card worth most to the opponent, if worth more than the average refill), its buys none.
+
+The effect of the most valued card in the Trade Row against the least valued (mean, standard deviation across positions, standard error), by phase:
+
+| Phase | Positions | Effect (chance) | sd | se | Valued | Seen | Below 0 | Effect (logit) | se | Seen (logit) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| All | 4,415 | −0.0074 | 0.0186 | 0.0003 | 0.334 | **2.2%** | 67% | −0.038 | 0.002 | 1.9% |
+| Early (turns 1-8) | 1,400 | −0.0076 | 0.0140 | 0.0004 | 0.420 | 1.8% | 75% | −0.034 | 0.002 | 1.5% |
+| Middle (9-16) | 1,599 | −0.0105 | 0.0233 | 0.0006 | 0.350 | 3.0% | 69% | −0.055 | 0.003 | 2.6% |
+| Late (17 on) | 1,416 | −0.0038 | 0.0158 | 0.0004 | 0.230 | 1.7% | 59% | −0.023 | 0.003 | 1.3% |
+
+The share of Trade Row choices that are denial, judged by `pf01` (with their mean own and kept):
+
+| Player | Kind | All | Early | Middle | Late | Own | Kept |
+|---|---|---|---|---|---|---|---|
+| `pf01` | buys (4,494) | **38.6%** | 36.8% (1,555) | 38.0% (1,667) | 41.5% (1,272) | +0.087 | +0.076 |
+| heuristic | buys (5,059) | 44.1% | 41.2% (1,328) | 41.5% (1,902) | 49.0% (1,829) | +0.069 | +0.063 |
+| `pf01` | Trade Row scraps (302) | **75.8%** | 87.0% (23) | 81.5% (124) | 69.7% (155) | +0.060 | +0.107 |
+| heuristic | Trade Row scraps (296) | 56.1% | 33.3% (3) | 57.4% (115) | 55.6% (178) | +0.134 | +0.155 |
+
+2-2.5 minutes in all: 114 s and 144 s for both sets of games in two identical runs (the heuristic's take a few seconds), about 1 s for the probe itself.
+
+#### Reading it
+
+- **`pf01` sees a little denial in the Trade Row, about 2% of the card's worth.** The card the next player values most in the row lowers the judged chance of the player who just ended by 0.0074 against the least valued (se 0.0003, two positions in three below 0), where the next player owning it would cost 0.33 more: the judgement reads the row as bearing on the next buyer, but by a fiftieth of what the card is worth to them. The effect is largest in the middle game (3.0%) and smallest late, the same on the logit scale. Whether 2% is too little the probe can't say (a card in the row is bought by the next player only sometimes, and may go to the player who ended instead), but nothing in the row tells the judgement what the next player can afford, so it can only learn an average.
+- **Its Trade Row scraps are mostly denial, more than the heuristic's scripted ones**: 75.8% of its 302 scraps took a card worth less in its own deck than kept from the opponent, against 56.1% of the heuristic's. A scrap moves the judged chance only through the Trade Row, and the 2% the row shows is enough to point the planner's scrap at the card the opponent values. The comparison is by `pf01`'s own judgement, which its choices maximise, so it favours `pf01`: it says the champion's scraps agree with its judgement of the opponent, not that they deny better in play.
+- **Its buys don't deny**: 38.6% meet the definition against the heuristic's 44.1%, and the heuristic doesn't consider denial when it buys. Most cards are worth about as much to either player, so about two buys in five clear the bar by chance; a player that bought to deny would show more, not fewer. The champion buys for its own deck.
+- **On the belief**: `pf01` holds a weak form of it: the row matters a little for the next buyer, enough to steer its scraps, not its buys. Describing the Trade Row to the judgement as it bears on the next buyer (what they can afford, how much each card is worth to them) is Milestone 10's experiment, and this probe is its diagnostic: the share seen and the buys' denial share should rise if the idea was missing. The strategy doc's label stays [lore]: the probe measures what the judgement believes, not whether denial wins games.
+
 ### Milestone 9: the judgement's errors by reshuffle distance and rare cards, and turns not examined
 
 - Date: 2026-10-22
