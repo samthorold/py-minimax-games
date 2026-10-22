@@ -201,6 +201,20 @@ def test_a_position_with_no_copies_left_to_add_is_left_out(rows: np.ndarray):
     assert np.allclose(found.gains["discard"][1], 0.01)
 
 
+def _by_faction(weights: dict[str, float]) -> probe.Judgement:
+    """A judgement linear in the counts of the ended player's cards, each
+    card of a faction weighing that faction's weight."""
+    w = np.zeros(len(features.NAMES))
+    for faction, weight in weights.items():
+        for name in probe.FACTIONS[faction]:
+            w[_pool(name)] = weight
+
+    def judge(x: np.ndarray) -> np.ndarray:
+        return 0.3 + np.asarray(x) @ w
+
+    return judge
+
+
 def _column(name: str) -> int:
     return features.NAMES.index(name)
 
@@ -224,6 +238,156 @@ def _denying(share: float) -> probe.Judgement:
         return 0.5 + np.asarray(x) @ w
 
     return judge
+
+
+def test_a_linear_judgement_gains_a_faction_s_weight_from_its_card_in_any_deck(
+    rows: np.ndarray,
+):
+    weights = {"Blob": 0.01, "Trade Federation": 0.02, "Star Empire": 0.03}
+    found = probe.faction_pairs(_by_faction(weights), rows, seed=1)
+    for faction in probe.FACTIONS:
+        assert found.gains[faction].shape == (len(rows),)
+        assert np.allclose(found.gains[faction], weights.get(faction, 0))
+
+
+def _deck(cards: dict[str, int], bases: dict[str, int] | None = None) -> np.ndarray:
+    """A row whose ended player owns `cards` (each faction's first ships)
+    and has `bases` of each faction in play; the next player owns one of
+    every Trade Deck card, which never counts."""
+    row = np.zeros(len(features.NAMES))
+    for name in features.CARDS:
+        if name in probe.FACTIONS["Machine Cult"]:
+            row[features.NAMES.index(f"next: pool {name}")] = 1
+    for faction, n in cards.items():
+        ships = [s for s in probe.FACTIONS[faction] if s not in features.BASES]
+        row[_pool(ships[0])] += n
+    for faction, n in (bases or {}).items():
+        base = next(b for b in probe.FACTIONS[faction] if b in features.BASES)
+        row[features.NAMES.index(f"ended: base {base}")] += n
+    return row
+
+
+def test_a_deck_is_mostly_one_faction_when_it_holds_a_strict_majority_of_enough_cards():
+    blob, trade, star, cult = probe.FACTIONS
+    rows = np.array(
+        [
+            _deck({blob: 3, trade: 1}),
+            _deck({blob: 2, trade: 2}),  # a tie is no majority
+            _deck({star: 2, trade: 1}),  # too few faction cards to tell
+            _deck({cult: 2, trade: 1}, bases={cult: 1}),  # a base in play counts
+            _deck({}),
+            _deck({trade: 5, blob: 2, star: 2}),
+        ]
+    )
+    assert probe.LEAST == 4
+    assert probe.mostly(rows).tolist() == [0, -1, -1, 3, -1, 1]
+
+
+def _owned(rows: np.ndarray, faction: str) -> np.ndarray:
+    return rows[:, [_pool(name) for name in probe.FACTIONS[faction]]].sum(axis=1)
+
+
+def _blob_and_trade(x: np.ndarray) -> np.ndarray:
+    """The chance grows with the product of Blob and Trade Federation cards
+    owned: a Trade Federation card adds 0.001 per Blob card, and the other
+    way round, and no other card adds anything."""
+    x = np.asarray(x)
+    return 0.3 + 0.001 * _owned(x, "Blob") * _owned(x, "Trade Federation")
+
+
+@pytest.fixture(scope="module")
+def many(rows: np.ndarray) -> np.ndarray:
+    """Valid positions with decks mostly of every faction: each real
+    position, and from it, per faction, the position with cards of that
+    faction added (`add_card`) until the deck is mostly of it, where enough
+    copies are left."""
+    made = [rows]
+    for i, names in enumerate(probe.FACTIONS.values()):
+        for row in rows:
+            while probe.mostly(row[None])[0] != i:
+                name = max(names, key=lambda name: probe.available(row, name))
+                if probe.available(row, name) < 1:
+                    break
+                row = probe.add_card(row, name)
+            else:
+                made.append(row[None])
+    return np.concatenate(made)
+
+
+def test_the_pair_table_gives_each_faction_s_gain_in_decks_mostly_of_each(
+    many: np.ndarray,
+):
+    found = probe.faction_pairs(_blob_and_trade, many, seed=4)
+    deck = probe.mostly(many)
+    table = probe.pairs(found)
+    assert len(table) == 16
+    for cell in table:
+        # positions with no card of the faction left to add are left out
+        at = deck == list(probe.FACTIONS).index(cell.deck)
+        at &= ~np.isnan(found.gains[cell.card])
+        assert cell.positions == at.sum() > 1
+        partner = {"Blob": "Trade Federation", "Trade Federation": "Blob"}
+        if cell.card in partner:
+            expected = 0.001 * _owned(many[at], partner[cell.card])
+        else:
+            expected = np.zeros(at.sum())
+        assert np.isclose(cell.mean, expected.mean())
+        assert np.isclose(cell.sd, expected.std())
+        assert np.isclose(cell.se, expected.std(ddof=1) / np.sqrt(at.sum()))
+
+
+def _interactions(table: list[probe.Pair]) -> np.ndarray:
+    return np.array([cell.interaction for cell in table]).reshape(4, 4)
+
+
+def test_a_pair_s_interaction_is_what_it_adds_beyond_its_deck_and_its_card(
+    many: np.ndarray,
+):
+    # a card's own worth (its column) and a deck's need of any card (its
+    # row) aren't the pair's: the interaction takes both out
+    weights = {"Blob": 0.01, "Trade Federation": 0.02, "Star Empire": 0.03}
+    linear = probe.pairs(probe.faction_pairs(_by_faction(weights), many))
+    assert np.allclose(_interactions(linear), 0)
+
+    table = probe.pairs(probe.faction_pairs(_blob_and_trade, many, seed=5))
+    found = _interactions(table)
+    assert np.allclose(found.sum(axis=0), 0)
+    assert np.allclose(found.sum(axis=1), 0)
+    means = np.array([cell.mean for cell in table]).reshape(4, 4)
+    expected = means - means.mean(axis=1, keepdims=True) - means.mean(axis=0)
+    assert np.allclose(found, expected + means.mean())
+    top = sorted(table, key=lambda cell: cell.interaction)[-2:]
+    assert {(cell.deck, cell.card) for cell in top} == {
+        ("Blob", "Trade Federation"),
+        ("Trade Federation", "Blob"),
+    }
+
+
+def test_a_pair_s_interaction_has_the_standard_error_of_its_decks_positions(
+    many: np.ndarray,
+):
+    weights = {"Blob": 0.01, "Trade Federation": 0.02, "Star Empire": 0.03}
+    linear = probe.pairs(probe.faction_pairs(_by_faction(weights), many))
+    assert np.allclose([cell.interaction_se for cell in linear], 0)
+
+    # the interaction is, per row of decks, a mean over that row's own
+    # positions of each card's gain less the mean of the four cards' gains,
+    # and the rows' positions are disjoint, so their variances add
+    found = probe.faction_pairs(_blob_and_trade, many, seed=5)
+    left = ~np.isnan(np.stack(list(found.gains.values()), axis=1)).any(axis=1)
+    gains = np.zeros((len(many), 4))
+    gains[:, 0] = 0.001 * _owned(many, "Trade Federation")
+    gains[:, 1] = 0.001 * _owned(many, "Blob")
+    centred = gains - gains.mean(axis=1, keepdims=True)
+    for cell in probe.pairs(found):
+        i = list(probe.FACTIONS).index(cell.deck)
+        j = list(probe.FACTIONS).index(cell.card)
+        variance = 0.0
+        for k in range(4):
+            h = centred[(found.deck == k) & left, j]
+            weight = (k == i) - 1 / 4
+            variance += weight**2 * h.var(ddof=1) / len(h)
+        assert np.isclose(cell.interaction_se, np.sqrt(variance))
 
 
 def test_the_denial_probe_finds_how_much_of_the_opponent_s_gain_the_row_shows(
