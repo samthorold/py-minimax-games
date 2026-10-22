@@ -303,7 +303,10 @@ def test_pf01_scores_as_it_did_before_the_more_features():
         "0x1.f6c47d1837369p-2",
         "0x1.217e2f586a6e4p-3",
     ]
-    assert [float(v).hex() for v in p[::10]] == pinned
+    # as pf01 scored them before `features.MORE`, on macOS arm64: other
+    # platforms' matrix products may differ in the last bits
+    expected = [float.fromhex(h) for h in pinned]
+    np.testing.assert_allclose(p[::10], expected, rtol=1e-13, atol=0)
 
 
 def test_a_model_with_more_features_reads_them_after_the_extra_ones(tmp_path):
