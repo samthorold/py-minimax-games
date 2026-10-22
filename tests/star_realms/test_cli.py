@@ -447,3 +447,17 @@ def test_iterate_refuses_unknown_targets(capsys, tmp_path):
     with pytest.raises(SystemExit):
         main(["iterate", "--targets", "sarsa"])
     assert "sarsa" in capsys.readouterr().err
+
+
+def test_probe_reports_the_champion_s_synergy_by_function_and_phase(capsys):
+    argv = [
+        *("probe", "synergy", "--model", "pf01", "--games", "2"),
+        *("--worlds", "1", "--budget", "40", "--samples", "1"),
+    ]
+    main(argv)
+    out = capsys.readouterr().out
+    assert "pf01" in out
+    assert "positions" in out
+    for word in ("draw", "scrap", "discard", "none", "early", "middle", "late"):
+        assert word in out
+    assert "logit" in out

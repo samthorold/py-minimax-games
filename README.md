@@ -50,6 +50,7 @@ task turn-sizes             # Star Realms: distinct ends per turn (planner workl
 task profile                # Star Realms: profile the cheat's search
 task tune                   # Star Realms: tune evaluate's weights by tournament
 task fit                    # Star Realms: fit learned values, gated against evaluate
+task probe -- synergy       # Star Realms: probe the champion's judgement
 ```
 
 ### Stopping a Star Realms tournament early (SPRT)
@@ -107,6 +108,22 @@ models as `.npz` files; a model that beats `evaluate` is committed in
 `src/minimax_games/games/star_realms/models/` and loads by name
 (`value.load("mlp")`). The data are never stored: the command regenerates
 them. Results: "Milestone 8: offline value fit" in
+[docs/star-realms-results.md](docs/star-realms-results.md).
+
+### Probing a Star Realms judgement
+
+`task probe -- synergy` (`python -m minimax_games.games.star_realms probe
+synergy`) puts a question from Star Realms strategy to a trained judgement
+(docs/star-realms.md, How its understanding is judged). It plays the
+champion's games against itself in Rust (`--model`, `pf01` by default;
+`--games` 200 from seed 12,000,000 on 2 `--threads`), takes every turn's end
+as a position, changes one fact in each, and reports how the judged chance of
+winning responds. The synergy probe adds a first, second and third card that
+draws, scraps or makes the opponent discard (and, as a control, cards that do
+none of these) to the deck of the player who just ended, and prints what each
+card added, by game phase, in chances and in logits. The games take about 3
+minutes; the probe itself plays none and takes a second or two. Results:
+"Milestone 9: probe, same-function synergy" in
 [docs/star-realms-results.md](docs/star-realms-results.md).
 
 ### Profiling the Star Realms search
