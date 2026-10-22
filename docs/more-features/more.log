@@ -1,0 +1,14 @@
+rounds 1-4: 369419 training states, 92354 held out
+pf01 log-loss: {'train_log_loss': 0.4963, 'held_out_log_loss': 0.5088}
+pf01: 14.52 ms/plan
+{'candidate': 'p32', 'extra': 28, 'members': 4, 'train_log_loss': 0.4962, 'held_out_log_loss': 0.509, 'fit_seconds': 17.2, 'ms_per_plan': 15.79, 'match': {'games': 300, 'wins': 145, 'finished': 300, 'win_pct': 48.3, 'wilson_low': 42.7, 'wilson_high': 54.0, 'wins_as_first': 82, 'seconds': 55.3}}
+{'candidate': 'm32', 'extra': 45, 'members': 4, 'train_log_loss': 0.4949, 'held_out_log_loss': 0.5084, 'fit_seconds': 19.4, 'ms_per_plan': 16.74, 'match': {'games': 300, 'wins': 148, 'finished': 300, 'win_pct': 49.3, 'wilson_low': 43.7, 'wilson_high': 55.0, 'wins_as_first': 88, 'seconds': 66.7}}
+{'candidate': 'p32x1', 'extra': 28, 'members': 1, 'train_log_loss': 0.4986, 'held_out_log_loss': 0.5119, 'fit_seconds': None, 'ms_per_plan': 8.25, 'match': {'games': 300, 'wins': 149, 'finished': 300, 'win_pct': 49.7, 'wilson_low': 44.0, 'wilson_high': 55.3, 'wins_as_first': 81, 'seconds': 49.9}}
+{'candidate': 'p32x2', 'extra': 28, 'members': 2, 'train_log_loss': 0.497, 'held_out_log_loss': 0.5093, 'fit_seconds': None, 'ms_per_plan': 11.96, 'match': {'games': 300, 'wins': 140, 'finished': 300, 'win_pct': 46.7, 'wilson_low': 41.1, 'wilson_high': 52.3, 'wins_as_first': 81, 'seconds': 60.1}}
+paired m32 vs p32: {'only_it': 32, 'only_baseline': 29, 'sign_z': 0.38}
+paired p32x1 vs p32: {'only_it': 48, 'only_baseline': 44, 'sign_z': 0.42}
+paired p32x2 vs p32: {'only_it': 25, 'only_baseline': 30, 'sign_z': -0.67}
+m32 clearly beats pf01: False
+real 365.06
+user 1878.23
+sys 12.83

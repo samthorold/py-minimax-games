@@ -134,3 +134,81 @@ def test_faction_counts_and_bases_add_to_combat_and_threat():
     assert extra["next: Blob bases"] == 1
     assert extra["ended: Trade Federation bases"] == 1
     assert extra["next: Star Empire density"] == 0.0
+
+
+def _more(state: GameState) -> dict[str, float]:
+    row = features.extra(features.encode(state)[None, :], more=True)[0]
+    return dict(zip(features.EXTRA + features.MORE, row, strict=True))
+
+
+def test_more_features_follow_the_extra_ones_one_column_per_name():
+    rows = features.encode_all(boundary_states(range(2)))
+    more = features.extra(rows, more=True)
+    assert more.shape == (len(rows), len(features.EXTRA) + len(features.MORE))
+    names = features.EXTRA + features.MORE
+    assert len(set(names)) == len(names)
+    assert not set(features.MORE) & set(features.NAMES)
+    # the extra features are unchanged, and come first
+    assert np.array_equal(more[:, : len(features.EXTRA)], features.extra(rows))
+    np.testing.assert_allclose(features.extra(rows.astype(np.float32), more=True), more)
+
+
+def test_more_features_of_a_starting_deck():
+    state = rules.auto_play(rules.new_game(0))
+    more = _more(rules.apply(state, EndTurn()))
+    # 8 Scouts and 2 Vipers: 5 cards of 10 hold 4 trade on average
+    assert more["next: trade per hand"] == 4.0
+    assert more["ended: trade per hand"] == 4.0
+    for name in (
+        "authority per hand",
+        "draw density",
+        "scrap density",
+        "discard density",
+        "base density",
+        "outpost defense",
+    ):
+        assert more[f"next: {name}"] == 0.0
+    assert more["authority lead"] == 0.0
+    assert more["combat lead"] == 0.0
+    assert more["trade lead"] == 0.0
+
+
+def test_more_features_count_engines_outposts_and_leads():
+    state = rules.auto_play(rules.new_game(0))
+    ended = rules.apply(state, EndTurn())
+    nxt = ended.players[ended.current]
+    cards = [CATALOGUE[n] for n in ("Blob Fighter", "Survey Ship", "Trade Bot")]
+    cards.append(CATALOGUE["Junkyard"])  # an outpost in the pool, not in play
+    nxt = nxt.replace(
+        discard=(*nxt.discard, *cards),
+        bases=(CATALOGUE["The Hive"],),
+        authority=44,
+    )
+    other = ended.players[1 - ended.current]
+    # Trading Post: an outpost of 4 defense; Cutter: 4 Authority, 2 trade
+    other = other.replace(
+        bases=(CATALOGUE["Trading Post"],),
+        discard=(*other.discard, CATALOGUE["Cutter"]),
+    )
+    players = [other, other]
+    players[ended.current] = nxt
+    more = _more(ended.replace(players=(players[0], players[1])))
+    # next: 14 cards, 8 Scouts + Survey Ship + Trade Bot = 10 trade
+    assert more["next: trade per hand"] == 5 * 10 / 14
+    assert more["next: authority per hand"] == 0.0
+    # draws: Blob Fighter (ally), Survey Ship; scraps: Trade Bot, Junkyard
+    assert more["next: draw density"] == 2 / 14
+    assert more["next: scrap density"] == 2 / 14
+    assert more["next: discard density"] == 1 / 14  # Survey Ship's scrap
+    assert more["next: base density"] == 1 / 14
+    assert more["next: outpost defense"] == 0.0  # the Hive is a base
+    assert more["ended: outpost defense"] == 4.0
+    # ended: 11 cards, 8 Scouts + Cutter = 10 trade, 4 Authority
+    assert more["ended: trade per hand"] == 5 * 10 / 11
+    assert more["ended: authority per hand"] == 5 * 4 / 11
+    assert more["authority lead"] == 50 - 44
+    assert more["trade lead"] == 5 * 10 / 11 - 5 * 10 / 14
+    combat = _extra(ended.replace(players=(players[0], players[1])))
+    assert more["combat lead"] == (
+        combat["ended: combat per hand"] - combat["next: combat per hand"]
+    )

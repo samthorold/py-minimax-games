@@ -66,7 +66,8 @@ def predict(model: dict[str, Any], x: np.ndarray) -> np.ndarray:
     """The win probability for each row of `x` (float64), by the Rust
     forward pass of `model` (`selfplay.native_model`: `form`, `mean`, `std`
     and `members`, a list of each member's parameters, and for a model
-    reading the extra features, `extra`, their card tables), the mean of its
+    reading the extra features, `extra`, their card tables, with the more
+    features' under `extra["more"]` if it reads them), the mean of its
     members'."""
 
 def self_play(

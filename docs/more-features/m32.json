@@ -1,0 +1,19 @@
+{
+  "candidate": "m32",
+  "extra": 45,
+  "members": 4,
+  "train_log_loss": 0.4949,
+  "held_out_log_loss": 0.5084,
+  "fit_seconds": 19.4,
+  "ms_per_plan": 16.74,
+  "match": {
+    "games": 300,
+    "wins": 148,
+    "finished": 300,
+    "win_pct": 49.3,
+    "wilson_low": 43.7,
+    "wilson_high": 55.0,
+    "wins_as_first": 88,
+    "seconds": 66.7
+  }
+}

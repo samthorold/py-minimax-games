@@ -50,11 +50,31 @@ const HAND: f64 = 5.0;
 /// `len(features.EXTRA)`: per player, combat per hand and kill threat, then
 /// per faction its density, pairs and bases.
 pub const EXTRA_COLUMNS: usize = 2 * (2 + 3 * FACTIONS);
+/// `len(features.MORE)`: per player trade and Authority per hand, the
+/// draw, scrap, discard and base densities and the Outposts' defense, then
+/// the Authority, combat and trade leads.
+pub const MORE_COLUMNS: usize = 2 * 7 + 3;
+
+/// What the more features read of the cards (`features.extra_tables(more=
+/// True)["more"]`, #178), by catalogue index: each card's primary trade and
+/// Authority, whether it draws, scraps, makes the opponent discard and is a
+/// base (1 or 0), and by base index each Outpost's defense (0 for a base).
+#[derive(Clone, Debug, PartialEq)]
+pub struct More {
+    pub trade: Vec<f64>,
+    pub authority: Vec<f64>,
+    pub draw: Vec<f64>,
+    pub scrap: Vec<f64>,
+    pub discard: Vec<f64>,
+    pub base: Vec<f64>,
+    pub outpost_defense: Vec<f64>,
+}
 
 /// What the extra features read of the cards (`features.extra_tables`), by
 /// catalogue index: each card's primary combat, its faction (`None` for
-/// none), and each base's card. A row's layout follows from their lengths,
-/// as in `features.rs`: per player a pool count per card, a count per base,
+/// none), and each base's card, and the more features' tables if the model
+/// reads them. A row's layout follows from their lengths, as in
+/// `features.rs`: per player a pool count per card, a count per base,
 /// Authority, base defense and discards owed; then the turn and the Trade
 /// Row.
 #[derive(Clone, Debug, PartialEq)]
@@ -62,11 +82,87 @@ pub struct Extra {
     pub combat: Vec<f64>,
     pub faction: Vec<Option<usize>>,
     pub base_card: Vec<usize>,
+    pub more: Option<Box<More>>,
+}
+
+/// `held` per hand of a pool of `n` cards, as numpy's `HAND * held / n`
+/// where `n > 0`, else 0.
+fn per_hand(held: f64, n: f64) -> f64 {
+    if n > 0.0 { HAND * held / n } else { 0.0 }
+}
+
+fn density(count: f64, n: f64) -> f64 {
+    if n > 0.0 { count / n } else { 0.0 }
+}
+
+fn dot(counts: &[f64], weights: &[f64]) -> f64 {
+    counts.iter().zip(weights).map(|(c, w)| c * w).sum()
 }
 
 impl Extra {
     fn cards(&self) -> usize {
         self.combat.len()
+    }
+
+    /// How many extra features it appends to a row.
+    pub fn columns(&self) -> usize {
+        EXTRA_COLUMNS + self.more.as_ref().map_or(0, |_| MORE_COLUMNS)
+    }
+
+    /// Whether its tables fit together.
+    fn fits(&self) -> bool {
+        let cards = self.cards();
+        let tables = self.faction.len() == cards
+            && self.base_card.iter().all(|&c| c < cards)
+            && self.faction.iter().flatten().all(|&f| f < FACTIONS);
+        tables
+            && self.more.as_ref().is_none_or(|m| {
+                [
+                    &m.trade,
+                    &m.authority,
+                    &m.draw,
+                    &m.scrap,
+                    &m.discard,
+                    &m.base,
+                ]
+                .iter()
+                .all(|t| t.len() == cards)
+                    && m.outpost_defense.len() == self.base_card.len()
+            })
+    }
+
+    /// `features._more`: the more features of `row`, given each side's
+    /// combat per hand.
+    fn push_more(&self, more: &More, row: &[f64], combat: [f64; 2], out: &mut Vec<f64>) {
+        let cards = self.cards();
+        let bases = self.base_card.len();
+        let width = self.player_columns();
+        let mut trade = [0.0; 2];
+        for (side, offset) in [0, width].into_iter().enumerate() {
+            let pool = &row[offset..offset + cards];
+            let in_play = &row[offset + cards..offset + cards + bases];
+            let n: f64 = pool.iter().sum();
+            for (k, w) in [&more.trade, &more.authority].into_iter().enumerate() {
+                let on_bases: f64 = in_play
+                    .iter()
+                    .zip(&self.base_card)
+                    .map(|(k, &c)| k * w[c])
+                    .sum();
+                let value = per_hand(dot(pool, w), n) + on_bases;
+                if k == 0 {
+                    trade[side] = value;
+                }
+                out.push(value);
+            }
+            for w in [&more.draw, &more.scrap, &more.discard, &more.base] {
+                out.push(density(dot(pool, w), n));
+            }
+            out.push(dot(in_play, &more.outpost_defense));
+        }
+        let authority = cards + bases;
+        out.push(row[authority] - row[width + authority]);
+        out.push(combat[0] - combat[1]);
+        out.push(trade[0] - trade[1]);
     }
 
     fn player_columns(&self) -> usize {
@@ -128,6 +224,9 @@ impl Extra {
             out.push(per_hand);
             out.push(per_hand - defended);
             out.extend(factions.iter().flatten());
+        }
+        if let Some(more) = &self.more {
+            self.push_more(more, row, [sides[0].0, sides[1].0], out);
         }
     }
 }
@@ -198,16 +297,14 @@ impl Value {
     /// the row's own, or why the shapes don't fit together.
     pub fn with_extra(self, extra: Extra) -> Result<Value, String> {
         let inputs = self.mean.len();
-        if extra.row_columns() + EXTRA_COLUMNS != inputs {
+        if extra.row_columns() + extra.columns() != inputs {
             return Err(format!(
-                "a model of {inputs} inputs can't read rows of {} and {EXTRA_COLUMNS} extra features",
-                extra.row_columns()
+                "a model of {inputs} inputs can't read rows of {} and {} extra features",
+                extra.row_columns(),
+                extra.columns()
             ));
         }
-        if extra.faction.len() != extra.cards()
-            || extra.base_card.iter().any(|&c| c >= extra.cards())
-            || extra.faction.iter().flatten().any(|&f| f >= FACTIONS)
-        {
+        if !extra.fits() {
             return Err("the extra features' card tables don't fit together".to_string());
         }
         Ok(Value {
@@ -218,7 +315,7 @@ impl Value {
 
     /// How many features a row has (the extra features are the model's own).
     pub fn columns(&self) -> usize {
-        self.mean.len() - self.extra.as_ref().map_or(0, |_| EXTRA_COLUMNS)
+        self.mean.len() - self.extra.as_ref().map_or(0, Extra::columns)
     }
 
     /// The win probability of the player who just ended, from `row`, raw
@@ -381,6 +478,7 @@ mod tests {
             combat: vec![2.0, 3.0],
             faction: vec![Some(0), Some(1)],
             base_card: vec![1],
+            more: None,
         }
     }
 
@@ -407,6 +505,74 @@ mod tests {
         assert_eq!(out[14], 5.0 * 4.0 / 2.0);
         assert_eq!(out[15], 10.0 - 45.0);
         assert_eq!(&out[16..19], &[1.0, 10.0 * 2.0 / 2.0, 0.0]);
+    }
+
+    /// `tiny_extra` with the more features' tables: card 0 gives 1 trade
+    /// and draws, card 1 (the base, an Outpost of 4 defense) gives 2
+    /// Authority, scraps and makes the opponent discard.
+    fn tiny_more() -> Extra {
+        Extra {
+            more: Some(Box::new(More {
+                trade: vec![1.0, 0.0],
+                authority: vec![0.0, 2.0],
+                draw: vec![1.0, 0.0],
+                scrap: vec![0.0, 1.0],
+                discard: vec![0.0, 1.0],
+                base: vec![0.0, 1.0],
+                outpost_defense: vec![4.0],
+            })),
+            ..tiny_extra()
+        }
+    }
+
+    #[test]
+    fn more_features_follow_the_extra_ones() {
+        let extra = tiny_more();
+        assert_eq!(extra.columns(), EXTRA_COLUMNS + MORE_COLUMNS);
+        let mut row = vec![0.0; 15];
+        row[..6].copy_from_slice(&[3.0, 1.0, 1.0, 40.0, 5.0, 0.0]);
+        row[6..12].copy_from_slice(&[2.0, 0.0, 0.0, 30.0, 0.0, 0.0]);
+        let mut out = Vec::new();
+        extra.push(&row, &mut out);
+        let mut first = Vec::new();
+        tiny_extra().push(&row, &mut first);
+        assert_eq!(out.len(), EXTRA_COLUMNS + MORE_COLUMNS);
+        assert_eq!(&out[..EXTRA_COLUMNS], &first[..]);
+        let more = &out[EXTRA_COLUMNS..];
+        // ended: trade, Authority (and the base's 2), draw, scrap, discard,
+        // base densities, outpost defense
+        let ended = [
+            5.0 * 3.0 / 4.0,
+            5.0 * 2.0 / 4.0 + 2.0,
+            0.75,
+            0.25,
+            0.25,
+            0.25,
+            4.0,
+        ];
+        assert_eq!(&more[..7], &ended);
+        assert_eq!(&more[7..14], &[5.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]);
+        // the leads: Authority, combat per hand, trade per hand
+        assert_eq!(&more[14..], &[10.0, first[0] - first[14], ended[0] - 5.0]);
+        // a model reads them only if its inputs cover them
+        let value = |inputs: usize| {
+            Value::new(
+                vec![0.0; inputs],
+                vec![1.0; inputs],
+                Form::Logistic {
+                    w: vec![0.0; inputs],
+                    b: 0.0,
+                },
+            )
+            .unwrap()
+        };
+        assert!(value(15 + EXTRA_COLUMNS).with_extra(tiny_more()).is_err());
+        let with = value(15 + EXTRA_COLUMNS + MORE_COLUMNS).with_extra(tiny_more());
+        assert_eq!(with.unwrap().columns(), 15);
+        let mut short = tiny_more();
+        short.more.as_mut().unwrap().outpost_defense.clear();
+        let refused = value(15 + EXTRA_COLUMNS + MORE_COLUMNS).with_extra(short);
+        assert!(refused.is_err());
     }
 
     #[test]

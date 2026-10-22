@@ -26,7 +26,7 @@ use crate::star_realms::rules::{
 };
 use crate::star_realms::selfplay::{Game as SelfPlayGame, Player, play_games};
 use crate::star_realms::state::{GameState, Pile, PlayerState};
-use crate::star_realms::value::{Extra, Form, Value};
+use crate::star_realms::value::{Extra, Form, More, Value};
 use crate::star_realms::view::{PlayerView, View, observe, sample_world};
 
 fn names(cards: &[Card]) -> Vec<&'static str> {
@@ -609,7 +609,8 @@ fn indices(d: &Bound<'_, PyDict>, key: &str) -> PyResult<Vec<i64>> {
     Ok(array.as_array().to_vec())
 }
 
-/// The extra features' card tables (`features.extra_tables`): `combat` as
+/// The extra features' card tables (`features.extra_tables`), and the more
+/// features' under `more` if the model reads them (all float64): `combat` as
 /// float64, `faction` (-1 for none) and `base_card` as int64.
 fn extra_from_dict(d: &Bound<'_, PyDict>) -> PyResult<Extra> {
     let bad = |what: &str| PyValueError::new_err(format!("a bad {what} in the extra tables"));
@@ -624,10 +625,26 @@ fn extra_from_dict(d: &Bound<'_, PyDict>) -> PyResult<Extra> {
         .into_iter()
         .map(|c| usize::try_from(c).map_err(|_| bad("base")))
         .collect::<PyResult<Vec<_>>>()?;
+    let more = match d.get_item("more")? {
+        None => None,
+        Some(more) => {
+            let more: Bound<'_, PyDict> = more.extract()?;
+            Some(Box::new(More {
+                trade: vector(&more, "trade")?,
+                authority: vector(&more, "authority")?,
+                draw: vector(&more, "draw")?,
+                scrap: vector(&more, "scrap")?,
+                discard: vector(&more, "discard")?,
+                base: vector(&more, "base")?,
+                outpost_defense: vector(&more, "outpost_defense")?,
+            }))
+        }
+    };
     Ok(Extra {
         combat: vector(d, "combat")?,
         faction,
         base_card,
+        more,
     })
 }
 

@@ -2038,6 +2038,47 @@ Script, log, summaries and the per-seed results (seed, first, second, winner, tu
 - **Both losses fell with the features again**, by 0.006 training and 0.005 held out, less than the 0.015 on one round: with four times the data the plain form gets closer by itself, yet the match gain held. As before, log-loss understates what the planner gets from the value.
 - **Costs**: by #173's measurements on seeds 600-639, a 4-member model with the features plans in about 14.9 ms, against 7.2 for a one-member model like pi03: about 2× per move (1.75× for the members, 1.45× for the features, measured separately on different baselines, so roughly), so self-play with `pf01` as champion will be slower. Not measured again here. The issue's last step, done in a second PR: the features as an option on `iterate` (`--extra`, off by default), without a run.
 
+## Milestone 8: more hand-made features, and a cheaper pf01, offline
+
+- Date: 2026-10-22
+- Commit: this PR (#178; on `ee683c8`): `features.MORE` and `features.extra(x, more=True)`, `value.EXTRAS`, and the Rust forward pass reading them (`value::More`).
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0, numpy 2.5.4. 8 self-play threads; planner cost on 1.
+- Seeds: the match 9,000,000-9,000,299 (the gate would have taken 9,100,000 on and the confirmation 9,200,000-9,200,499; neither ran). All are clear of every earlier range (`iterate.Settings`, below 4,000,000 for up to 100 rounds; 4,000,000-4,000,499; 5,000,000-5,000,299; 6,000,000-6,200,299; 7,000,000-7,000,299; 8,000,000-8,200,499), which the script asserts. Planner cost: seeds 600-639 against the heuristic, as in #173.
+
+Two offline experiments on #175's data, with `pf01` as the opponent. No games were played for training and no policy-iteration run was made.
+
+```sh
+uv run python docs/more-features/more.py runs/features-178 runs/run-2/data
+```
+
+- **The data**: #175's, read in place: run 2's rounds 1-4 (`runs/run-2/data/round-01.npz` to `round-04.npz`), **369,419 training states** and **92,354 held out**. pf01 was fitted to these training states, so its training log-loss (0.4963) is in sample; its held-out one is 0.5088.
+- **The more features** (`features.MORE`, 17, computed by `features.extra(x, more=True)` from the 190 counts alone and appended after `features.EXTRA`'s 28, so no data was regenerated). Per player: *trade per hand* and *Authority per hand* (5 × the pool's primary trade or Authority / its size, plus the bases in play's), the pool's densities of cards that *draw*, that *scrap* and that make the opponent *discard* (in any of a card's abilities, through choices), and of *bases*, and the *defense of their Outposts* in play. Then three leads of the player who just ended over the other: *Authority*, *combat per hand* and *trade per hand*. A model reads none, `EXTRA`, or `EXTRA` then `MORE` (`value.EXTRAS`); `pf01`'s saved form is unchanged, and a test pins its probabilities on fixed rows (to 1e-13, as matrix products may differ in the last bits across platforms). Both forward passes compute them identically (the Rust one from the tables `features.extra_tables(more=True)` adds under `more`), checked on real rows and on whole planner games against the Python planner.
+- **The candidates**, mlps at width 32 (the `value.fit` defaults: 10 epochs, batch 256, Adam at 0.001, `l2` 0.003) fitted to game results, from fit seeds 4 on, since pf01 is the fit from seeds 0-3 on these rows and a refit from them would be pf01 itself: `p32`, pf01's form (`EXTRA`, 4 members, seeds 4-7), the pf01-equivalent refit and the baseline of every paired comparison; `m32`, the same with `MORE` too; `p32x1` and `p32x2`, pf01's form with 1 and 2 members (seeds 4, and 4-5). `fit_ensemble` fits each seed on its own under one standardisation, so these two are `p32`'s first members, taken rather than refitted.
+- **The match**: each candidate's planner against pf01's (4 worlds, 20,000 states per plan, both in Rust) on the same 300 seeds, seats alternating, compared seed by seed with `p32`. The bar for gating `m32`: its Wilson interval above 50%, or over 55% won. **Planner cost**: ms per plan of each planner on one thread against the heuristic over seeds 600-639, one run each.
+
+Script, log, summaries and the per-seed results (seed, first, second, winner, turns) of every match: [more-features/](more-features/).
+
+| Candidate | Extra features | Members | Training log-loss (pf01 0.4963) | Held-out log-loss (pf01 0.5088) | Wins against pf01 (300) | Win% | 95% interval | As 1st | Paired with `p32`: won only by it / only by `p32` (sign z) | ms per plan (pf01 14.52) | Fit / match (s) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `p32` (pf01-equivalent) | 28 | 4 | 0.4962 | 0.5090 | 145 | 48.3% | 42.7-54.0% | 82/150 | - | 15.79 | 17 / 55 |
+| `m32` (more features) | 45 | 4 | **0.4949** | **0.5084** | 148 | 49.3% | 43.7-55.0% | 88/150 | 32 / 29 (0.38) | 16.74 | 19 / 67 |
+| `p32x2` | 28 | 2 | 0.4970 | 0.5093 | 140 | 46.7% | 41.1-52.3% | 81/150 | 25 / 30 (−0.67) | 11.96 | - / 60 |
+| `p32x1` | 28 | 1 | 0.4986 | 0.5119 | 149 | 49.7% | 44.0-55.3% | 81/150 | 48 / 44 (0.42) | **8.25** | - / 50 |
+
+(Wilson intervals. The sign z is (only it − only `p32`) / √(their sum). No game reached the 300-turn cap.)
+
+**`m32` did not clearly beat pf01** (49.3%, interval 43.7-55.0%), so the gate and the checks did not run, and **nothing is promoted**: `pf01` stays the current best. The cheaper models are recorded only, as the issue asks.
+
+6.1 minutes of compute in all (365 s wall): 37 s of fits, 3.9 minutes for the four 300-game matches, and the remaining 1.6 minutes timing the five planners, computing log-losses and loading the data; plus about two minutes of tests and builds.
+
+### Reading it
+
+- **The more features add nothing measurable.** They lowered both losses a little (by 0.0013 training and 0.0006 held out), a tenth of what `EXTRA` gave, and the match didn't move: 148 wins against `p32`'s 145 on the same seeds, 32 seeds won only with them and 29 only without (z ≈ 0.4). What they encode is mostly there already: trade and Authority per hand are ratios like the combat per hand `EXTRA` gave, and the leads are differences of features the network already reads. The density of draw, scrap and discard cards is new, but its weight in the loss is small. Cost: 1.06× `p32`'s time per plan for the 17 more inputs.
+- **The pf01-equivalent refit is level with pf01** (48.3%, 42.7-54.0%), as it should be: a refit from other seeds is a sample of the same value, and this is the noise of 300 games against an equal.
+- **One member is as strong as four here, at about 0.55× the cost.** `p32x1` won 49.7% against pf01 and drew level with its own 4-member ensemble seed by seed (48 against 44, z ≈ 0.4), in 8.25 ms per plan against pf01's 14.52 (0.57×) and `p32`'s 15.79 (0.52×). `p32x2` won 46.7% (25 against 30 with `p32`, z ≈ −0.7), at 12.0 ms. Neither difference is significant: with 300 games the match can only rule out gaps of about 6 points, so "level" here means within about 5 points of pf01, not equal to it. The averaging still shows in the losses (0.5119 held out for one member, 0.5093 for two, 0.5090 for four), but, as in run 2 and #173, held-out log-loss gains of this size haven't shown up as wins.
+- **Timing noise**: `p32` has pf01's form and size yet timed at 15.79 against 14.52 ms per plan, so one 40-game timing run is good to about 10%. The ratios above are rough to that degree. By #173's numbers (7.2 ms for pi03's one member without the features), the features themselves cost about 1.15× at one member.
+- **For the owner**: replacing pf01 with a one-member model would make policy iteration's self-play and gating with the champion about 1.8× cheaper at no measured loss of strength. Whether "level within 5 points on 300 games" is enough, or wants a longer match (an SPRT for H0 50% against H1 45%, say, to bound the loss), is the owner's call; nothing was replaced here.
+
 ## Milestone 7: Rust tracer bullet (toolchain and first-slice engine)
 
 2026-10-21, #137 (tracked by #127), CPython 3.14, Apple M1 (8 GB) shared with three other agents' builds and tests. The first end-to-end path through Rust: maturin builds `minimax_games._native` from `rust/`, and its Star Realms engine plays the starter decks and the 30-card first slice (design, Compiled engine).
