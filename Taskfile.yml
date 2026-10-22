@@ -52,6 +52,11 @@ tasks:
     cmds:
       - uv run python -m minimax_games.games.star_realms turn-sizes {{.CLI_ARGS}}
 
+  worlds:
+    desc: "Does the champion's plan change with more sampled worlds, and a paired match: task worlds -- [--games N] [--match-seeds N] [--jobs N]"
+    cmds:
+      - uv run python -m minimax_games.games.star_realms worlds {{.CLI_ARGS}}
+
   profile:
     desc: "Profile the cheat's budgeted decisions, report in profiles/: task profile -- [--budget N] [--game-turns N]"
     cmds:
