@@ -94,6 +94,21 @@ def _native_player(player: Player) -> dict[str, Any]:
 
 
 @dataclass(frozen=True, slots=True, eq=False)
+class Examined:
+    """The planners' plans in the finished games, in play order: each
+    plan's game (its index in the batch), turn (the game's, both players'
+    counted, 1 first), seat, and whether it examined every end of the turn
+    in every sampled world within its budget (`planner.Plan.complete`). A
+    turn has as many plans as it has chance events to plan past, and one
+    more for each time the game went otherwise than planned."""
+
+    game: np.ndarray
+    turn: np.ndarray
+    seat: np.ndarray
+    complete: np.ndarray
+
+
+@dataclass(frozen=True, slots=True, eq=False)
 class SelfPlay:
     """What a batch of games came to: identical for the same games, with
     any number of threads."""
@@ -123,6 +138,14 @@ class SelfPlay:
     """If asked for, each row's judgement by the player who ended the turn:
     its model's win probability for the row (`Model.predict`), NaN for a
     player who doesn't judge (the heuristic, greedy)."""
+    left: np.ndarray | None = None
+    """If asked for (`diagnose`), each row's cards left to draw before a
+    reshuffle: the cards in the deck of the player who had just ended
+    (column 0) and of the next player (column 1), which their next draws
+    take before their discard pile is shuffled into a new deck."""
+    examined: Examined | None = None
+    """If asked for (`diagnose`), the planners' plans and whether each
+    examined every end of its turn."""
 
     @property
     def games(self) -> int:
@@ -136,11 +159,13 @@ def play(
     max_turns: int = MAX_TURNS,
     record: bool = False,
     judge: bool = False,
+    diagnose: bool = False,
 ) -> SelfPlay:
     """Play `games` in Rust on `threads` threads, the GIL released, each
     stopping unfinished past `max_turns`; with `record`, keep every
     decision; with `judge`, each played end's judgement by whoever played
-    it. Neither changes a game."""
+    it; with `diagnose`, what the diagnostics need (`SelfPlay.left` and
+    `SelfPlay.examined`). None changes a game."""
     players: list[Player] = []
     index: dict[tuple[str, object], int] = {}
 
@@ -162,6 +187,7 @@ def play(
         max_turns,
         record,
         judge,
+        diagnose,
     )
     return SelfPlay(
         x=found["features"],
@@ -175,6 +201,15 @@ def play(
         diverged=found["diverged"],
         actions=found.get("actions"),
         judgement=found.get("judgement"),
+        left=found.get("left"),
+        examined=Examined(
+            game=found["plan_game"],
+            turn=found["plan_turn"],
+            seat=found["plan_seat"],
+            complete=found["plan_complete"],
+        )
+        if diagnose
+        else None,
     )
 
 

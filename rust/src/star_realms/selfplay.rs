@@ -57,6 +57,13 @@ impl<'a> Bot<'a> {
         }
     }
 
+    fn examined(&self) -> &[(u32, bool)] {
+        match self {
+            Bot::Planner(bot) => &bot.examined,
+            Bot::Greedy | Bot::Heuristic => &[],
+        }
+    }
+
     fn plans(&self) -> (u64, u64) {
         match self {
             Bot::Planner(bot) => (bot.plans, bot.diverged),
@@ -75,6 +82,11 @@ pub struct Record {
     /// the turn: its value's win probability for the state's row, NaN if
     /// that player doesn't judge (greedy and the heuristic).
     pub judgements: bool,
+    /// What the diagnostics need: at each turn-boundary state, the cards
+    /// each player has left to draw before their discard pile is
+    /// reshuffled; and each plan's turn and whether it examined every end
+    /// of the turn.
+    pub diagnostics: bool,
 }
 
 /// A game to play: its seed and the players of seats 0 and 1, as indices
@@ -96,6 +108,13 @@ pub struct Played {
     /// The judgement of each of those states by whoever ended the turn, if
     /// asked for (`Record::judgements`).
     pub judgements: Vec<f64>,
+    /// The cards left in the deck of the player who ended and of the next
+    /// player at each of those states, if asked for (`Record::diagnostics`).
+    pub left: Vec<[u32; 2]>,
+    /// Each plan's turn, seat and whether it examined every end of the
+    /// turn in every world, in the order made, if asked for
+    /// (`Record::diagnostics`).
+    pub examined: Vec<(u32, usize, bool)>,
     /// The winner, `None` if the game passed `max_turns`.
     pub winner: Option<usize>,
     pub turns: u32,
@@ -118,6 +137,8 @@ pub fn play_game(players: &[Player], game: Game, max_turns: u32, record: Record)
         rows: Vec::new(),
         ended: Vec::new(),
         judgements: Vec::new(),
+        left: Vec::new(),
+        examined: Vec::new(),
         winner: None,
         turns: 0,
         plans: [0; 2],
@@ -152,6 +173,10 @@ pub fn play_game(players: &[Player], game: Game, max_turns: u32, record: Record)
                     Player::Greedy | Player::Heuristic => f64::NAN,
                 });
             }
+            if record.diagnostics {
+                let left = |seat: usize| state.players[seat].deck.len() as u32;
+                played.left.push([left(ended), left(1 - ended)]);
+            }
         }
         auto_play(&mut state);
     }
@@ -159,6 +184,20 @@ pub fn play_game(players: &[Player], game: Game, max_turns: u32, record: Record)
     played.turns = state.turn;
     for (seat, bot) in bots.iter().enumerate() {
         (played.plans[seat], played.diverged[seat]) = bot.plans();
+    }
+    if record.diagnostics {
+        // the seats' plans interleave as their turns do
+        let mut examined: Vec<(u32, usize, bool)> = bots
+            .iter()
+            .enumerate()
+            .flat_map(|(seat, bot)| {
+                bot.examined()
+                    .iter()
+                    .map(move |&(turn, complete)| (turn, seat, complete))
+            })
+            .collect();
+        examined.sort_by_key(|&(turn, ..)| turn);
+        played.examined = examined;
     }
     played
 }
@@ -258,6 +297,7 @@ mod tests {
         let record = Record {
             actions: true,
             judgements: false,
+            diagnostics: true,
         };
         let one = play_games(&players, &games, 1, 300, record);
         assert_eq!(play_games(&players, &games, 3, 300, record), one);

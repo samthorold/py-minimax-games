@@ -750,9 +750,15 @@ fn seat_player(d: &Bound<'_, PyDict>) -> PyResult<Player> {
 /// `turns`, and `plans` and `diverged` (int64, a column per seat); with
 /// `record`, each game's decisions as `actions`; with `judge`, each row's
 /// `judgement` (float64) by the seat that ended it, NaN for a seat that
-/// doesn't judge. Neither changes a game.
+/// doesn't judge; with `diagnose`, each row's `left` (int64, a column for
+/// the seat that ended it and one for the other), the cards in each seat's
+/// deck before its discard pile is reshuffled, and per plan of the finished
+/// games its `plan_game`, `plan_turn`, `plan_seat` (int64) and
+/// `plan_complete` (bool: whether it examined every end of the turn in
+/// every world), in play order. None changes a game.
 #[pyfunction]
-#[pyo3(signature = (players, games, threads=1, max_turns=300, record=false, judge=false))]
+#[pyo3(signature = (players, games, threads=1, max_turns=300, record=false, judge=false, diagnose=false))]
+#[allow(clippy::too_many_arguments)]
 fn self_play<'py>(
     py: Python<'py>,
     players: Vec<Bound<'py, PyDict>>,
@@ -761,6 +767,7 @@ fn self_play<'py>(
     max_turns: u32,
     record: bool,
     judge: bool,
+    diagnose: bool,
 ) -> PyResult<Bound<'py, PyDict>> {
     let players = players
         .iter()
@@ -788,6 +795,7 @@ fn self_play<'py>(
     let recording = Record {
         actions: record,
         judgements: judge,
+        diagnostics: diagnose,
     };
     let played = py.detach(|| play_games(&players, &games, threads, max_turns, recording));
     let columns = features::columns();
@@ -797,6 +805,9 @@ fn self_play<'py>(
     let mut position = Vec::new();
     let mut seat = Vec::new();
     let mut judgements: Vec<f64> = Vec::new();
+    let mut left: Vec<i64> = Vec::new();
+    let (mut plan_game, mut plan_turn, mut plan_seat) = (Vec::new(), Vec::new(), Vec::new());
+    let mut plan_complete: Vec<bool> = Vec::new();
     let mut counts = Vec::with_capacity(2 * played.len());
     let mut diverged = Vec::with_capacity(2 * played.len());
     for (i, p) in played.iter().enumerate() {
@@ -812,6 +823,13 @@ fn self_play<'py>(
         position.extend((0..p.ended.len()).map(int));
         seat.extend(p.ended.iter().map(|&e| int(e)));
         judgements.extend(&p.judgements);
+        left.extend(p.left.iter().flatten().map(|&n| i64::from(n)));
+        for &(turn, seat, complete) in &p.examined {
+            plan_game.push(int(i));
+            plan_turn.push(i64::from(turn));
+            plan_seat.push(int(seat));
+            plan_complete.push(complete);
+        }
     }
     let d = PyDict::new(py);
     let rows = y.len();
@@ -823,6 +841,14 @@ fn self_play<'py>(
     d.set_item("seat", int_array(py, seat))?;
     if judge {
         d.set_item("judgement", judgements.into_pyarray(py))?;
+    }
+    if diagnose {
+        let left = Array2::from_shape_vec((rows, 2), left).expect("two seats per row");
+        d.set_item("left", left.into_pyarray(py))?;
+        d.set_item("plan_game", int_array(py, plan_game))?;
+        d.set_item("plan_turn", int_array(py, plan_turn))?;
+        d.set_item("plan_seat", int_array(py, plan_seat))?;
+        d.set_item("plan_complete", plan_complete.into_pyarray(py))?;
     }
     let winners: Vec<Option<usize>> = played.iter().map(|p| p.winner).collect();
     d.set_item("winner", winners)?;
