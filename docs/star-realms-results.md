@@ -2216,6 +2216,50 @@ By game phase (the game's turn, both players' turns counted):
 - **Held out is not a clean control.** The opponents' ends are calibrated about as well overall (+0.020 ± 0.018), but in a different shape: overrated early (+0.070 ± 0.021 in turns 1-6) and in the middle bins of judged chance, underrated late. The judgement scores a position as if it were played on by the kind of player its training games had, and these positions are played on by the heuristic and older champions against pf01, who are weaker than that: an opponent's position early in the game is worth less to them than to pf01. So the held-out gap mixes plain miscalibration with who is playing. That the chosen positions show no gap at all, while the same judgement misreads others' positions by up to 0.07, says the selection effect isn't hiding beneath a miscalibration it cancels.
 - **For #185**: the chosen judgements, with their outcomes and turns, are what the other diagnostics break down further (`gap.positions`, from `selfplay.play(..., judge=True)`).
 
+### Milestone 9: probe, same-function synergy
+
+- Date: 2026-10-22
+- Commit: this PR (#189; on `b25066c`): `probe` (probe positions, the synergy probe and its report) and the `probe synergy` command.
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0, numpy 2.5.4. Games on 2 threads, with three other agents' builds and runs on the machine at the same time.
+- Seeds: the champion's games 12,000,000-12,000,199 (`probe.BASE_SEED`), clear of every earlier range (all below 10,000,000); the cards' draws seed 0.
+
+**The belief**: *cards of the same function are worth more together* (star-realms/strategy.md, Synergy, [lore]): a second and third card that draws, scraps or makes the opponent discard add more than the first. The End state leaves such ideas for the judgement to learn (What it sees), and this probe asks whether `pf01`'s has.
+
+```sh
+uv run python -m minimax_games.games.star_realms probe synergy --model pf01 --games 200 --threads 2
+```
+
+- **Positions**: every turn's end in 200 games of `pf01`'s planner against itself (4 worlds, 20,000 states per plan, in Rust): 4,548 positions.
+- **The probe**: in each position, 3 cards of a function are added one at a time to the deck of the player who just ended, each drawn at random from the function's Trade Deck cards with a copy out of sight (neither player holds it nor the Trade Row shows it, so the changed position is still a valid one), and `pf01` judges each step. Four draws per position, averaged. The functions are as `features.MORE` counts them (any of a card's abilities; a card can have more than one): of the base set's distinct Trade Deck cards, 21 draw, 8 scrap and 5 make the opponent discard. The **control** is the 18 that do none of these: any card's worth is diluted by the cards beside it, so each further card is expected to add less, and only a function's gains against the control's say anything about that function.
+- **Scales**: gains in judged chance, and in logit (log(p / (1 − p))). A judgement whose score is linear before its sigmoid gains less in chance from each card as the chance nears 1, which would read as a lack of synergy where it has none; the logit scale takes that out. Both are tested on constructed judgements with known answers (a linear one shows no synergy, a quadratic one exactly its synergy, a sigmoid of a linear one none on the logit scale).
+
+What each card added, over all 4,548 positions (mean, and standard deviation across positions), and what the second and third added beyond the card before (mean and standard error, paired by position):
+
+| Function | 1st | 2nd | 3rd | 2nd − 1st | 3rd − 2nd | 2nd − 1st, logit | 3rd − 2nd, logit | Positions where 2nd > 1st |
+|---|---|---|---|---|---|---|---|---|
+| draw | +0.126 (0.081) | +0.096 (0.064) | +0.069 (0.052) | −0.0301 (0.0011) | −0.0273 (0.0008) | −0.061 (0.005) | −0.059 (0.005) | 32% |
+| scrap | +0.091 (0.080) | +0.071 (0.063) | +0.048 (0.046) | −0.0199 (0.0008) | −0.0228 (0.0007) | −0.041 (0.004) | −0.079 (0.004) | 37% |
+| discard | +0.065 (0.050) | +0.065 (0.049) | +0.058 (0.043) | −0.0004 (0.0007) | −0.0069 (0.0007) | **+0.017 (0.004)** | −0.005 (0.004) | 48% |
+| none (control) | +0.069 (0.052) | +0.059 (0.046) | +0.049 (0.040) | −0.0102 (0.0007) | −0.0103 (0.0006) | −0.028 (0.004) | −0.029 (0.003) | 42% |
+
+The second card against the first on the logit scale, by phase (turns 1-8: 1,400 positions; 9-16: 1,600; 17 on: 1,548):
+
+| Function | Early | Middle | Late |
+|---|---|---|---|
+| draw | −0.057 (0.011) | −0.070 (0.009) | −0.054 (0.007) |
+| scrap | −0.082 (0.008) | −0.038 (0.007) | −0.008 (0.005) |
+| discard | **+0.055 (0.007)** | +0.013 (0.006) | −0.014 (0.006) |
+| none (control) | −0.028 (0.006) | −0.027 (0.006) | −0.028 (0.005) |
+
+2.7 minutes in all (163 s wall): 162 s for the games, 1.1 s for the probe itself. An earlier run on seeds 6,000,000-6,000,199 (before the range was moved clear of #175's) gave the same picture to within the standard errors.
+
+#### Reading it
+
+- **`pf01` hasn't learned same-function synergy for cards that draw or scrap.** Each further draw or scrap card adds less than the one before, and falls off faster than the control: on the logit scale the second draw card adds 0.061 less than the first against the control's 0.028, the second scrap card 0.041 less, and the third scrap card 0.079 less than the second. Only about a third of positions judge a second draw or scrap card worth more than the first. In chances the shortfall is larger still (3.0 and 2.0 points against the control's 1.0), part of it the saturation the logit scale removes. The scrap shortfall is steepest early (−0.082) and gone late, as a deck with little left to scrap would suggest, but nowhere does it turn positive.
+- **Discard is the one function whose second card adds more than its first**, by 0.017 (0.004) in logit over all positions and 0.055 (0.007) early, against the control's −0.028: a small synergy, early, fading to below zero late. In chances it is flat (−0.0004).
+- **What the probe can't separate**: the added cards are drawn at random across factions, and `pf01` reads each faction's density and expected pairs in a hand (`features.EXTRA`), so some of what a second card adds is faction synergy; random draws average it over, and the control carries the same mix. The row can't tell the Trade Deck from the scrap heap, so a copy that was scrapped can count as one left to add. And the probe measures the judgement, not the game: it says what `pf01` believes, not whether the lore is true, so the strategy doc's label stays [lore].
+- **What it points to** (How its understanding is judged): same-function synergy for draw and scrap is an idea the judgement hasn't built for itself, so describing it directly is a candidate experiment for Milestone 10. #178's per-player densities of draw, scrap and discard cards added nothing measurable, but a density is linear in the count; the probe's question is about pairs, as `features.EXTRA`'s expected same-faction pairs in a hand was for factions.
+
 ## Milestone 7: Rust tracer bullet (toolchain and first-slice engine)
 
 2026-10-21, #137 (tracked by #127), CPython 3.14, Apple M1 (8 GB) shared with three other agents' builds and tests. The first end-to-end path through Rust: maturin builds `minimax_games._native` from `rust/`, and its Star Realms engine plays the starter decks and the 30-card first slice (design, Compiled engine).

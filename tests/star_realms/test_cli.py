@@ -468,6 +468,20 @@ def test_gap_reports_the_champion_s_chosen_and_held_out_positions(capsys):
     assert "turns 25+" in out
 
 
+def test_probe_reports_the_champion_s_synergy_by_function_and_phase(capsys):
+    argv = [
+        *("probe", "synergy", "--model", "pf01", "--games", "2"),
+        *("--worlds", "1", "--budget", "40", "--samples", "1"),
+    ]
+    main(argv)
+    out = capsys.readouterr().out
+    assert "pf01" in out
+    assert "positions" in out
+    for word in ("draw", "scrap", "discard", "none", "early", "middle", "late"):
+        assert word in out
+    assert "logit" in out
+
+
 def test_worlds_compares_the_plans_by_count_then_plays_the_paired_match(
     capsys: pytest.CaptureFixture[str],
 ):

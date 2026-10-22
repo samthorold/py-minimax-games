@@ -116,6 +116,12 @@ the same results whatever the threads. It prints each opponent's win rate
 with its interval and their mean, and writes the per-seed CSVs to `--out`
 (`runs/population/<player>/` by default); `--paired DIR` pairs them seed by
 seed with a recorded run's CSVs in DIR.
+
+`python -m minimax_games.games.star_realms probe synergy` probes a
+judgement (see `probe`): it plays `--games` of the champion (`--model`)
+against itself in Rust on `--threads`, and reports what a first, second and
+third card of each function adds to the judged chance of winning at every
+turn's end of them, by game phase.
 """
 
 import argparse
@@ -136,8 +142,10 @@ from minimax_games.games.star_realms import (
     iterate,
     planner,
     population,
+    probe,
     profiling,
     sampled_worlds,
+    selfplay,
     tune,
     turn_sizes,
     value,
@@ -353,6 +361,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if argv[:1] == ["iterate"]:
         iterating(argv[1:])
+        return
+    if argv[:1] == ["probe"]:
+        probing(argv[1:])
         return
     if argv[:1] == ["native-bench"]:
         native_bench(argv[1:])
@@ -1131,6 +1142,77 @@ def fitting(argv: list[str]) -> None:
             path = args.save / f"{name}.npz"
             model.save(path)
             print(f"Wrote {path}")
+
+
+def probing(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(
+        prog="python -m minimax_games.games.star_realms probe"
+    )
+    parser.add_argument("probe", choices=["synergy"], help="the probe to run")
+    parser.add_argument(
+        "--model", default="pf01", help="the champion's value (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--games",
+        type=int,
+        default=200,
+        help="the champion's games the positions come from (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--base-seed",
+        type=int,
+        default=probe.BASE_SEED,
+        help="the first game's seed (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--worlds",
+        type=int,
+        default=planner.WORLDS,
+        help="the planner's worlds (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--budget",
+        type=int,
+        default=planner.BUDGET,
+        help="the planner's states per plan (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--samples",
+        type=int,
+        default=4,
+        help="random draws of cards per position (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=0, help="seeds the draws (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--threads",
+        type=int,
+        default=2,
+        help="threads to play the games on (default: %(default)s)",
+    )
+    args = parser.parse_args(argv)
+
+    model = value.load(args.model)
+    champion = selfplay.Planner(model, worlds=args.worlds, budget=args.budget)
+    seeds = range(args.base_seed, args.base_seed + args.games)
+    start = time.perf_counter()
+    rows = probe.positions(champion, seeds, threads=args.threads)
+    played = time.perf_counter() - start
+    found = probe.synergy(model.predict, rows, seed=args.seed, samples=args.samples)
+    probed = time.perf_counter() - start - played
+    print(
+        f"Synergy probe of {args.model}: {len(rows)} positions from its games"
+        f" against itself on seeds {seeds.start}-{seeds.stop - 1}"
+        f" ({args.worlds} worlds, {args.budget} states per plan),"
+        f" {args.samples} draws per position (seed {args.seed})"
+    )
+    for line in probe.report(found):
+        print(line)
+    print()
+    for line in probe.report(found, logit=True):
+        print(line)
+    print(f"Games {played:.1f} s, probe {probed:.1f} s")
 
 
 def iterating(argv: list[str]) -> None:

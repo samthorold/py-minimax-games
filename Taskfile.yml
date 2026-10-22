@@ -72,6 +72,11 @@ tasks:
     cmds:
       - uv run python -m minimax_games.games.star_realms fit {{.CLI_ARGS}}
 
+  probe:
+    desc: "Star Realms: probe the champion's judgement, positions from its games (about 3 minutes at the defaults): task probe -- synergy [--model NAME] [--games N] [--threads N]"
+    cmds:
+      - uv run python -m minimax_games.games.star_realms probe {{.CLI_ARGS}}
+
   iterate:
     desc: "Policy iteration, resumable, into runs/iterate (about 30 minutes at the defaults): task iterate -- [--out DIR] [--threads N] [--rounds N] [--hours H]"
     cmds:
