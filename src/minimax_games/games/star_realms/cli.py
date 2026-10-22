@@ -103,6 +103,20 @@ Run it again with the same `--out` to resume after the last finished round.
 and `--hours` are the stopping rules; the round's sizes and the planner's
 settings default to the agreed design's.
 
+`python -m minimax_games.games.star_realms gap` measures the exploitation
+gap (see `gap`): `--champion`'s games on `--games` seeds from `--base-seed`,
+mixed as a policy-iteration round mixes them with `--pool`'s champions,
+every end judged; it prints the gap, a calibration table and the gap by game
+phase, for the ends the champion chose and for those its opponents chose.
+
+`python -m minimax_games.games.star_realms population PLAYER` plays a player
+against the reference population (see `population`): `--games` games
+against each member but itself on seeds 0 up, on `--threads` threads, with
+the same results whatever the threads. It prints each opponent's win rate
+with its interval and their mean, and writes the per-seed CSVs to `--out`
+(`runs/population/<player>/` by default); `--paired DIR` pairs them seed by
+seed with a recorded run's CSVs in DIR.
+
 `python -m minimax_games.games.star_realms probe synergy` probes a
 judgement (see `probe`): it plays `--games` of the champion (`--model`)
 against itself in Rust on `--threads`, and reports what a first, second and
@@ -124,8 +138,10 @@ from minimax_games.games.star_realms import (
     bench,
     cheat,
     fit,
+    gap,
     iterate,
     planner,
+    population,
     probe,
     profiling,
     sampled_worlds,
@@ -352,6 +368,12 @@ def main(argv: list[str] | None = None) -> None:
     if argv[:1] == ["native-bench"]:
         native_bench(argv[1:])
         return
+    if argv[:1] == ["gap"]:
+        gapping(argv[1:])
+        return
+    if argv[:1] == ["population"]:
+        populating(argv[1:])
+        return
     if argv[:1] == ["worlds"]:
         worlds(argv[1:])
         return
@@ -376,6 +398,57 @@ def main(argv: list[str] | None = None) -> None:
     result = play_match((first, second), args.seed, log=print if args.log else None)
     if not args.log:
         print(f"Player {result.winner + 1} wins on turn {result.turns}")
+
+
+def gapping(argv: list[str]) -> None:
+    """The exploitation gap of a champion on its own games (`gap`)."""
+    parser = argparse.ArgumentParser(
+        prog="python -m minimax_games.games.star_realms gap"
+    )
+    parser.add_argument(
+        "--champion", default="pf01", help="the committed model (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--pool",
+        nargs="+",
+        default=["mlp", "pi03", "pf01"],
+        help="the champions a quarter of the games are against, one drawn per"
+        " game (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--games", type=int, default=1000, help="how many games (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--base-seed",
+        type=int,
+        default=gap.SEEDS,
+        help="the first game's seed (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--threads", type=int, default=1, help="threads to play on (default: 1)"
+    )
+    parser.add_argument(
+        "--worlds",
+        type=int,
+        default=planner.WORLDS,
+        help="the planners' worlds (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--budget",
+        type=int,
+        default=planner.BUDGET,
+        help="the planners' states per plan (default: %(default)s)",
+    )
+    args = parser.parse_args(argv)
+    measured = gap.measure(
+        args.champion,
+        args.pool,
+        range(args.base_seed, args.base_seed + args.games),
+        threads=args.threads,
+        worlds=args.worlds,
+        budget=args.budget,
+    )
+    print(gap.report(measured))
 
 
 def native_bench(argv: list[str]) -> None:
@@ -1216,6 +1289,99 @@ def iterating(argv: list[str]) -> None:
     out = args.pop("out")
     settings = iterate.Settings(**args)
     iterate.run(settings, out)
+
+
+def populating(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(
+        prog="python -m minimax_games.games.star_realms population"
+    )
+    parser.add_argument(
+        "player",
+        help="heuristic, greedy, a committed model (played by the planner with"
+        " it) or the path of a saved model (.npz)",
+    )
+    parser.add_argument(
+        "--opponents",
+        nargs="+",
+        default=list(population.POPULATION),
+        help="the opponents, the player itself left out"
+        " (default: the reference population, %(default)s)",
+    )
+    parser.add_argument(
+        "--games",
+        type=int,
+        default=population.GAMES,
+        help="games against each opponent, on seeds 0 up (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--threads", type=int, default=8, help="threads (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--worlds",
+        type=int,
+        default=planner.WORLDS,
+        help="the planners' worlds (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--budget",
+        type=int,
+        default=planner.BUDGET,
+        help="the planners' states per plan (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--max-turns",
+        type=int,
+        default=fit.MAX_TURNS,
+        help="games past this many turns are unfinished (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        help="where the per-seed CSVs go, one per opponent"
+        " (default: runs/population/<player>)",
+    )
+    parser.add_argument(
+        "--paired",
+        type=Path,
+        help="a recorded run's directory (e.g. docs/population/pf01): pair"
+        " with its games against each opponent, seed by seed",
+    )
+    args = parser.parse_args(argv)
+    name = population.name(args.player)
+    out = args.out or Path("runs/population") / name
+    start = time.perf_counter()
+    matches = population.play(
+        args.player,
+        opponents=args.opponents,
+        games=args.games,
+        threads=args.threads,
+        worlds=args.worlds,
+        budget=args.budget,
+        max_turns=args.max_turns,
+    )
+    seconds = time.perf_counter() - start
+    population.write(matches, out)
+    paired = []
+    missing = []
+    for match in matches:
+        recorded = args.paired / f"{match.opponent}.csv" if args.paired else None
+        if recorded is None:
+            continue
+        if recorded.is_file():
+            paired.append(population.pair(match, population.read(recorded)))
+        else:
+            missing.append(f"{name} against {match.opponent}: no recorded results")
+    print(
+        f"{name} against the reference population: {args.games} games each,"
+        f" seeds 0-{args.games - 1}, seats alternating; planners {args.worlds}"
+        f" worlds, {args.budget} states per plan; max {args.max_turns} turns"
+    )
+    for line in population.report(matches, paired):
+        print(line)
+    for line in missing:
+        print(line)
+    print(f"Per-seed results: {out}/")
+    print(f"Wall time: {seconds:.1f}s on {args.threads} threads")
 
 
 def sprt_report(played: SprtTournament, name: str, max_games: int) -> list[str]:

@@ -2127,6 +2127,95 @@ About 11 minutes wall in all, 6.7 of them (403 s) the match.
 - **The match leans towards 16 worlds but doesn't settle it**: 54.3%, interval 48.7-59.9%, and 30 seeds won both against 17 lost both (sign z 1.90, about p = 0.06 two-sided). With 300 games it can only rule out gaps of about 6 points, so the effect of four times the worlds is somewhere between nothing and about 10 points, at **4.0× the time per plan** (72 against 17.9 ms).
 - **On the belief**: the choice changes little (under a tenth of plans, mostly near-ties), as predicted; whether those near-ties are worth a few points of strength is not decided by this match. If they are, it is the cheapest kind of strength there is (no training), and the same budget spent on 4 worlds at 4× the states per world would be the fair comparison before changing the default, which is out of this slice's scope (a decision on this result, in its own PR). The obvious next measurement is an SPRT of 16 against 4 worlds, H0 50% against H1 55%.
 
+### Milestone 9: the reference population and pf01's baseline
+
+- Date: 2026-10-22
+- Commit: this PR (#183; on `b25066c`): the `population` command (`population.py`).
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0. 2 threads, **shared** with three other agents, so the time is contended.
+- Seeds: 0-499 against every member, `pf01` first on even seeds (the ladder's seeds and seats). Planners at 4 worlds and 20,000 states per plan, all in Rust; max 300 turns.
+
+**The belief it tests**: the reason the design measures against a population rather than the last champion, that a chain of head-to-head wins can each be narrow and still not add up to playing better against everything. If it holds, `pf01`'s margins over the older members fall short of what the chain of promotions predicts, or it loses to one of them.
+
+```sh
+uv run python -m minimax_games.games.star_realms population pf01 --threads 2 --out docs/population/pf01
+```
+
+| Opponent | Wins | Win% | 95% interval | As 1st | Predicted by the chain |
+|---|---|---|---|---|---|
+| heuristic | 370/500 | **74.0%** | 70.0-77.7% | 196/250 | - |
+| `mlp` | 308/500 | **61.6%** | 57.3-65.8% | 171/250 | 64.3% |
+| `pi03` | 283/500 | **56.6%** | 52.2-60.9% | 150/250 | (its confirmation at promotion, fresh seeds: 54.0%) |
+| **Mean** | | **64.1%** | 61.7-66.5% | | |
+
+(Wilson intervals; the mean's is the normal one from the three rates' variances. No game was unfinished; mean 23.5-23.8 turns.) "Predicted by the chain" adds the Elo gaps of the promotions: `pi03` over `mlp` 58.0% (56 Elo) and `pf01` over `pi03` 56.6% here (46 Elo) give 64.3% for `pf01` over `mlp`.
+
+Per-seed results (seed, first, second, winner, turns, the form of gating and ladder matches): [population/pf01/](population/pf01/), one CSV per opponent. A later candidate's run pairs with them seed by seed: `population <candidate> --paired docs/population/pf01`.
+
+- **The command reproduces the recorded results**: its 500 games against the heuristic are `f32`'s ladder match (Milestone 8: hand-made features at pi03's data size, `features-window/ladder-f32.csv`) game for game, winners and turns, with `f32` named `pf01`. Pairing them with `pi03`'s ladder (`policy-iteration/run-1/ladder-r03.csv`) gives that section's 80 seeds won only by `pf01` and 61 only by `pi03` (z 1.60).
+- **Time**: 14.7 minutes (879 s) on 2 threads, contended. On 8 free threads the same three matches took 71 s (the ladder) and 93 s (500 games against `pi03`, the confirmation) in Milestone 8, so the whole run is about 4 minutes there; a candidate cheaper than `pf01` takes less. With `--games 300` the run is 40% shorter and still pairs, on the seeds both played.
+
+#### Reading it
+
+- **`pf01` loses to none of the population**, and every interval is above 50%. The bar the design sets for promotion is met by today's champion, as it should be: the population is the chain of champions it beat.
+- **Among the learned players the chain adds up**: 61.6% against `mlp` where the two promotions predict 64.3%, well inside the interval (57.3-65.8%). The champions so far are transitive, so far as 500 games can tell; no narrow win hid a weakness against an older champion.
+- **Against the heuristic it doesn't**: `mlp` won 69.0% on these seeds, `pi03` 70.2% and `pf01` 74.0%. Two promotions worth about 100 Elo head to head moved the rate against the scripted bot by 5 points (paired with `pi03`, z 1.6). So the belief holds where the population differs in kind from the champions: progress measured on champions alone overstates progress against a different opponent. It is the case for keeping the heuristic, and hand-crafted opponents, in the population.
+- **The yardstick for Milestone 10**: a candidate must beat `pf01` head to head and lose to none of the heuristic, `mlp` and `pi03`, with its rates and its paired seeds against `pf01`'s here. The mean, 64.1% (61.7-66.5%), summarises it; with 500 games each it moves by about ±2.4 points on noise alone, so pairing (seed by seed against these CSVs) is the sharper comparison.
+
+### Milestone 9: the exploitation gap
+
+- Date: 2026-10-22
+- Commit: this PR (#184; on `b25066c`): self-play's `judge` (`selfplay::Record`), `gap.py` and the `gap` command.
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0. 2 self-play threads, with three other agents' builds and runs on the machine at the same time (load average 8-10).
+- Seeds: 18,400,000-18,400,999, clear of every range a champion was fitted to and of every earlier experiment's (all below 10,000,000).
+
+**Belief tested** (End state, What it learns from): *choosing the best of many noisy judgements favours the overestimated ones, so the errors that cost games are in the positions the player chooses between.* If so, the champion's judgement of the ends it chose exceeds how often it went on to win from them. A gap near zero says learning from rejected positions isn't needed.
+
+```sh
+uv run python -m minimax_games.games.star_realms gap --champion pf01 --pool mlp pi03 pf01 --games 1000 --base-seed 18400000 --threads 2
+```
+
+(`--pool`, `--base-seed` and `--games` are the defaults.) 1,000 games of `pf01`, mixed as a policy-iteration round mixes them: 500 against itself, 250 against the heuristic, 250 against a champion drawn per game from `mlp`, `pi03` and `pf01`; every player at the planner's full settings (4 worlds, 20,000 states per plan). **Chosen** are the ends `pf01` played (17,900 positions), each with the judgement it recorded as it played it: its value on the position its turn ended in. **Held out** are the ends its opponents chose (4,865 positions, from the 426 games not against itself), judged by `pf01`. The gap is the mean judged chance less the share of those positions whose player went on to win; ± is one standard error, counting a game's positions together.
+
+| Positions | n | Games | Judged | Won | Gap |
+|---|---|---|---|---|---|
+| Chosen | 17,900 | 1,000 | 0.533 | 0.530 | **+0.002 ± 0.005** |
+| Held out | 4,865 | 426 | 0.363 | 0.343 | +0.020 ± 0.018 |
+
+Calibration, by judged chance:
+
+| Judged | Chosen n | Judged | Won | Gap | Held-out n | Judged | Won | Gap |
+|---|---|---|---|---|---|---|---|---|
+| 0.0-0.1 | 1,366 | 0.047 | 0.040 | +0.007 ± 0.008 | 931 | 0.042 | 0.034 | +0.007 ± 0.010 |
+| 0.1-0.2 | 1,188 | 0.152 | 0.160 | −0.008 ± 0.015 | 654 | 0.151 | 0.142 | +0.009 ± 0.025 |
+| 0.2-0.3 | 1,320 | 0.252 | 0.238 | +0.014 ± 0.017 | 635 | 0.248 | 0.202 | +0.047 ± 0.026 |
+| 0.3-0.4 | 1,685 | 0.352 | 0.334 | +0.018 ± 0.016 | 629 | 0.348 | 0.297 | +0.051 ± 0.031 |
+| 0.4-0.5 | 2,293 | 0.453 | 0.450 | +0.003 ± 0.013 | 606 | 0.451 | 0.419 | +0.032 ± 0.034 |
+| 0.5-0.6 | 2,514 | 0.550 | 0.563 | −0.013 ± 0.012 | 495 | 0.550 | 0.491 | +0.059 ± 0.038 |
+| 0.6-0.7 | 2,321 | 0.647 | 0.653 | −0.006 ± 0.015 | 319 | 0.646 | 0.699 | −0.053 ± 0.041 |
+| 0.7-0.8 | 1,725 | 0.748 | 0.734 | +0.013 ± 0.016 | 226 | 0.748 | 0.761 | −0.013 ± 0.042 |
+| 0.8-0.9 | 1,695 | 0.850 | 0.842 | +0.008 ± 0.015 | 191 | 0.851 | 0.869 | −0.019 ± 0.043 |
+| 0.9-1.0 | 1,793 | 0.953 | 0.955 | −0.002 ± 0.008 | 179 | 0.948 | 0.966 | −0.018 ± 0.017 |
+
+By game phase (the game's turn, both players' turns counted):
+
+| Turns | Chosen n | Judged | Won | Gap | Held-out n | Judged | Won | Gap |
+|---|---|---|---|---|---|---|---|---|
+| 1-6 | 4,722 | 0.533 | 0.540 | −0.007 ± 0.006 | 1,278 | 0.423 | 0.352 | +0.070 ± 0.021 |
+| 7-12 | 4,722 | 0.544 | 0.540 | +0.004 ± 0.005 | 1,278 | 0.371 | 0.352 | +0.019 ± 0.019 |
+| 13-18 | 4,600 | 0.538 | 0.536 | +0.003 ± 0.005 | 1,256 | 0.364 | 0.352 | +0.012 ± 0.017 |
+| 19-24 | 2,895 | 0.511 | 0.506 | +0.005 ± 0.006 | 781 | 0.307 | 0.320 | −0.013 ± 0.019 |
+| 25+ | 961 | 0.514 | 0.481 | **+0.033 ± 0.012** | 272 | 0.205 | 0.290 | −0.085 ± 0.043 |
+
+12.6 minutes wall (23 CPU-minutes) on 2 threads with the machine shared, so about 3-4 minutes on 8 quiet threads; `--games 500` halves it, with an error of about ±0.007 on the chosen gap.
+
+#### Reading it
+
+- **pf01 has no exploitation gap to speak of.** Its judgement of the ends it chose is 0.533 against 0.530 won, a gap of +0.002 ± 0.005, and every bin of the calibration table is within 0.02 of its outcome (each within about 1.2 standard errors). Choosing the best of up to 20,000 judged ends per turn hasn't made it overrate what it chose. **The belief fails for today's player**, so learning from rejected positions isn't needed now (End state, What it learns from, updated in this PR). It is a diagnostic to re-run on each new champion, since a stronger or differently fitted judgement could change it.
+- **Why the selection effect is small here**, a likely reading, not measured: the planner chooses among ends whose judgements mostly differ by what the turn bought and dealt, and most ends of a turn are plainly worse than the best few (How it explores). An error large enough to be selected has to beat that spread, and a value fitted to about 370,000 positions of games like these seldom makes one. The ends that are nearly tied are the ones a selection effect could bias, but a near tie also costs little when it goes wrong.
+- **The one place a gap shows is long games**: from turn 25 on, the chosen gap is +0.033 ± 0.012 (961 positions, about 3 standard errors). Long games are rarer in the training data, which is the likeliest reason (not tested here). It is small, 5% of the positions, and worth watching on the next champion rather than acting on.
+- **Held out is not a clean control.** The opponents' ends are calibrated about as well overall (+0.020 ± 0.018), but in a different shape: overrated early (+0.070 ± 0.021 in turns 1-6) and in the middle bins of judged chance, underrated late. The judgement scores a position as if it were played on by the kind of player its training games had, and these positions are played on by the heuristic and older champions against pf01, who are weaker than that: an opponent's position early in the game is worth less to them than to pf01. So the held-out gap mixes plain miscalibration with who is playing. That the chosen positions show no gap at all, while the same judgement misreads others' positions by up to 0.07, says the selection effect isn't hiding beneath a miscalibration it cancels.
+- **For #185**: the chosen judgements, with their outcomes and turns, are what the other diagnostics break down further (`gap.positions`, from `selfplay.play(..., judge=True)`).
+
 ### Milestone 9: probe, same-function synergy
 
 - Date: 2026-10-22

@@ -449,6 +449,25 @@ def test_iterate_refuses_unknown_targets(capsys, tmp_path):
     assert "sarsa" in capsys.readouterr().err
 
 
+def test_gap_reports_the_champion_s_chosen_and_held_out_positions(capsys):
+    main(
+        [
+            *("gap", "--champion", "pf01", "--pool", "mlp", "pf01"),
+            *("--games", "8", "--base-seed", "20", "--threads", "2"),
+            *("--worlds", "1", "--budget", "60"),
+        ]
+    )
+    out = capsys.readouterr().out
+    assert "8 games (seeds 20-27): pf01 against itself, the heuristic" in out
+    for heading in ("Chosen", "Held out"):
+        assert f"{heading}: " in out
+    assert "judged" in out
+    assert "Calibration" in out
+    assert "By game phase" in out
+    assert "0.9-1.0" in out
+    assert "turns 25+" in out
+
+
 def test_probe_reports_the_champion_s_synergy_by_function_and_phase(capsys):
     argv = [
         *("probe", "synergy", "--model", "pf01", "--games", "2"),
