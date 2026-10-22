@@ -48,6 +48,7 @@ task native-bench           # Star Realms: the Rust engine's speed (games/s, adv
 task bench                  # Star Realms: the cheat's search speed (nodes/sec)
 task turn-sizes             # Star Realms: distinct ends per turn (planner workload)
 task worlds                 # Star Realms: does the champion's plan change with more sampled worlds
+task reply                  # Star Realms: does looking through the opponent's reply change its choice
 task profile                # Star Realms: profile the cheat's search
 task tune                   # Star Realms: tune evaluate's weights by tournament
 task fit                    # Star Realms: fit learned values, gated against evaluate

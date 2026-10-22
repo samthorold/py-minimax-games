@@ -2473,7 +2473,51 @@ About 2 minutes in all (113 s for both sets of games, 0.1 s for the probe), with
 - **On the belief**: it fails for `pf01`. Its judgement and its buying both read the game as a damage race, which is the shape the design's exploration belief predicts for a self-taught player that never saw an investment pay off (End state, How it explores: *it can stay a racer because it never explored, not because racing is right*). This probe can't tell which: it says what `pf01` believes, not whether racing is right in this game, so the strategy doc's label stays [lore]. Milestone 10's test, two players learned alike with and without more exploration, is the one that separates them, and this probe is its measure.
 - **What the probe can't separate**: every pair is a Trade Federation economy card against a Blob combat card, and `pf01` reads faction density and pairs (`features.EXTRA`), so faction is mixed in; the two pairs agree in sign and shape, which a faction effect alone wouldn't explain at both costs, but its size isn't measured. A card's gain also includes what it dilutes, which is why trade can be worth less than nothing; the card gap compares two cards that dilute alike. And "economy" here is what a card gives every time it is played; a card's ally or scrap ability can change that (the Explorer scraps for 2 combat).
 
-## Milestone 7: Rust tracer bullet (toolchain and first-slice engine)
+### Milestone 9: looking through the reply
+
+- Date: 2026-10-22
+- Commit: this PR (#188; on `abc5ef4`): the Rust planner's reply option (`planner.rs`: `Replies`, `reply`, `plan_with`), self-play's per-plan reply notes (`self_play(..., replies=True)`, `selfplay.Replies`), `reply.py` and the `reply` command (`task reply`).
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0. 2 threads, **shared** with other agents' builds and runs (load average about 3-3.5), so the times are contended; both players' times are from the same games, so their ratio is fair.
+- Seeds: 19,880,000-19,880,149, each played in both seats, clear of every earlier range.
+
+**The belief** (How it chooses): *in this kind of game most of the strength comes from learned judgement, and lookahead on top adds a little and soon stops adding*; here, that the judgement already summarises the opponent's reply. Its test: whether choosing by the judgement after the opponent's reply, rather than after the player's own turn, changes the champion's choice and adds strength at equal cost (the design's Learned values: looking through the reply). Predicted: few changed choices, no more than a fresh 4-world sample changes (11.3%), and no strength.
+
+```sh
+uv run python -m minimax_games.games.star_realms reply --seeds 150 --base-seed 19880000 --threads 2
+```
+
+(`--model pf01`, the reply's 3 candidates, 2 sub-worlds and 5,000 states, the reply player's 4 worlds and 20,000 states, and the rival's 16 worlds and 80,000 states are the defaults.) `planner:pf01` looking through the reply against `planner:pf01` at 16 worlds, the same 80,000-state cap per plan, 300 games in one Rust batch.
+
+| Bot | Wins | Win% | 95% interval | As 1st | As 2nd | ms per plan | States per plan |
+|---|---|---|---|---|---|---|---|
+| Replies (4 worlds + 3 × 4 replies of 5,000) | 134/300 | **44.7%** | 39.1-50.3% | 82/150 | 52/150 | 96.7 | 16,768 |
+| 16 worlds (80,000) | 166/300 | 55.3% | 49.7-60.9% | 98/150 | 68/150 | 65.0 | 10,893 |
+
+Seeds won both / split / lost both by the reply player: 24 / 86 / 40 (**sign z = (24 − 40) / √64 = −2.00**). No game reached the 300-turn cap; mean 24.5 turns.
+
+The reply player's plans (all 9,276 of them, every game finished):
+
+| Turns | Plans | Looked through (≥ 2 candidates) | **Changed** | Changed, of those looked through | Replies examined in full, of those |
+|---|---|---|---|---|---|
+| All | 9,276 | 85.8% | **33.7%** | 39.3% | 60.6% |
+| 1-6 | 1,971 | 79.9% | 28.5% | 35.7% | 98.1% |
+| 7-12 | 2,085 | 89.1% | 35.9% | 40.3% | 75.3% |
+| 13-18 | 2,355 | 89.8% | 38.5% | 42.9% | 46.4% |
+| 19-24 | 1,936 | 86.1% | 32.2% | 37.4% | 37.6% |
+| 25+ | 929 | 80.6% | 30.7% | 38.1% | 35.9% |
+
+(Turns as the game numbers them, both players'.) The pick's rank by the judgement among the candidates looked through: 1st 4,836 (60.7%), 2nd 1,977 (24.8%), 3rd 1,150 (14.4%).
+
+12.4 minutes wall (745 s) on 2 contended threads; the 3-seed trial before it ran at the same rate.
+
+#### Reading it
+
+- **The reply changes the choice on a third of plans, three times as often as a fresh 4-world sample does** (33.7% against 11.3%), and in every phase (28-39%). Looking through the reply isn't a re-roll of near-ties: it judges the candidates by a different rule, and that rule disagrees with the judgement on two plans in five where it gets a say.
+- **And the changed choices are worse.** The reply player won 44.7% against 16 worlds, and lost both games of 40 seeds to 24 won both (sign z −2.00, about p = 0.05 two-sided). That is about where the plain 4-world planner stands against 16 worlds (45.7%, Milestone 9: more sampled worlds), so spending three quarters of the budget on replies bought nothing over spending none, where spending it on more worlds bought a little. Lookahead through the reply doesn't add strength at equal cost; if anything it costs some.
+- **By the design's rule the result is neither of its two outcomes**: the belief doesn't *fail* (the reply player doesn't beat 16 worlds; sign z isn't +2 or more), but it doesn't *hold* as stated either, because the choice changes far more than 11.3%. The case the design names for it, many changed choices with no strength, is "the diagnostic moving without strength"; here it is moving against strength. What the belief is about, that the judgement summarises the reply better than this lookahead does, is supported: a third of the champion's choices were overruled by looking a turn further, and play got weaker, not stronger.
+- **Why the reply misleads, as far as this match can tell**: from turn 13 on fewer than half the plans had every reply examined in full (36-46%), and a reply cut short plays the best end found so far, underrating the opponent's turn exactly in the large late turns; the reply's own judgement is also a sample of 2 sub-worlds against the player's 4 worlds, so its value is noisier than the plain plan's. Neither is separated here. The pick was the 3rd candidate on 14.4% of the plans looked through, less often than the 2nd (24.8%), so 3 candidates weren't obviously too few.
+- **What follows** (decisions on this result, out of this slice): the reply isn't adopted, and How it chooses' lookahead half stands as the end state says it (lookahead adds a little and soon stops; here, the opponent's reply adds nothing at equal cost). Whether a reply examined in full and judged over more sub-worlds would do better is a different, costlier player, worth testing only if the examination test (four times the budget on turns that run out) says that budget pays at all.
+ (toolchain and first-slice engine)
 
 2026-10-21, #137 (tracked by #127), CPython 3.14, Apple M1 (8 GB) shared with three other agents' builds and tests. The first end-to-end path through Rust: maturin builds `minimax_games._native` from `rust/`, and its Star Realms engine plays the starter decks and the 30-card first slice (design, Compiled engine).
 
