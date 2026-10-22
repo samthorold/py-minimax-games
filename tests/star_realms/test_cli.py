@@ -482,6 +482,37 @@ def test_probe_reports_the_champion_s_synergy_by_function_and_phase(capsys):
     assert "logit" in out
 
 
+def test_probe_reports_the_champion_s_faction_pair_table(capsys):
+    argv = [
+        *("probe", "faction-pair", "--model", "pf01", "--games", "2"),
+        *("--worlds", "1", "--budget", "40", "--samples", "1"),
+    ]
+    main(argv)
+    out = capsys.readouterr().out
+    assert "Faction-pair probe of pf01" in out
+    for faction in ("Blob", "Trade Federation", "Star Empire", "Machine Cult"):
+        assert faction in out
+    assert "mostly of no one faction" in out
+    assert "interaction" in out
+    assert "logit" in out
+
+
+def test_probe_reports_the_champion_s_denial_by_phase_beside_the_heuristic_s(
+    capsys,
+):
+    argv = [
+        *("probe", "denial", "--model", "pf01", "--games", "2"),
+        *("--worlds", "1", "--budget", "40"),
+    ]
+    main(argv)
+    out = capsys.readouterr().out
+    assert "Denial probe of pf01" in out
+    for word in ("early", "middle", "late", "logit", "seen"):
+        assert word in out
+    assert "buy" in out
+    assert "heuristic" in out
+
+
 def test_probe_investment_reports_trade_against_combat_and_the_buys(capsys):
     argv = [
         *("probe", "investment", "--model", "pf01", "--games", "2"),

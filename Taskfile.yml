@@ -73,7 +73,7 @@ tasks:
       - uv run python -m minimax_games.games.star_realms fit {{.CLI_ARGS}}
 
   probe:
-    desc: "Star Realms: probe the champion's judgement, positions from its games (about 3 minutes at the defaults): task probe -- synergy|investment [--model NAME] [--games N] [--threads N]"
+    desc: "Star Realms: probe the champion's judgement, positions from its games (about 3 minutes at the defaults): task probe -- synergy|faction-pair|denial|investment [--model NAME] [--games N] [--threads N]"
     cmds:
       - uv run python -m minimax_games.games.star_realms probe {{.CLI_ARGS}}
 
