@@ -482,6 +482,22 @@ def test_probe_reports_the_champion_s_synergy_by_function_and_phase(capsys):
     assert "logit" in out
 
 
+def test_probe_reports_the_champion_s_denial_by_phase_beside_the_heuristic_s(
+    capsys,
+):
+    argv = [
+        *("probe", "denial", "--model", "pf01", "--games", "2"),
+        *("--worlds", "1", "--budget", "40"),
+    ]
+    main(argv)
+    out = capsys.readouterr().out
+    assert "Denial probe of pf01" in out
+    for word in ("early", "middle", "late", "logit", "seen"):
+        assert word in out
+    assert "buy" in out
+    assert "heuristic" in out
+
+
 def test_worlds_compares_the_plans_by_count_then_plays_the_paired_match(
     capsys: pytest.CaptureFixture[str],
 ):
