@@ -11,7 +11,8 @@ The end state ([star-realms.md](../star-realms.md), End state) asks how far a le
 
 A game ends when one player's Authority reaches zero, and nearly all damage is combat played from hand, so every game is in part a **damage race**: each turn, a player's combat is spent against the opponent's Authority and bases. But a deck is built over the game, and a card bought now is played only when the deck cycles round to it. So every buy is also an **investment**, trading this turn's tempo for a stronger deck later.
 
-- **Strong players invest more, and for longer, than bots do.** [lore] Humans buy trade (economy) more readily and further into the game, as if they could see further ahead; bots that read the game as a damage race buy combat sooner. Humans can't say exactly why: it is planning done cheaply by intuition.
+- **Strong players invest early, then turn to combat quickly.** [lore] Humans buy trade (economy) in the opening turns and switch to buying combat soon after.
+- **`pf01` judges the same way.** [measured] Its judgement values combat above trade in every phase, and after turn 8 a card that adds only trade lowers its judged chance of winning; it buys economy most in turns 1-4 and less in every later band ([results](../star-realms-results.md), Milestone 9: probe, investment against the race).
 
 ## Synergy
 
