@@ -68,6 +68,17 @@ count's, by turn number, and the time per plan at each count. With
 the largest count against the first on N seeds from `--match-base-seed`,
 each in both seats. `--jobs` spreads both over processes.
 
+`python -m minimax_games.games.star_realms examine` tests whether examining
+more changes the champion's choice where its budget runs out (see
+`examination`): in `--games` self-play games of `planner:<--model>` (pf01 by
+default; `linear` for the linear evaluation) at `--worlds` worlds and
+`--budget` states per plan, every plan that wasn't complete is made again
+from the same worlds with `--factor` times the budget, and it prints the
+share of budget-bound plans whose line changes and the rise in the chosen
+end's judgement, by turn number, and the time per plan. With
+`--match-seeds N`, it then plays a paired match of the larger budget against
+today's on N seeds from `--match-base-seed`, each in both seats.
+
 `python -m minimax_games.games.star_realms reply` tests whether looking
 through the opponent's reply changes the champion's choice (see `reply`):
 `planner:<--model>` (pf01) looking through the replies of its best
@@ -164,6 +175,7 @@ from minimax_games.games.star_realms import (
     bench,
     cheat,
     diagnostics,
+    examination,
     fit,
     gap,
     iterate,
@@ -195,6 +207,7 @@ from minimax_games.games.star_realms.sampler import WORLDS, SamplerBot
 from minimax_games.games.star_realms.sprt import Hypothesis, Sprt, wilson
 from minimax_games.games.star_realms.tournament import (
     MAX_TURNS,
+    BotFactory,
     PairedTournament,
     SprtTournament,
     Tournament,
@@ -407,6 +420,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if argv[:1] == ["worlds"]:
         worlds(argv[1:])
+        return
+    if argv[:1] == ["examine"]:
+        examine(argv[1:])
         return
     if argv[:1] == ["reply"]:
         replying(argv[1:])
@@ -759,17 +775,113 @@ def worlds(argv: list[str]) -> None:
         configured(name, args.per_world * counts[0], counts[0]),
         configured(name, args.per_world * counts[1], counts[1]),
     )
-    paired = play_paired(bots, args.match_seeds, args.match_base_seed, jobs=args.jobs)
-    last = args.match_base_seed + args.match_seeds - 1
-    one = args.match_seeds == 1
-    seeds = f"seed {last}" if one else f"seeds {args.match_base_seed}-{last}"
+    _paired_match(bots, names, args.match_seeds, args.match_base_seed, args.jobs)
+
+
+def _paired_match(
+    bots: tuple[BotFactory, BotFactory],
+    names: tuple[str, str],
+    seeds: int,
+    base_seed: int,
+    jobs: int,
+) -> None:
+    """Play and print a paired match (`tournament.play_paired`)."""
+    paired = play_paired(bots, seeds, base_seed, jobs=jobs)
+    last = base_seed + seeds - 1
+    one = seeds == 1
+    which = f"seed {last}" if one else f"seeds {base_seed}-{last}"
     print()
     print(
-        f"{names[0]} vs {names[1]}: {args.match_seeds} seed{'' if one else 's'}"
-        f" in both seats ({seeds}), max {MAX_TURNS} turns"
+        f"{names[0]} vs {names[1]}: {seeds} seed{'' if one else 's'}"
+        f" in both seats ({which}), max {MAX_TURNS} turns"
     )
     for line in paired_report(paired, names):
         print(line)
+
+
+def examine(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(
+        prog="python -m minimax_games.games.star_realms examine"
+    )
+    parser.add_argument(
+        "--model",
+        default="pf01",
+        help="the champion: a committed learned value, on the Rust enumeration,"
+        " or 'linear' for the planner with the linear evaluation in Python"
+        " (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--budget",
+        type=int,
+        default=planner.BUDGET,
+        help="states per plan, today's (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--factor",
+        type=int,
+        default=examination.FACTOR,
+        help="the multiple of the budget a budget-bound plan is made again with,"
+        " and the match's larger budget (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--worlds",
+        type=int,
+        default=planner.WORLDS,
+        help="the planner's worlds (default: %(default)s)",
+    )
+    parser.add_argument("--games", type=int, default=10, help="self-play games probed")
+    parser.add_argument(
+        "--base-seed", type=int, default=0, help="the first probed game's seed"
+    )
+    parser.add_argument(
+        "--max-turns",
+        type=int,
+        default=sampled_worlds.MAX_TURNS,
+        help="stop a probed game after this many turns (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--match-seeds",
+        type=int,
+        default=0,
+        help="seeds of the paired match of the larger budget against today's,"
+        " each played in both seats (default: none)",
+    )
+    parser.add_argument(
+        "--match-base-seed", type=int, default=0, help="the match's first seed"
+    )
+    parser.add_argument("--jobs", type=int, default=1, help="processes (same results)")
+    args = parser.parse_args(argv)
+    if args.factor < 2:
+        parser.error("--factor must be at least 2")
+    model = None if args.model == "linear" else args.model
+    name = "planner" if model is None else bot_name(LEARNED + model)
+    who = "the planner with the linear evaluation" if model is None else name
+    print(
+        f"Plans examined further: {who} against itself, {args.games} games"
+        f" from seed {args.base_seed}, {args.worlds} worlds, {args.budget}"
+        f" states per plan, at most {args.max_turns} turns"
+    )
+    records = examination.measure(
+        args.games,
+        args.base_seed,
+        args.budget,
+        args.factor,
+        args.worlds,
+        model,
+        args.max_turns,
+        args.jobs,
+    )
+    for line in examination.report(records, args.factor, points=model is not None):
+        print(line)
+    if not args.match_seeds:
+        return
+    budgets = (args.factor * args.budget, args.budget)
+    names = (f"{budgets[0]} states", f"{budgets[1]} states")
+    bots = (
+        configured(name, budgets[0], args.worlds),
+        configured(name, budgets[1], args.worlds),
+    )
+    _paired_match(bots, names, args.match_seeds, args.match_base_seed, args.jobs)
 
 
 def replying(argv: list[str]) -> None:

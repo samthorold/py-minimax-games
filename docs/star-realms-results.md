@@ -2473,6 +2473,54 @@ About 2 minutes in all (113 s for both sets of games, 0.1 s for the probe), with
 - **On the belief**: it fails for `pf01`. Its judgement and its buying both read the game as a damage race, which is the shape the design's exploration belief predicts for a self-taught player that never saw an investment pay off (End state, How it explores: *it can stay a racer because it never explored, not because racing is right*). This probe can't tell which: it says what `pf01` believes, not whether racing is right in this game, so the strategy doc's label stays [lore]. Milestone 10's test, two players learned alike with and without more exploration, is the one that separates them, and this probe is its measure.
 - **What the probe can't separate**: every pair is a Trade Federation economy card against a Blob combat card, and `pf01` reads faction density and pairs (`features.EXTRA`), so faction is mixed in; the two pairs agree in sign and shape, which a faction effect alone wouldn't explain at both costs, but its size isn't measured. A card's gain also includes what it dilutes, which is why trade can be worth less than nothing; the card gap compares two cards that dilute alike. And "economy" here is what a card gives every time it is played; a card's ally or scrap ability can change that (the Explorer scraps for 2 combat).
 
+### Milestone 9: more examination where the budget runs out
+
+- Date: 2026-10-22
+- Commit: this PR (#187; on `abc5ef4`): `examination` (`Probe`, the records and the report) and the `examine` command (`task examine`).
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0. 2 processes, **with other agents working on the machine at the same time**, so absolute times are contended; each budget-bound plan was timed at both budgets one after the other, and the match's two players in the same games, so their ratios are fair.
+- Seeds: the probed games 19,870,000-19,870,199, the match 19,875,000-19,875,299 (each in both seats), clear of every earlier range.
+
+**The belief** (How it chooses): *lookahead on top of learned judgement adds a little and soon stops adding*, and *within the turn, tactics are calculated*. Its test: on the plans where the champion's budget runs out, how often four times the examination changes the choice, how much it raises the chosen end's judgement, and what it adds in strength. Predicted: little. It also decides whether the End state needs a preference over moves (What it sees: its only job is to order the examination on turns too large to examine).
+
+```sh
+uv run python -m minimax_games.games.star_realms examine --games 200 --base-seed 19870000 --jobs 2
+uv run python -m minimax_games.games.star_realms examine --games 0 --match-seeds 300 --match-base-seed 19875000 --jobs 2
+```
+
+- **The plans**: 200 games of `planner:pf01` against itself (4 worlds, 20,000 states per plan, Rust enumeration), both players probing. Every plan that ran out of budget (`Plan.complete` false: some world didn't list every end of the turn) is planned again **from the same worlds with 80,000 states**. Its line *changes* when it differs from the plan's, compared up to the order of its plays (as in more sampled worlds); the worlds are the same, so a change is the examination's alone, with no sampling noise. The *rise* is the chosen line's value at 80,000 less its value at 20,000, in points of judged chance (a value that wins in any world counts as a sure win). The probe plays the 20,000-state plan and samples its worlds as a plain planner does, so the games are the plain champion's.
+- **The match**: `planner:pf01` at 80,000 states per plan against itself at 20,000, each of 300 seeds played twice, once with each first (`tournament.play_paired`), compared seed by seed.
+
+| Turns | Plans | Budget-bound | Share | Line changed | Mean rise | Rise where changed | Full at 80,000 |
+|---|---|---|---|---|---|---|---|
+| All | 11,834 | 1,301 | 11.0% | 23.8% | +1.21 | +3.57 | 44.3% |
+| 1-5 | 2,176 | 0 | 0.0% | - | - | - | - |
+| 6-10 | 2,282 | 24 | 1.1% | 16.7% | +0.87 | +4.26 | 91.7% |
+| 11-15 | 2,477 | 141 | 5.7% | 31.2% | +1.54 | +4.52 | 67.4% |
+| 16-20 | 2,559 | 450 | 17.6% | 30.0% | +1.42 | +3.46 | 49.8% |
+| 21-25 | 1,541 | 395 | 25.6% | 20.3% | +1.03 | +3.22 | 39.7% |
+| 26-30 | 550 | 168 | 30.5% | 19.0% | +0.92 | +3.12 | 29.8% |
+| 31-35 | 164 | 72 | 43.9% | 16.7% | +1.04 | +2.93 | 27.8% |
+| 36-40 | 60 | 35 | 58.3% | 8.6% | +1.46 | +10.16 | 14.3% |
+| 41-45 | 25 | 16 | 64.0% | 0.0% | +0.25 | - | 18.8% |
+
+(Turns as the game numbers them, both players'. ms per plan: 9.0 over all plans; 56.9 for the budget-bound ones at 20,000 states, 191.9 for the same at 80,000.)
+
+| Bot | Wins | Win% | 95% interval | As 1st | As 2nd | ms per plan | Plans per turn |
+|---|---|---|---|---|---|---|---|
+| 80,000 states | 305/600 | 50.8% | 46.8-54.8% | 163/300 | 142/300 | 26.3 | 2.51 |
+| 20,000 states | 295/600 | 49.2% | 45.2-53.2% | 158/300 | 137/300 | 9.2 | 2.50 |
+
+Seeds won both / split / lost both by 80,000 states: 14 / 277 / 9 (sign z = (14 − 9) / √23 = 1.04). No game reached the 300-turn cap; mean 23.4 turns.
+
+About 8.5 minutes wall in all: 181 s for the plans, 332 s for the match.
+
+#### Reading it
+
+- **Where the budget runs out, more examination changes the choice on about one plan in four**, but those plans are 11% of all plans, so the choice changes on **2.6% of the champion's plans** (310 of 11,834). Budget-bound plans are rare before turn 11 and common late (a quarter from turn 21, over half from turn 36), and four times the states examines fewer than half of them in full, fewer still late: the largest turns are far beyond 80,000 states, not just over 20,000.
+- **The chosen end's judgement rises by 1.2 points on average, 3.6 where the line changes.** Part of any rise is mechanical: a cut-short plan's value is the best end found so far, so more states can only find better ends of the same line, and the 76% of unchanged lines rise too. So the rise is an upper bound on what the better choice is worth by the judgement's own reckoning, and a few points on one plan in forty is small.
+- **The match finds no strength in it**: 50.8%, interval 46.8-54.8%, and 14 seeds won both against 9 lost both (sign z 1.04). 277 of 300 seeds split: with the same deal, the two budgets play the same game most of the time, which is what 2.6% of choices changing predicts. The match rules out a gain of more than about 5 points, at **2.9× the time per plan** (26.3 against 9.2 ms).
+- **On the belief**: it holds for `pf01`. Lookahead within the turn beyond today's budget adds little: the choice rarely changes and no strength is measured. So the turns too large to examine don't call for a preference over moves to order the examination (Milestone 10's move preference is **not needed** on this evidence): a move preference would only make the examination reach good lines sooner, and examining four times as much, which reaches every line the smaller budget did and more, changes too little to win measurably. Against more sampled worlds (Milestone 9: more sampled worlds; 54.3% at 4× the time, sign z 1.90), more examination at the same 4 worlds is the weaker use of extra budget.
+
 ### Milestone 9: looking through the reply
 
 - Date: 2026-10-22
@@ -2516,8 +2564,9 @@ The reply player's plans (all 9,276 of them, every game finished):
 - **And the changed choices are worse.** The reply player won 44.7% against 16 worlds, and lost both games of 40 seeds to 24 won both (sign z −2.00, about p = 0.05 two-sided). That is about where the plain 4-world planner stands against 16 worlds (45.7%, Milestone 9: more sampled worlds), so spending three quarters of the budget on replies bought nothing over spending none, where spending it on more worlds bought a little. Lookahead through the reply doesn't add strength at equal cost; if anything it costs some.
 - **By the design's rule the result is neither of its two outcomes**: the belief doesn't *fail* (the reply player doesn't beat 16 worlds; sign z isn't +2 or more), but it doesn't *hold* as stated either, because the choice changes far more than 11.3%. The case the design names for it, many changed choices with no strength, is "the diagnostic moving without strength"; here it is moving against strength. What the belief is about, that the judgement summarises the reply better than this lookahead does, is supported: a third of the champion's choices were overruled by looking a turn further, and play got weaker, not stronger.
 - **Why the reply misleads, as far as this match can tell**: from turn 13 on fewer than half the plans had every reply examined in full (36-46%), and a reply cut short plays the best end found so far, underrating the opponent's turn exactly in the large late turns; the reply's own judgement is also a sample of 2 sub-worlds against the player's 4 worlds, so its value is noisier than the plain plan's. Neither is separated here. The pick was the 3rd candidate on 14.4% of the plans looked through, less often than the 2nd (24.8%), so 3 candidates weren't obviously too few.
-- **What follows** (decisions on this result, out of this slice): the reply isn't adopted, and How it chooses' lookahead half stands as the end state says it (lookahead adds a little and soon stops; here, the opponent's reply adds nothing at equal cost). Whether a reply examined in full and judged over more sub-worlds would do better is a different, costlier player, worth testing only if the examination test (four times the budget on turns that run out) says that budget pays at all.
- (toolchain and first-slice engine)
+- **What follows** (decisions on this result, out of this slice): the reply isn't adopted, and How it chooses' lookahead half stands as the end state says it (lookahead adds a little and soon stops; here, the opponent's reply adds nothing at equal cost). Whether a reply examined in full and judged over more sub-worlds would do better is a different, costlier player; the examination test (Milestone 9: more examination where the budget runs out) found four times the states adds no measurable strength to the player's own turn, so nothing here argues for spending more on the opponent's. Together the two halves of How it chooses' test agree: neither more examination nor the opponent's reply turns extra budget into strength, and of the uses of extra budget measured so far only more sampled worlds leans positive.
+
+## Milestone 7: Rust tracer bullet (toolchain and first-slice engine)
 
 2026-10-21, #137 (tracked by #127), CPython 3.14, Apple M1 (8 GB) shared with three other agents' builds and tests. The first end-to-end path through Rust: maturin builds `minimax_games._native` from `rust/`, and its Star Realms engine plays the starter decks and the 30-card first slice (design, Compiled engine).
 
