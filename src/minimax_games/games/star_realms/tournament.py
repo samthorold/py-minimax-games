@@ -379,3 +379,68 @@ def _one_by_one(
             yield ahead.popleft().result()
     finally:
         pool.shutdown(cancel_futures=True)
+
+
+@dataclass(frozen=True, slots=True)
+class PairedTournament:
+    """Every seed played twice, once with each bot first."""
+
+    tournament: Tournament
+    """The games of both seatings, bot A numbered 0 in all of them."""
+
+    @property
+    def pairs(self) -> dict[int, int]:
+        """How many seeds bot A won both, one and neither games of, counting
+        only seeds whose two games both finished."""
+        by_seed: dict[int, list[int | None]] = {}
+        for game in self.tournament.result.games:
+            by_seed.setdefault(game.seed, []).append(game.winner)
+        pairs = dict.fromkeys((2, 1, 0), 0)
+        for winners in by_seed.values():
+            if None not in winners:
+                pairs[sum(winner == 0 for winner in winners)] += 1
+        return pairs
+
+
+def _swapped(played: Tournament) -> Tournament:
+    """`played` with its bots renumbered, A as B and B as A."""
+
+    def swap[T](pair: tuple[T, T]) -> tuple[T, T]:
+        return pair[1], pair[0]
+
+    timing = played.timing
+    return Tournament(
+        result=TournamentResult(
+            games=tuple(
+                replace(
+                    game,
+                    first=1 - game.first,
+                    winner=None if game.winner is None else 1 - game.winner,
+                )
+                for game in played.result.games
+            )
+        ),
+        timing=replace(
+            timing,
+            decisions=swap(timing.decisions),
+            seconds=swap(timing.seconds),
+            plans=swap(timing.plans),
+            turns=swap(timing.turns),
+        ),
+    )
+
+
+def play_paired(
+    bots: tuple[BotFactory, BotFactory],
+    seeds: int,
+    base_seed: int = 0,
+    max_turns: int = MAX_TURNS,
+    jobs: int = 1,
+) -> PairedTournament:
+    """Each of `seeds` seeds from `base_seed` played twice, once with each
+    bot first, as two tournaments (`play_tournament`), the second with the
+    bots' seats swapped: comparing the two games of a seed takes the deal's
+    luck out of the comparison. The wall time is both tournaments'."""
+    first = play_tournament(bots, seeds, base_seed, max_turns, jobs)
+    second = play_tournament((bots[1], bots[0]), seeds, base_seed, max_turns, jobs)
+    return PairedTournament(combine([first, _swapped(second)]))

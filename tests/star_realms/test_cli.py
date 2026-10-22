@@ -466,3 +466,34 @@ def test_gap_reports_the_champion_s_chosen_and_held_out_positions(capsys):
     assert "By game phase" in out
     assert "0.9-1.0" in out
     assert "turns 25+" in out
+
+
+def test_worlds_compares_the_plans_by_count_then_plays_the_paired_match(
+    capsys: pytest.CaptureFixture[str],
+):
+    main(
+        [
+            "worlds",
+            "--model",
+            "linear",
+            "--counts",
+            "1",
+            "2",
+            "--per-world",
+            "60",
+            "--games",
+            "1",
+            "--max-turns",
+            "4",
+            "--match-seeds",
+            "1",
+            "--match-base-seed",
+            "5",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert "the planner with the linear evaluation" in out
+    assert "plans in 1 game" in out
+    assert "2 worlds vs 1 worlds: 1 seed in both seats (seed 5)" in out
+    assert "Seeds won both / split / lost both by 2 worlds:" in out
+    assert "2 worlds:" in out and "ms per plan" in out
