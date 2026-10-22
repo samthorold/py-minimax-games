@@ -77,6 +77,7 @@ def self_play(
     max_turns: int = 300,
     record: bool = False,
     judge: bool = False,
+    diagnose: bool = False,
 ) -> dict[str, Any]:
     """Play `games`, `(seed, seat 0, seat 1)` with the seats as indices into
     `players` (`{"kind": "greedy"}`, `{"kind": "heuristic"}` or `{"kind":
@@ -87,4 +88,9 @@ def self_play(
     `winner` (None if unfinished) and `turns`, and `plans` and `diverged` (a
     column per seat); with `record`, each game's `actions`; with `judge`,
     each row's `judgement` (float64) by the seat that ended it, NaN for a
-    seat that doesn't judge. Neither changes a game."""
+    seat that doesn't judge; with `diagnose`, each row's `left` (int64, a
+    column for the seat that ended it and one for the other), the cards in
+    each seat's deck before its discard pile is reshuffled, and per plan of
+    the finished games its `plan_game`, `plan_turn`, `plan_seat` (int64) and
+    `plan_complete` (bool: whether it examined every end of the turn in
+    every world), in play order. None changes a game."""

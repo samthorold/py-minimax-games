@@ -2349,6 +2349,74 @@ The share of Trade Row choices that are denial, judged by `pf01` (with their mea
 - **Its buys don't deny**: 38.6% meet the definition against the heuristic's 44.1%, and the heuristic doesn't consider denial when it buys. Most cards are worth about as much to either player, so about two buys in five clear the bar by chance; a player that bought to deny would show more, not fewer. The champion buys for its own deck.
 - **On the belief**: `pf01` holds a weak form of it: the row matters a little for the next buyer, enough to steer its scraps, not its buys. Describing the Trade Row to the judgement as it bears on the next buyer (what they can afford, how much each card is worth to them) is Milestone 10's experiment, and this probe is its diagnostic: the share seen and the buys' denial share should rise if the idea was missing. The strategy doc's label stays [lore]: the probe measures what the judgement believes, not whether denial wins games.
 
+### Milestone 9: the judgement's errors by reshuffle distance and rare cards, and turns not examined
+
+- Date: 2026-10-22
+- Commit: this PR (#185; on `72534cc`): self-play's `diagnose` (`selfplay::Record::diagnostics`: each turn's end's cards left before each player's reshuffle, each plan's turn and completeness), `gap.measure(..., every=)`, `diagnostics.py` and the `diagnose` command.
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0, numpy 2.5.4. 2 self-play threads, **with three other agents working on the machine at the same time**, so the time is contended.
+- Seeds: the exploitation gap's games (18,400,000-18,400,999, mixed as `iterate.mix` mixes them), every third of them: no new seeds.
+
+**Beliefs tested** (End state, What it sees, How it chooses):
+
+- (a) *When a card will be drawn matters as much as owning it* (the deck's cycle). The judgement sees each player's draw pool as one set, so if the belief holds, its error is larger near a reshuffle than far from one.
+- (b) *What is learned about common cards should carry to rare ones* (cards by what they do). The judgement knows cards only by name, so if it doesn't carry, its error is larger on positions holding a card the Trade Deck has one copy of.
+- (c) *Almost every turn's outcomes can be examined in full* (within the turn, tactics are calculated). Its test: the share of the champion's turns that weren't.
+
+```sh
+uv run python -m minimax_games.games.star_realms diagnose --champion pf01 --pool mlp pi03 pf01 --games 1000 --every 3 --base-seed 18400000 --threads 2
+```
+
+(Every option but `--threads` is the default.) 334 of the exploitation gap's 1,000 games, the 1st, 4th, 7th, ... of its mix (the same games, in the same proportions: 167 against itself, 83 against the heuristic, 84 against the pool), every player at 4 worlds and 20,000 states per plan. **Chosen** are the 6,077 ends `pf01` played, with its judgement as it played them; **held out** the 1,616 ends its opponents played (142 games), judged by `pf01`. Each bin gives the gap (mean judged chance less share won) and the squared miss (mean of (judged − won)², the Brier score), each ± one standard error counted by game. Near a reshuffle is 0-4 cards left in the deck: the player's next hand draw reshuffles their discard pile.
+
+(a) By the cards left in the deck of the player who just ended:
+
+| Left | Chosen n | Games | Gap | Squared | Held-out n | Gap | Squared |
+|---|---|---|---|---|---|---|---|
+| 0-4 (near) | 2,657 | 334 | −0.001 ± 0.010 | 0.188 ± 0.007 | 675 | +0.063 ± 0.031 | 0.163 ± 0.012 |
+| 5-9 | 2,214 | 334 | −0.012 ± 0.009 | 0.181 ± 0.008 | 569 | +0.048 ± 0.031 | 0.155 ± 0.013 |
+| 10-14 | 1,073 | 303 | +0.002 ± 0.012 | 0.170 ± 0.011 | 298 | +0.026 ± 0.033 | 0.133 ± 0.016 |
+| 15+ | 133 | 88 | +0.007 ± 0.039 | 0.122 ± 0.022 | 74 | −0.008 ± 0.049 | 0.102 ± 0.034 |
+| 5+ (far) | 3,420 | 334 | −0.007 ± 0.008 | 0.175 ± 0.009 | 941 | +0.037 ± 0.030 | 0.144 ± 0.014 |
+
+By the next player's: near 2,529 chosen, gap −0.008 ± 0.009, squared 0.185 ± 0.007; far 3,548, −0.002 ± 0.009, 0.177 ± 0.008 (held out: near 690, +0.043 ± 0.035, 0.166 ± 0.015; far 926, +0.052 ± 0.029, 0.141 ± 0.012).
+
+(b) By a rare card held by either player (23 cards: one copy each in the Trade Deck):
+
+| | Chosen n | Games | Gap | Squared | Held-out n | Gap | Squared |
+|---|---|---|---|---|---|---|---|
+| With | 4,718 | 334 | +0.001 ± 0.008 | 0.167 ± 0.009 | 1,239 | +0.028 ± 0.030 | 0.137 ± 0.014 |
+| Without | 1,359 | 331 | −0.022 ± 0.012 | 0.228 ± 0.008 | 377 | +0.114 ± 0.039 | 0.201 ± 0.013 |
+
+(a) and (b) within each game phase, chosen positions (n, squared miss):
+
+| Turns | Near | Far | With a rare card | Without |
+|---|---|---|---|---|
+| 1-6 | 1,045, 0.227 | 533, 0.226 | 380, 0.211 | 1,198, 0.232 |
+| 7-12 | 507, 0.193 | 1,071, 0.190 | 1,427, 0.190 | 151, 0.203 |
+| 13-18 | 608, 0.143 | 945, 0.163 | 1,543, 0.155 | 10, 0.117 |
+| 19-24 | 343, 0.141 | 652, 0.128 | 995, 0.133 | 0, - |
+| 25+ | 154, 0.190 | 219, 0.166 | 373, 0.176 | 0, - |
+
+(c) The champion's turns not examined in full (some plan in the turn ran out of its 20,000 states before listing every end of the turn in every world):
+
+| Turns | The champion's turns | Not in full | Share |
+|---|---|---|---|
+| 1-6 | 1,578 | 0 | 0.0% |
+| 7-12 | 1,578 | 62 | 3.9% |
+| 13-18 | 1,567 | 338 | 21.6% |
+| 19-24 | 1,151 | 463 | 40.2% |
+| 25+ | 492 | 280 | 56.9% |
+| All | 6,366 | 1,143 | **18.0%** |
+
+3.0 minutes wall (177 s, 5.9 CPU-minutes) on 2 contended threads; the full 1,000 games (`--every 1`) take three times that, about the gap's 12.6 minutes. Two runs gave identical output.
+
+#### Reading it
+
+- **(a) No sign that the deck's cycle limits the judgement.** The gap is near zero near a reshuffle and far from one, for either player (−0.001 against −0.007 for the player who ended). The squared miss is a little higher near (0.188 against 0.175), but within each phase there is no consistent direction: equal in turns 1-12, lower near in 13-18, higher near in 19 on, each difference about 0.01-0.02 on a few hundred positions, about the size of one standard error. Overall, near positions are a little more common early, where every position is hard to call. So for `pf01` **the belief isn't supported by this diagnostic**, and splitting the judgement's description of a deck by zone (Milestone 10) isn't called for by it. The test of the split itself, with and without, remains the design's; this says only that the error it would remove isn't visible.
+- **(b) Positions with a rare card are judged no worse.** Without the phase they look better judged (0.167 against 0.228), but that is the phase: 88% of the positions without a rare card are in turns 1-6, before anyone has bought one. Within turns 1-6 and 7-12, the only phases with both, positions holding a rare card are judged a little *better* (0.211 against 0.232; 0.190 against 0.203). So **what is learned about common cards isn't visibly failing to carry to rare ones**, and describing cards by what they do isn't called for by this diagnostic. Its limit: "holds any of 23 cards" is broad, and from turn 7 on almost every position does, so a few badly judged rare cards could hide in it.
+- **(c) Turns not examined in full are common, and grow through the game**: 18% of the champion's turns overall, none in turns 1-6, 4% in 7-12, then 22%, 40% and 57%. The design's premise that *almost every* turn can be examined in full holds early but not late, when decks are bigger and have more draw and more choices. That is a fact about today's budget (5,000 states per world), not a cost in strength: whether examining those turns in full changes the choice, or wins more, is the examination test (How it chooses), which this makes worth running, on those turns. It may also bear on the one exploitation gap found (+0.033 in turns 25+), where most turns are cut short, though nothing here connects the two.
+- **Held out** shows the same pattern as in the gap's measurement (opponents' positions overrated, more so without a rare card, which is the early game again), so it adds nothing to (a) or (b) beyond who is playing.
+
 ### Milestone 9: probe, investment against the race
 
 - Date: 2026-10-22
