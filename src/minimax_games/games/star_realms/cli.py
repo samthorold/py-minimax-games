@@ -121,7 +121,10 @@ seed with a recorded run's CSVs in DIR.
 judgement (see `probe`): it plays `--games` of the champion (`--model`)
 against itself in Rust on `--threads`, and reports what a first, second and
 third card of each function adds to the judged chance of winning at every
-turn's end of them, by game phase.
+turn's end of them, by game phase. `probe investment` reports what a ship
+giving only trade and one of the same cost giving only combat add per unit,
+by phase, and the share of economy and combat buys by turn in those games
+and in the heuristic's against itself on the same seeds.
 """
 
 import argparse
@@ -1148,7 +1151,9 @@ def probing(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(
         prog="python -m minimax_games.games.star_realms probe"
     )
-    parser.add_argument("probe", choices=["synergy"], help="the probe to run")
+    parser.add_argument(
+        "probe", choices=["synergy", "investment"], help="the probe to run"
+    )
     parser.add_argument(
         "--model", default="pf01", help="the champion's value (default: %(default)s)"
     )
@@ -1196,6 +1201,9 @@ def probing(argv: list[str]) -> None:
     model = value.load(args.model)
     champion = selfplay.Planner(model, worlds=args.worlds, budget=args.budget)
     seeds = range(args.base_seed, args.base_seed + args.games)
+    if args.probe == "investment":
+        _investment(args, model, champion, seeds)
+        return
     start = time.perf_counter()
     rows = probe.positions(champion, seeds, threads=args.threads)
     played = time.perf_counter() - start
@@ -1211,6 +1219,48 @@ def probing(argv: list[str]) -> None:
         print(line)
     print()
     for line in probe.report(found, logit=True):
+        print(line)
+    print(f"Games {played:.1f} s, probe {probed:.1f} s")
+
+
+def _investment(
+    args: argparse.Namespace,
+    model: value.Model,
+    champion: selfplay.Planner,
+    seeds: range,
+) -> None:
+    start = time.perf_counter()
+    games = probe.played(champion, seeds, threads=args.threads)
+    heuristic = selfplay.play(
+        [(seed, "heuristic", "heuristic") for seed in seeds],
+        threads=args.threads,
+        record=True,
+    )
+    played = time.perf_counter() - start
+    assert games.actions is not None
+    assert heuristic.actions is not None
+    found = probe.investment(model.predict, games.x)
+    probed = time.perf_counter() - start - played
+    print(
+        f"Investment probe of {args.model}: {len(games.x)} positions from its games"
+        f" against itself on seeds {seeds.start}-{seeds.stop - 1}"
+        f" ({args.worlds} worlds, {args.budget} states per plan)"
+    )
+    for line in probe.investment_report(found):
+        print(line)
+    print()
+    for line in probe.investment_report(found, logit=True):
+        print(line)
+    print()
+    print(
+        f"{args.model} against itself, and the heuristic against itself,"
+        f" on seeds {seeds.start}-{seeds.stop - 1}"
+    )
+    players = {
+        args.model: probe.buys(games.actions),
+        "heuristic": probe.buys(heuristic.actions),
+    }
+    for line in probe.buys_report(players):
         print(line)
     print(f"Games {played:.1f} s, probe {probed:.1f} s")
 

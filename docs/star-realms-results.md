@@ -2260,6 +2260,62 @@ The second card against the first on the logit scale, by phase (turns 1-8: 1,400
 - **What the probe can't separate**: the added cards are drawn at random across factions, and `pf01` reads each faction's density and expected pairs in a hand (`features.EXTRA`), so some of what a second card adds is faction synergy; random draws average it over, and the control carries the same mix. The row can't tell the Trade Deck from the scrap heap, so a copy that was scrapped can count as one left to add. And the probe measures the judgement, not the game: it says what `pf01` believes, not whether the lore is true, so the strategy doc's label stays [lore].
 - **What it points to** (How its understanding is judged): same-function synergy for draw and scrap is an idea the judgement hasn't built for itself, so describing it directly is a candidate experiment for Milestone 10. #178's per-player densities of draw, scrap and discard cards added nothing measurable, but a density is linear in the count; the probe's question is about pairs, as `features.EXTRA`'s expected same-faction pairs in a hand was for factions.
 
+### Milestone 9: probe, investment against the race
+
+- Date: 2026-10-22
+- Commit: this PR (#191; on `72534cc`): the investment probe (`probe.investment`, `PAIRS`, its summary and report), buys from recorded games (`probe.buys`, `kind`, `buy_shares`) and the `probe investment` command.
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0. Games on 2 threads, with three other agents' builds and runs on the machine at the same time.
+- Seeds: 19,191,000-19,191,199 for both the champion's games and the heuristic's, clear of every earlier range.
+
+**The belief** (star-realms/strategy.md, The race and the investment, [lore]): *strong players invest more, and for longer, than bots do*: they buy trade more readily and further into the game, where bots that read the game as a damage race buy combat sooner. The End state counts on the judgement to carry an investment's later payoff (What it learns from), and this probe asks how `pf01`'s weighs trade against combat, and whether its buying leans to trade more than the heuristic's.
+
+```sh
+uv run python -m minimax_games.games.star_realms probe investment --model pf01 --games 200 --base-seed 19191000 --threads 2
+```
+
+- **Positions**: every turn's end in 200 games of `pf01`'s planner against itself (4 worlds, 20,000 states per plan, in Rust): 4,513 positions.
+- **Comparable cards** (`probe.PAIRS`): Trade Deck ships of the same cost whose primary ability gives only trade, or only combat, and nothing else. Of the base set's cards that leaves two pairs: **Federation Shuttle (cost 1, 2 trade) against Blob Fighter (1, 3 combat)**, and **Freighter (4, 4 trade) against Blob Destroyer (4, 6 combat)**. Ships only, because a base gives every turn and defends, which a ship doesn't; one cost, so the pair is the choice a player with that much trade makes. Their ally abilities differ (the Shuttle gains Authority, the Fighter draws, the Freighter puts the next ship on top, the Destroyer destroys a base and scraps from the Trade Row), and every pair is a Trade Federation economy card against a Blob combat card, so faction is mixed into what the probe measures; no cleaner pair exists in the base set.
+- **The probe**: in each position, each card of a pair is added apart, as a copy taken from those out of sight (as the synergy probe adds them), to the deck of the player who just ended, and `pf01` judges both. A position counts for a pair when both its cards have a copy left (4,288 positions for the first pair, 4,077 for the second). Reported: each card's gain **per unit** of what it gives (the per-hand factor, 5 over the cards in the deck, is the same for both cards, so it cancels in the comparison), trade less combat per unit, and the **card gap**, the economy card's gain less the combat card's: which of the two, for the same price, the judgement would rather the player had bought. Gains in chance and in logit. Tested on constructed judgements with known answers: linear in the trade and the combat a deck's cards give (gains exactly the weights, per unit), weights that change at turn 8 (the summary recovers them by phase), and a sigmoid of a linear one (the weights on the logit scale).
+- **Buys** (`probe.buys`, from `selfplay.play(..., record=True)`'s decisions, which recording doesn't change): every `Acquire` and `AcquireOnTop` (a free ship costs no trade, so isn't one), by the game's turn it was made in, both players counted. A card is **economy** if its primary ability gives trade and no combat (through either option of a choice: Trading Post, Barter World and Recycling Station count, as do Survey Ship, the Cutter and the Explorer), **combat** if combat and no trade (Defense Center and Blob World count; Fleet HQ, which gives every ship combat, too), **mixed** if it can give either (Patrol Mech, the only one), and **neither** otherwise (Battle Station, Stealth Needle, Mech World, Junkyard, Machine Base, Brain World). Ally and scrap abilities don't count: they give only sometimes. Of the 47 buyable cards (46 in the Trade Deck and the Explorer) that is 14 economy, 26 combat, 1 mixed and 6 neither. The heuristic plays itself on the same 200 seeds, so both see the same deals.
+
+What each card added, over all positions and by phase (turns 1-8, 9-16, 17 on), in judged chance (mean, and standard deviation across positions), with trade less combat per unit and the card gap (mean, standard error):
+
+| Phase | Pair | Positions | Per trade | Per combat | Trade − combat per unit | Card gap | Economy card more |
+|---|---|---|---|---|---|---|---|
+| All | Shuttle / Fighter | 4,288 | −0.0065 (0.0149) | +0.0129 (0.0136) | −0.0194 (0.0004) | −0.052 (0.001) | 17.5% |
+| All | Freighter / Destroyer | 4,077 | +0.0032 (0.0151) | +0.0159 (0.0105) | −0.0126 (0.0003) | −0.082 (0.001) | 14.1% |
+| Early | Shuttle / Fighter | 1,387 | +0.0038 (0.0128) | +0.0154 (0.0146) | −0.0116 (0.0007) | −0.039 (0.002) | 32.5% |
+| Early | Freighter / Destroyer | 1,375 | +0.0189 (0.0090) | +0.0199 (0.0091) | **−0.0010 (0.0004)** | −0.044 (0.002) | 32.8% |
+| Middle | Shuttle / Fighter | 1,538 | −0.0108 (0.0140) | +0.0147 (0.0141) | −0.0255 (0.0007) | −0.066 (0.002) | 12.7% |
+| Middle | Freighter / Destroyer | 1,458 | −0.0011 (0.0109) | +0.0172 (0.0109) | −0.0183 (0.0004) | −0.108 (0.002) | 6.9% |
+| Late | Shuttle / Fighter | 1,363 | −0.0120 (0.0121) | +0.0085 (0.0105) | −0.0205 (0.0006) | −0.049 (0.001) | 7.8% |
+| Late | Freighter / Destroyer | 1,244 | −0.0091 (0.0087) | +0.0097 (0.0084) | −0.0188 (0.0004) | −0.095 (0.002) | 2.0% |
+
+On the logit scale, trade less combat per unit: Shuttle / Fighter −0.051 (0.003) early, −0.139 (0.003) middle, −0.138 (0.003) late; Freighter / Destroyer −0.007 (0.002), −0.100 (0.002), −0.126 (0.002). The same shape.
+
+The share of buys of each kind, by the game's turn (both players' turns counted; the Explorer's share is part of economy's):
+
+| Turns | `pf01` buys | Economy | Combat | Mixed | Neither | (Explorer) | Heuristic buys | Economy | Combat | Mixed | Neither | (Explorer) |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| All | 5,455 | 42.8% | 48.5% | 2.7% | 6.0% | 11.5% | 6,792 | 53.2% | 40.3% | 1.9% | 4.6% | 24.0% |
+| 1-4 | 1,105 | 55.8% | 38.4% | 3.0% | 2.8% | 15.8% | 1,206 | 83.7% | 15.2% | 0.5% | 0.6% | 55.5% |
+| 5-8 | 1,022 | 46.0% | 45.8% | 2.3% | 5.9% | 15.5% | 1,218 | 29.7% | 63.5% | 2.1% | 4.6% | 9.4% |
+| 9-12 | 914 | 40.6% | 50.1% | 2.4% | 6.9% | 9.3% | 1,098 | 49.0% | 41.6% | 2.6% | 6.7% | 15.9% |
+| 13-16 | 851 | 33.8% | 55.6% | 3.2% | 7.4% | 8.2% | 1,041 | 55.3% | 38.9% | 1.9% | 3.8% | 21.8% |
+| 17-20 | 720 | 37.9% | 53.2% | 2.5% | 6.4% | 8.5% | 986 | 51.6% | 40.2% | 2.1% | 6.1% | 21.7% |
+| 21-24 | 484 | 38.8% | 50.8% | 2.7% | 7.6% | 10.7% | 692 | 51.3% | 40.2% | 2.2% | 6.4% | 19.1% |
+| 25+ | 359 | 35.7% | 53.2% | 3.1% | 8.1% | 6.7% | 551 | 47.2% | 44.5% | 2.2% | 6.2% | 17.6% |
+
+About 2 minutes in all (113 s for both sets of games, 0.1 s for the probe), with the machine shared.
+
+#### Reading it
+
+- **`pf01`'s judgement weighs combat above trade, everywhere in the game.** Per unit, trade less combat is below zero in every phase for both pairs, many standard errors out; for the same price, the combat card is judged the better buy at 82-86% of positions. Only early, and only for the pricier pair, are they close: a unit of the Freighter's trade is worth about as much as a unit of the Destroyer's combat (−0.0010 ± 0.0004), but the Destroyer gives 6 to the Freighter's 4, so the card gap still favours it (−0.044).
+- **What trade is worth falls to below nothing after the opening.** From turn 9 a Federation Shuttle lowers the judged chance on average (−0.011 per unit in the middle, −0.012 late), and by the late phase so does a Freighter (−0.009): a card that only gives trade is judged to dilute the deck by more than it adds. Combat cards stay positive throughout, though they too are worth less late. The card gap grows from early to middle and stays wide, so the judgement's lean towards the race strengthens as the game goes on, which is the reverse of what the lore says strong players do.
+- **The buys say the same, against the heuristic.** `pf01` buys economy most in turns 1-4 (55.8%) and less in every later band, down to about 34-39% from turn 13 on, against 51-56% combat. The heuristic's economy share looks larger (53.2% to `pf01`'s 42.8%), but much of it is Explorers (24.0% of its buys, 55.5% in turns 1-4): without them its economy share is about 38% of its other buys, to `pf01`'s 35%. In turns 5-8 the heuristic leans hardest to combat (63.5%), and from turn 9 on it buys trade more readily than `pf01` does in every band, with or without Explorers counted. So `pf01` doesn't invest more or for longer than the scripted bot; if anything it invests a little less, from the middle of the game on.
+- **On the belief**: it fails for `pf01`. Its judgement and its buying both read the game as a damage race, which is the shape the design's exploration belief predicts for a self-taught player that never saw an investment pay off (End state, How it explores: *it can stay a racer because it never explored, not because racing is right*). This probe can't tell which: it says what `pf01` believes, not whether racing is right in this game, so the strategy doc's label stays [lore]. Milestone 10's test, two players learned alike with and without more exploration, is the one that separates them, and this probe is its measure.
+- **What the probe can't separate**: every pair is a Trade Federation economy card against a Blob combat card, and `pf01` reads faction density and pairs (`features.EXTRA`), so faction is mixed in; the two pairs agree in sign and shape, which a faction effect alone wouldn't explain at both costs, but its size isn't measured. A card's gain also includes what it dilutes, which is why trade can be worth less than nothing; the card gap compares two cards that dilute alike. And "economy" here is what a card gives every time it is played; a card's ally or scrap ability can change that (the Explorer scraps for 2 combat).
+
 ## Milestone 7: Rust tracer bullet (toolchain and first-slice engine)
 
 2026-10-21, #137 (tracked by #127), CPython 3.14, Apple M1 (8 GB) shared with three other agents' builds and tests. The first end-to-end path through Rust: maturin builds `minimax_games._native` from `rust/`, and its Star Realms engine plays the starter decks and the 30-card first slice (design, Compiled engine).

@@ -153,6 +153,14 @@ minutes; the probe itself plays none and takes a second or two. Results:
 "Milestone 9: probe, same-function synergy" in
 [docs/star-realms-results.md](docs/star-realms-results.md).
 
+`task probe -- investment` weighs trade against combat: it adds, apart, a
+ship giving only trade and one of the same cost giving only combat to the
+deck of the player who just ended, and prints what each added per unit by
+phase; then it plays the heuristic against itself on the same seeds and
+prints the share of each player's buys that are economy, combat, mixed or
+neither, by turn. About 2 minutes. Results: "Milestone 9: probe, investment
+against the race".
+
 ### Profiling the Star Realms search
 
 `task profile` (`python -m minimax_games.games.star_realms profile`) runs the
