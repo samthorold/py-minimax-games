@@ -567,15 +567,18 @@ class PlannerBot:
             self.diverged += 1
             self._line = []
         if not self._line:
-            worlds = [sample_world(view, self._rng) for _ in range(self.worlds)]
-            made = plan(worlds, self.budget, self.evaluator, self.backend)
+            state, made = self._plan(view)
             self.plans += 1
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("planned %s", made)
-            state = worlds[0]
             for action in made.line:
                 self._line.append((seen(observe(state, view.observer)), action))
                 state = rules.advance_legal(state, action)
         _, action = self._line.pop(0)
         assert action in actions, (action, actions)
         return action
+
+    def _plan(self, view: View) -> tuple[GameState, Plan]:
+        """A plan from `view`, and the world its line was planned in."""
+        worlds = [sample_world(view, self._rng) for _ in range(self.worlds)]
+        return worlds[0], plan(worlds, self.budget, self.evaluator, self.backend)

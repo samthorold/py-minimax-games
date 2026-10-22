@@ -57,6 +57,17 @@ greedy-vs-greedy games from `--base-seed`: games per second, `advance` calls
 per second over their recorded decisions, and heuristic-vs-heuristic games
 per second.
 
+`python -m minimax_games.games.star_realms worlds` tests whether the
+champion's plan changes with more sampled worlds (see `sampled_worlds`): in
+`--games` self-play games of `planner:<--model>` (pf01 by default; `linear`
+for the planner with the linear evaluation) from `--base-seed`, every plan is
+made from each of `--counts` worlds (4, 8 and 16) at `--per-world` states per
+world, and it prints the share of plans whose line changes from the first
+count's, by turn number, and the time per plan at each count. With
+`--match-seeds N`, it then plays a paired match (`tournament.play_paired`) of
+the largest count against the first on N seeds from `--match-base-seed`,
+each in both seats. `--jobs` spreads both over processes.
+
 `python -m minimax_games.games.star_realms profile` profiles the cheat's
 budgeted decisions (see `profiling`) at the same positions and in the first
 `--game-turns` turns of a seeded cheat-vs-heuristic game, and writes a report
@@ -109,6 +120,7 @@ from minimax_games.games.star_realms import (
     iterate,
     planner,
     profiling,
+    sampled_worlds,
     tune,
     turn_sizes,
     value,
@@ -130,8 +142,10 @@ from minimax_games.games.star_realms.sampler import WORLDS, SamplerBot
 from minimax_games.games.star_realms.sprt import Hypothesis, Sprt, wilson
 from minimax_games.games.star_realms.tournament import (
     MAX_TURNS,
+    PairedTournament,
     SprtTournament,
     Tournament,
+    play_paired,
     play_sprt,
     play_tournament,
 )
@@ -325,6 +339,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if argv[:1] == ["native-bench"]:
         native_bench(argv[1:])
+        return
+    if argv[:1] == ["worlds"]:
+        worlds(argv[1:])
         return
     parser = argparse.ArgumentParser(prog="python -m minimax_games.games.star_realms")
     parser.add_argument("--seed", type=int, default=0, help="the game's seed")
@@ -538,6 +555,115 @@ def tournament(argv: list[str]) -> None:
             print(line)
     for line in report(played, names):
         print(line)
+
+
+def worlds(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(
+        prog="python -m minimax_games.games.star_realms worlds"
+    )
+    parser.add_argument(
+        "--model",
+        default="pf01",
+        help="the champion: a committed learned value, on the Rust enumeration,"
+        " or 'linear' for the planner with the linear evaluation in Python"
+        " (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--counts",
+        nargs="+",
+        type=int,
+        default=list(sampled_worlds.COUNTS),
+        metavar="WORLDS",
+        help="the counts of worlds compared, today's first (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--per-world",
+        type=int,
+        default=sampled_worlds.PER_WORLD,
+        help="states per world at every count (default: %(default)s)",
+    )
+    parser.add_argument("--games", type=int, default=10, help="self-play games probed")
+    parser.add_argument(
+        "--base-seed", type=int, default=0, help="the first probed game's seed"
+    )
+    parser.add_argument(
+        "--max-turns",
+        type=int,
+        default=sampled_worlds.MAX_TURNS,
+        help="stop a probed game after this many turns (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--match-seeds",
+        type=int,
+        default=0,
+        help="seeds of the paired match of the largest count against the"
+        " first, each played in both seats (default: none)",
+    )
+    parser.add_argument(
+        "--match-base-seed", type=int, default=0, help="the match's first seed"
+    )
+    parser.add_argument("--jobs", type=int, default=1, help="processes (same results)")
+    args = parser.parse_args(argv)
+    if len(args.counts) < 2 or sorted(set(args.counts)) != args.counts:
+        parser.error("--counts needs at least 2 counts, in increasing order")
+    model = None if args.model == "linear" else args.model
+    name = "planner" if model is None else bot_name(LEARNED + model)
+    who = "the planner with the linear evaluation" if model is None else name
+    print(
+        f"Plans by count of worlds: {who} against itself, {args.games} games"
+        f" from seed {args.base_seed}, {args.per_world} states per world,"
+        f" at most {args.max_turns} turns"
+    )
+    records = sampled_worlds.measure(
+        args.games,
+        args.base_seed,
+        args.counts,
+        args.per_world,
+        model,
+        args.max_turns,
+        args.jobs,
+    )
+    for line in sampled_worlds.report(records, args.counts):
+        print(line)
+    if not args.match_seeds:
+        return
+    counts = (args.counts[-1], args.counts[0])
+    names = (f"{counts[0]} worlds", f"{counts[1]} worlds")
+    bots = (
+        configured(name, args.per_world * counts[0], counts[0]),
+        configured(name, args.per_world * counts[1], counts[1]),
+    )
+    paired = play_paired(bots, args.match_seeds, args.match_base_seed, jobs=args.jobs)
+    last = args.match_base_seed + args.match_seeds - 1
+    one = args.match_seeds == 1
+    seeds = f"seed {last}" if one else f"seeds {args.match_base_seed}-{last}"
+    print()
+    print(
+        f"{names[0]} vs {names[1]}: {args.match_seeds} seed{'' if one else 's'}"
+        f" in both seats ({seeds}), max {MAX_TURNS} turns"
+    )
+    for line in paired_report(paired, names):
+        print(line)
+
+
+def paired_report(paired: PairedTournament, names: tuple[str, str]) -> list[str]:
+    """A paired match's results as plain-text lines: bot A's win rate and its
+    interval, how the seeds' pairs of games went (the sign z is (won both -
+    lost both) / sqrt(their sum)), and the tournament's table."""
+    result = paired.tournament.result
+    wins = result.wins(0)
+    low, high = wilson(wins, result.finished)
+    both, split, neither = (paired.pairs[n] for n in (2, 1, 0))
+    decided = both + neither
+    z = (both - neither) / decided**0.5 if decided else 0.0
+    rate = 100 * wins / result.finished if result.finished else 0.0
+    return [
+        f"{names[0]}: {wins}/{result.finished} ({rate:.1f}%),"
+        f" 95% interval {100 * low:.1f}-{100 * high:.1f}%",
+        f"Seeds won both / split / lost both by {names[0]}:"
+        f" {both} / {split} / {neither} (sign z {z:.2f})",
+        *report(paired.tournament, names),
+    ]
 
 
 def _seed_turn(text: str) -> tuple[int, int]:

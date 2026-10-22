@@ -9,6 +9,7 @@ from minimax_games.games.star_realms.sprt import Hypothesis, Sprt
 from minimax_games.games.star_realms.tournament import (
     TournamentResult,
     combine,
+    play_paired,
     play_sprt,
     play_tournament,
 )
@@ -187,3 +188,20 @@ def test_sprt_counts_a_planning_bots_plans_and_turns():
     serial = play_tournament((Counting, greedy), games=4).timing
     assert (timing.plans, timing.turns) == (serial.plans, serial.turns)
     assert timing.turns[0] > 0
+
+
+def test_a_paired_match_plays_every_seed_once_in_each_seat():
+    paired = play_paired((greedy, RandomBot), seeds=3, base_seed=10)
+    result = paired.tournament.result
+    assert sorted((g.seed, g.first) for g in result.games) == [
+        (s, f) for s in (10, 11, 12) for f in (0, 1)
+    ]
+    assert paired.pairs == {2: 3, 1: 0, 0: 0}
+    assert paired.tournament.timing.decisions[1] > 0
+
+
+def test_a_bot_paired_with_itself_splits_every_seed():
+    # Greedy is deterministic, so each seed is the same game in both seats.
+    paired = play_paired((BOTS["greedy"], BOTS["greedy"]), seeds=4, jobs=2)
+    assert paired.pairs == {2: 0, 1: 4, 0: 0}
+    assert paired.tournament.result.wins(0) == 4
