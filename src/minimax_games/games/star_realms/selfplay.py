@@ -34,14 +34,40 @@ from minimax_games.games.star_realms.planner import BUDGET, WORLDS
 from minimax_games.games.star_realms.value import Model, reads_more
 
 
+@dataclass(frozen=True, slots=True)
+class Reply:
+    """The Rust planner's reply option (docs/star-realms.md, Learned values:
+    looking through the reply): the plan's best `candidates` are each worth
+    the mean over worlds of the player's chance after the opponent replies
+    from the candidate's best end in that world, the opponent planning its
+    turn from `worlds` sub-worlds of its own view at `budget` states in
+    all, and the best of them is played. Rust only: the Python planner has
+    no reply."""
+
+    candidates: int = 3
+    worlds: int = 2
+    budget: int = 5_000
+
+    def __post_init__(self) -> None:
+        if self.candidates < 1 or self.worlds < 1 or self.budget < 2 * self.worlds:
+            msg = (
+                "a reply needs at least 1 candidate, 1 world and 2 states per"
+                f" world: {self}"
+            )
+            raise ValueError(msg)
+
+
 @dataclass(frozen=True, slots=True, eq=False)
 class Planner:
     """The whole-turn planner scoring ends with `model`, over `worlds`
-    worlds and at most `budget` states per plan (`planner.PlannerBot`)."""
+    worlds and at most `budget` states per plan (`planner.PlannerBot`),
+    looking through the opponent's replies if `reply` is given (Rust only).
+    """
 
     model: Model
     worlds: int = WORLDS
     budget: int = BUDGET
+    reply: Reply | None = None
 
     def __post_init__(self) -> None:
         if self.model.names != features.NAMES:
@@ -89,6 +115,13 @@ def _native_player(player: Player) -> dict[str, Any]:
             "worlds": player.worlds,
             "budget": player.budget,
             "model": native_model(player.model),
+            "reply": None
+            if player.reply is None
+            else {
+                "candidates": player.reply.candidates,
+                "worlds": player.reply.worlds,
+                "budget": player.reply.budget,
+            },
         }
     return {"kind": player}
 
@@ -105,6 +138,26 @@ class Examined:
     game: np.ndarray
     turn: np.ndarray
     seat: np.ndarray
+    complete: np.ndarray
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class Replies:
+    """The planners' plans in the finished games, in play order, with what
+    looking through the opponent's replies came to: each plan's game, turn,
+    seat, `states` visited (its replies' included), the candidates
+    `looked` through (0 if fewer than 2 competed, or the planner has no
+    reply), the pick's `rank` among them by the judgement (1 for the
+    judgement's own pick, so above 1 the reply changed the choice; 0 if none
+    was looked through), and whether every reply examined every end of the
+    opponent's turn (`complete`)."""
+
+    game: np.ndarray
+    turn: np.ndarray
+    seat: np.ndarray
+    states: np.ndarray
+    looked: np.ndarray
+    rank: np.ndarray
     complete: np.ndarray
 
 
@@ -146,6 +199,11 @@ class SelfPlay:
     examined: Examined | None = None
     """If asked for (`diagnose`), the planners' plans and whether each
     examined every end of its turn."""
+    replies: Replies | None = None
+    """If asked for (`replies`), the planners' plans and their replies."""
+    seconds: np.ndarray | None = None
+    """If asked for (`replies`), each game's (rows) seconds each seat
+    (columns) spent planning: measured, so it varies by run."""
 
     @property
     def games(self) -> int:
@@ -160,12 +218,15 @@ def play(
     record: bool = False,
     judge: bool = False,
     diagnose: bool = False,
+    replies: bool = False,
 ) -> SelfPlay:
     """Play `games` in Rust on `threads` threads, the GIL released, each
     stopping unfinished past `max_turns`; with `record`, keep every
     decision; with `judge`, each played end's judgement by whoever played
     it; with `diagnose`, what the diagnostics need (`SelfPlay.left` and
-    `SelfPlay.examined`). None changes a game."""
+    `SelfPlay.examined`); with `replies`, each plan's states and replies
+    and each seat's time planning (`SelfPlay.replies`, `SelfPlay.seconds`).
+    None changes a game."""
     players: list[Player] = []
     index: dict[tuple[str, object], int] = {}
 
@@ -188,6 +249,7 @@ def play(
         record,
         judge,
         diagnose,
+        replies,
     )
     return SelfPlay(
         x=found["features"],
@@ -210,6 +272,18 @@ def play(
         )
         if diagnose
         else None,
+        replies=Replies(
+            game=found["reply_game"],
+            turn=found["reply_turn"],
+            seat=found["reply_seat"],
+            states=found["reply_states"],
+            looked=found["reply_looked"],
+            rank=found["reply_rank"],
+            complete=found["reply_complete"],
+        )
+        if replies
+        else None,
+        seconds=found.get("seconds"),
     )
 
 

@@ -20,7 +20,7 @@ use std::thread;
 use super::bots::greedy_move;
 use super::features;
 use super::heuristic::heuristic_move;
-use super::planner::PlannerBot;
+use super::planner::{Note, PlannerBot, Replies};
 use super::rules::{Action, apply_legal, auto_play, legal_actions, new_game, winner};
 use super::value::Value;
 use super::view::observe;
@@ -30,11 +30,13 @@ use super::view::observe;
 pub enum Player {
     Greedy,
     Heuristic,
-    /// The whole-turn planner (`PlannerBot`) scoring with `value`.
+    /// The whole-turn planner (`PlannerBot`) scoring with `value`, looking
+    /// through the opponent's replies if `replies` is given.
     Planner {
         value: Value,
         worlds: usize,
         budget: usize,
+        replies: Option<Replies>,
     },
 }
 
@@ -53,7 +55,10 @@ impl<'a> Bot<'a> {
                 value,
                 worlds,
                 budget,
-            } => Bot::Planner(Box::new(PlannerBot::new(value, *worlds, *budget, seed))),
+                replies,
+            } => Bot::Planner(Box::new(
+                PlannerBot::new(value, *worlds, *budget, seed).with_replies(*replies),
+            )),
         }
     }
 
@@ -61,6 +66,20 @@ impl<'a> Bot<'a> {
         match self {
             Bot::Planner(bot) => &bot.examined,
             Bot::Greedy | Bot::Heuristic => &[],
+        }
+    }
+
+    fn noted(&self) -> &[(u32, usize, Note)] {
+        match self {
+            Bot::Planner(bot) => &bot.noted,
+            Bot::Greedy | Bot::Heuristic => &[],
+        }
+    }
+
+    fn seconds(&self) -> f64 {
+        match self {
+            Bot::Planner(bot) => bot.seconds,
+            Bot::Greedy | Bot::Heuristic => 0.0,
         }
     }
 
@@ -87,6 +106,20 @@ pub struct Record {
     /// reshuffled; and each plan's turn and whether it examined every end
     /// of the turn.
     pub diagnostics: bool,
+    /// Each plan's turn, seat, states and what looking through the replies
+    /// came to (`Note`, the default for a plan that didn't), and each seat's
+    /// time spent planning.
+    pub replies: bool,
+}
+
+/// One plan's record (`Record::replies`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlanNote {
+    pub turn: u32,
+    pub seat: usize,
+    /// States the plan visited, its replies' included.
+    pub states: usize,
+    pub note: Note,
 }
 
 /// A game to play: its seed and the players of seats 0 and 1, as indices
@@ -124,6 +157,12 @@ pub struct Played {
     pub diverged: [u64; 2],
     /// Every decision, in order, if asked for (`Record::actions`).
     pub actions: Vec<Action>,
+    /// Each plan's record, in the order made, if asked for
+    /// (`Record::replies`).
+    pub replies: Vec<PlanNote>,
+    /// Each seat's seconds spent planning, if asked for (`Record::replies`):
+    /// measured, so it varies by run.
+    pub seconds: [f64; 2],
 }
 
 /// Play `game` among `players`.
@@ -144,6 +183,8 @@ pub fn play_game(players: &[Player], game: Game, max_turns: u32, record: Record)
         plans: [0; 2],
         diverged: [0; 2],
         actions: Vec::new(),
+        replies: Vec::new(),
+        seconds: [0.0; 2],
     };
     let mut scratch = Vec::new();
     let mut state = new_game(game.seed);
@@ -198,6 +239,25 @@ pub fn play_game(players: &[Player], game: Game, max_turns: u32, record: Record)
             .collect();
         examined.sort_by_key(|&(turn, ..)| turn);
         played.examined = examined;
+    }
+    if record.replies {
+        let mut notes: Vec<PlanNote> = bots
+            .iter()
+            .enumerate()
+            .flat_map(|(seat, bot)| {
+                bot.noted()
+                    .iter()
+                    .map(move |&(turn, states, note)| PlanNote {
+                        turn,
+                        seat,
+                        states,
+                        note,
+                    })
+            })
+            .collect();
+        notes.sort_by_key(|n| n.turn);
+        played.replies = notes;
+        played.seconds = [bots[0].seconds(), bots[1].seconds()];
     }
     played
 }
@@ -264,6 +324,7 @@ mod tests {
             value,
             worlds: 2,
             budget: 200,
+            replies: None,
         }
     }
 
@@ -286,21 +347,95 @@ mod tests {
     }
 
     #[test]
-    fn threads_don_t_change_the_results() {
-        let players = [planner(), Player::Heuristic, Player::Greedy];
-        let games: Vec<Game> = (0..5)
+    fn self_play_notes_each_plan_s_replies() {
+        let Player::Planner { value, .. } = planner() else {
+            unreachable!()
+        };
+        let replying = Player::Planner {
+            value: value.clone(),
+            worlds: 2,
+            budget: 200,
+            replies: Some(Replies {
+                candidates: 3,
+                worlds: 2,
+                budget: 60,
+            }),
+        };
+        let players = [replying, planner()];
+        let games: Vec<Game> = (0..4)
             .map(|seed| Game {
                 seed,
-                seats: [seed as usize % 3, (seed as usize + 1) % 3],
+                seats: [seed as usize % 2, 1 - seed as usize % 2],
+            })
+            .collect();
+        let record = Record {
+            replies: true,
+            ..Record::default()
+        };
+        let played = play_games(&players, &games, 2, 300, record);
+        let mut looked = 0;
+        for (game, p) in games.iter().zip(&played) {
+            let replier = game.seats.iter().position(|&s| s == 0).unwrap();
+            for seat in 0..2 {
+                let notes: Vec<_> = p.replies.iter().filter(|n| n.seat == seat).collect();
+                assert_eq!(notes.len() as u64, p.plans[seat]);
+                for n in notes {
+                    assert!(n.states > 0);
+                    if seat == replier {
+                        assert!(n.note.looked <= 3);
+                        looked += usize::from(n.note.looked >= 2);
+                        assert!(n.states <= 200 + 3 * 2 * 60);
+                    } else {
+                        assert_eq!(n.note, Note::default());
+                        assert!(n.states <= 200);
+                    }
+                }
+            }
+            assert!(p.seconds.iter().all(|&s| s > 0.0));
+        }
+        assert!(looked > 10, "only {looked} plans looked through replies");
+    }
+
+    #[test]
+    fn threads_don_t_change_the_results() {
+        let Player::Planner { value, .. } = planner() else {
+            unreachable!()
+        };
+        let replying = Player::Planner {
+            value,
+            worlds: 2,
+            budget: 200,
+            replies: Some(Replies {
+                candidates: 3,
+                worlds: 2,
+                budget: 40,
+            }),
+        };
+        let players = [planner(), Player::Heuristic, Player::Greedy, replying];
+        let games: Vec<Game> = (0..6)
+            .map(|seed| Game {
+                seed,
+                seats: [seed as usize % 4, (seed as usize + 1) % 4],
             })
             .collect();
         let record = Record {
             actions: true,
             judgements: false,
             diagnostics: true,
+            replies: true,
         };
-        let one = play_games(&players, &games, 1, 300, record);
-        assert_eq!(play_games(&players, &games, 3, 300, record), one);
+        // the time spent planning is measured, so it is left out
+        let untimed = |played: Vec<Played>| -> Vec<Played> {
+            played
+                .into_iter()
+                .map(|p| Played {
+                    seconds: [0.0; 2],
+                    ..p
+                })
+                .collect()
+        };
+        let one = untimed(play_games(&players, &games, 1, 300, record));
+        assert_eq!(untimed(play_games(&players, &games, 3, 300, record)), one);
         assert!(one.iter().any(|p| p.plans[0] > 0));
     }
 }

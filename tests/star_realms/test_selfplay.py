@@ -20,6 +20,7 @@ from minimax_games.games.star_realms.rollout import SPAN
 from minimax_games.games.star_realms.selfplay import (
     Pairing,
     Planner,
+    Reply,
     alternating,
     native_model,
     play,
@@ -377,3 +378,44 @@ def test_each_plan_records_its_turn_and_whether_it_examined_every_end():
     # some plans ran out and some didn't
     assert played.examined.complete.any()
     assert not played.examined.complete.all()
+
+
+def test_replies_off_change_no_game():
+    value = _value("mlp")
+    games = alternating(
+        Planner(value, worlds=2, budget=300, reply=None), "heuristic", range(30, 34)
+    )
+    plain = play(games, record=True)
+    noted = play(games, record=True, replies=True)
+    assert plain.replies is None
+    assert noted.actions == plain.actions
+    assert noted.replies is not None
+    # no plan looked through a reply
+    assert not noted.replies.looked.any()
+    assert np.all(noted.replies.rank == 0)
+
+
+def test_each_plan_of_the_reply_player_records_its_replies():
+    value = _value("mlp")
+    replying = Planner(value, worlds=2, budget=300, reply=Reply(3, 2, 60))
+    plain = Planner(value, worlds=2, budget=300)
+    games = alternating(replying, plain, range(40, 44))
+    played = play(games, threads=2, replies=True)
+    notes = played.replies
+    assert notes is not None
+    finished = [w is not None for w in played.winners]
+    assert len(notes.game) == played.plans[finished].sum()
+    mine = notes.seat == notes.game % 2  # the reply player's seat
+    assert np.all(notes.looked[~mine] == 0)
+    assert np.all(notes.states[~mine] <= 300)
+    assert np.all(notes.states[mine] <= 300 + 3 * 2 * 60)
+    looked = mine & (notes.looked >= 2)
+    assert looked.sum() > 10
+    assert np.all(
+        (notes.rank[looked] >= 1) & (notes.rank[looked] <= notes.looked[looked])
+    )
+    assert np.all(notes.rank[~looked] == 0)
+    assert notes.complete[looked].any()
+    assert played.seconds is not None
+    assert played.seconds.shape == (len(games), 2)
+    assert np.all(played.seconds > 0)

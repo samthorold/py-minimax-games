@@ -78,10 +78,13 @@ def self_play(
     record: bool = False,
     judge: bool = False,
     diagnose: bool = False,
+    replies: bool = False,
 ) -> dict[str, Any]:
     """Play `games`, `(seed, seat 0, seat 1)` with the seats as indices into
     `players` (`{"kind": "greedy"}`, `{"kind": "heuristic"}` or `{"kind":
-    "planner", "worlds": n, "budget": n, "model": {...}}`) on `threads`
+    "planner", "worlds": n, "budget": n, "model": {...}}`, with optionally
+    `"reply": {"candidates": n, "worlds": n, "budget": n}` to look through
+    the opponent's replies, or None) on `threads`
     threads, the GIL released: the finished games' turn-boundary rows
     (`features`, float32) with each row's label `y`, `game`, `position` in
     it (0 for the first turn's end) and `seat` that ended it; per game its
@@ -93,4 +96,11 @@ def self_play(
     each seat's deck before its discard pile is reshuffled, and per plan of
     the finished games its `plan_game`, `plan_turn`, `plan_seat` (int64) and
     `plan_complete` (bool: whether it examined every end of the turn in
-    every world), in play order. None changes a game."""
+    every world), in play order; with `replies`, per plan of the finished
+    games its `reply_game`, `reply_turn`, `reply_seat`, `reply_states` (the
+    states it visited, its replies' included), `reply_looked` (candidates
+    looked through, 0 if none), `reply_rank` (the pick's rank among them by
+    the judgement, 1 for the judgement's own, 0 if none) (int64) and
+    `reply_complete` (bool: whether every reply examined every end of the
+    opponent's turn), in play order, and per game each seat's `seconds`
+    spent planning (float64, a column per seat). None changes a game."""

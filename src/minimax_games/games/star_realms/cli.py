@@ -68,6 +68,15 @@ count's, by turn number, and the time per plan at each count. With
 the largest count against the first on N seeds from `--match-base-seed`,
 each in both seats. `--jobs` spreads both over processes.
 
+`python -m minimax_games.games.star_realms reply` tests whether looking
+through the opponent's reply changes the champion's choice (see `reply`):
+`planner:<--model>` (pf01) looking through the replies of its best
+`--candidates` against itself at `--rival-worlds` (16) worlds and the same
+80,000 states, `--seeds` seeds from `--base-seed`, each in both seats, in
+one Rust batch on `--threads`. It prints the strength (win rates, the
+seeds won both, split and lost both, the sign z, ms and states per plan)
+and the changed choices by game phase, with the design's reading.
+
 `python -m minimax_games.games.star_realms profile` profiles the cheat's
 budgeted decisions (see `profiling`) at the same positions and in the first
 `--game-turns` turns of a seeded cheat-vs-heuristic game, and writes a report
@@ -162,6 +171,7 @@ from minimax_games.games.star_realms import (
     population,
     probe,
     profiling,
+    reply,
     sampled_worlds,
     selfplay,
     tune,
@@ -397,6 +407,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if argv[:1] == ["worlds"]:
         worlds(argv[1:])
+        return
+    if argv[:1] == ["reply"]:
+        replying(argv[1:])
         return
     parser = argparse.ArgumentParser(prog="python -m minimax_games.games.star_realms")
     parser.add_argument("--seed", type=int, default=0, help="the game's seed")
@@ -757,6 +770,49 @@ def worlds(argv: list[str]) -> None:
     )
     for line in paired_report(paired, names):
         print(line)
+
+
+def replying(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(
+        prog="python -m minimax_games.games.star_realms reply"
+    )
+    default = selfplay.Reply()
+
+    def option(flag: str, value: int, text: str) -> None:
+        parser.add_argument(
+            flag, type=int, default=value, help=f"{text} (default: %(default)s)"
+        )
+
+    parser.add_argument(
+        "--model", default="pf01", help="the committed model (default: %(default)s)"
+    )
+    option("--seeds", 150, "seeds, each played in both seats")
+    option("--base-seed", reply.SEEDS, "the first seed")
+    option("--worlds", planner.WORLDS, "the reply player's worlds")
+    option("--budget", planner.BUDGET, "the reply player's own states per plan")
+    option("--candidates", default.candidates, "candidates looked through")
+    option("--reply-worlds", default.worlds, "sub-worlds per reply")
+    option("--reply-budget", default.budget, "states per reply, over its sub-worlds")
+    option("--rival-worlds", 16, "the rival's worlds")
+    option("--rival-budget", 80_000, "the rival's states per plan")
+    option("--threads", 1, "threads to play on (same results)")
+    option("--max-turns", reply.MAX_TURNS, "stop a game unfinished past this turn")
+    args = parser.parse_args(argv)
+    start = time.perf_counter()
+    found = reply.measure(
+        args.model,
+        range(args.base_seed, args.base_seed + args.seeds),
+        worlds=args.worlds,
+        budget=args.budget,
+        reply=selfplay.Reply(args.candidates, args.reply_worlds, args.reply_budget),
+        rival_worlds=args.rival_worlds,
+        rival_budget=args.rival_budget,
+        threads=args.threads,
+        max_turns=args.max_turns,
+    )
+    for line in reply.report(found):
+        print(line)
+    print(f"{time.perf_counter() - start:.0f} s wall on {args.threads} threads")
 
 
 def paired_report(paired: PairedTournament, names: tuple[str, str]) -> list[str]:

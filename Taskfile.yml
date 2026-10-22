@@ -57,6 +57,11 @@ tasks:
     cmds:
       - uv run python -m minimax_games.games.star_realms worlds {{.CLI_ARGS}}
 
+  reply:
+    desc: "Does looking through the opponent's reply change the champion's choice: a paired match against 16 worlds (minutes): task reply -- [--seeds N] [--base-seed N] [--threads N]"
+    cmds:
+      - uv run python -m minimax_games.games.star_realms reply {{.CLI_ARGS}}
+
   profile:
     desc: "Profile the cheat's budgeted decisions, report in profiles/: task profile -- [--budget N] [--game-turns N]"
     cmds:
