@@ -72,6 +72,11 @@ tasks:
     cmds:
       - uv run python -m minimax_games.games.star_realms iterate {{.CLI_ARGS}}
 
+  population:
+    desc: "Play a player against the reference population, per-seed results into runs/population/<player> (minutes): task population -- PLAYER [--threads N] [--paired docs/population/pf01]"
+    cmds:
+      - uv run python -m minimax_games.games.star_realms population {{.CLI_ARGS}}
+
   native-bench:
     desc: "Time the Rust engine: full-deck greedy games/s, advance calls/s and heuristic games/s: task native-bench -- [--games N]"
     cmds:

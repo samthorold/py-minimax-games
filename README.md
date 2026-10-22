@@ -50,6 +50,7 @@ task turn-sizes             # Star Realms: distinct ends per turn (planner workl
 task profile                # Star Realms: profile the cheat's search
 task tune                   # Star Realms: tune evaluate's weights by tournament
 task fit                    # Star Realms: fit learned values, gated against evaluate
+task population -- pf01     # Star Realms: a player against the reference population
 ```
 
 ### Stopping a Star Realms tournament early (SPRT)
@@ -107,6 +108,31 @@ models as `.npz` files; a model that beats `evaluate` is committed in
 `src/minimax_games/games/star_realms/models/` and loads by name
 (`value.load("mlp")`). The data are never stored: the command regenerates
 them. Results: "Milestone 8: offline value fit" in
+[docs/star-realms-results.md](docs/star-realms-results.md).
+
+### Measuring a Star Realms player against the reference population
+
+`task population -- PLAYER` (`python -m minimax_games.games.star_realms
+population PLAYER`) plays a player against the reference population (the
+heuristic and every champion: `mlp`, `pi03`, `pf01`), leaving the player
+itself out, all in Rust: 500 games against each on seeds 0-499 (`--games`),
+the player first on even seeds. A player is `heuristic`, `greedy`, a
+committed model (played by the planner with it) or the path of a saved
+model (`.npz`). It prints the win rate against each opponent with its 95%
+Wilson interval and the player's record moving first, their mean, and the
+unfinished games, and writes the per-seed results (seed, first, second,
+winner, turns, as `iterate` writes its matches) to
+`runs/population/<player>/<opponent>.csv` (`--out`). `--paired DIR` pairs
+each opponent's games seed by seed with a recorded run's, such as the
+champion's in `docs/population/pf01/`, and reports the seeds won only by
+each player and the sign test's z. The results are the same with any
+`--threads` (8 by default). The champion's run takes a few minutes:
+
+```sh
+uv run python -m minimax_games.games.star_realms population my-candidate.npz --paired docs/population/pf01
+```
+
+Results: "Milestone 9: the reference population and pf01's baseline" in
 [docs/star-realms-results.md](docs/star-realms-results.md).
 
 ### Profiling the Star Realms search
