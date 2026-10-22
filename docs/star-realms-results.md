@@ -2079,6 +2079,54 @@ Script, log, summaries and the per-seed results (seed, first, second, winner, tu
 - **Timing noise**: `p32` has pf01's form and size yet timed at 15.79 against 14.52 ms per plan, so one 40-game timing run is good to about 10%. The ratios above are rough to that degree. By #173's numbers (7.2 ms for pi03's one member without the features), the features themselves cost about 1.15× at one member.
 - **For the owner**: replacing pf01 with a one-member model would make policy iteration's self-play and gating with the champion about 1.8× cheaper at no measured loss of strength. Whether "level within 5 points on 300 games" is enough, or wants a longer match (an SPRT for H0 50% against H1 45%, say, to bound the loss), is the owner's call; nothing was replaced here.
 
+## Milestone 9
+
+The yardstick, and today's champion, `pf01`, on it ([the design](star-realms.md), Milestone 9). No player is trained; each subsection is one end-state test, and names the belief it tests.
+
+### Milestone 9: more sampled worlds
+
+- Date: 2026-10-22
+- Commit: this PR (#186; on `b25066c`): `sampled_worlds` (the comparison, `Probe` and the report), `tournament.play_paired`, and the `worlds` command (`task worlds`).
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0. 2 processes. **Three other agents were working on the machine throughout**, so absolute times are inflated and noisy; the counts were timed interleaved (each plan at 4, 8 and 16 worlds one after another) and the match's two players in the same games, so their ratios are fair.
+- Seeds: the probed games 18,600,000-18,600,059, the match 18,610,000-18,610,149 (each in both seats), clear of every earlier range.
+
+**The belief** (How it chooses): *beyond the turn, hidden cards are chance, not strategy, so judging a few sampled worlds is enough.* Its test: how much the choice changes with more sampled worlds. Predicted: little, and no measurable strength from more.
+
+```sh
+uv run python -m minimax_games.games.star_realms worlds --games 60 --base-seed 18600000 --match-seeds 150 --match-base-seed 18610000 --jobs 2
+```
+
+- **The plans**: 60 games of `planner:pf01` against itself (Rust enumeration), both players probing. At every plan the champion makes, 16 worlds are sampled from its view once, and the position is planned from the first 4 (today's plan, the one it plays), the first 8 and all 16, at the same **5,000 states per world** (budgets 20,000, 40,000 and 80,000), so the larger counts add worlds to the 4. A line *changes* when it differs from the 4 worlds' line, compared up to the order of its plays (the position before its last move, up to pile order, and that move). As the yardstick for that, the 4-world plan is also made from worlds 5-8, a fresh sample disjoint from its own: how often that changes the line is the noise of sampling alone.
+- **The match**: `planner:pf01` at 16 worlds (80,000 states) against itself at 4 (20,000), each of 150 seeds played twice, once with each first (`tournament.play_paired`), compared seed by seed.
+
+| Turns | Plans | Changed: 4 fresh worlds | 8 worlds (incl. the 4) | 16 worlds (incl. the 4) |
+|---|---|---|---|---|
+| All | 3,558 | 11.3% | 6.7% | 8.7% |
+| 1-5 | 660 | 9.4% | 6.2% | 8.3% |
+| 6-10 | 697 | 11.2% | 5.9% | 7.7% |
+| 11-15 | 765 | 12.3% | 7.2% | 9.8% |
+| 16-20 | 722 | 12.7% | 8.2% | 10.0% |
+| 21-25 | 461 | 11.9% | 7.2% | 8.5% |
+| 26-30 | 225 | 8.4% | 4.0% | 6.2% |
+| 31-35 | 28 | 10.7% | 7.1% | 7.1% |
+
+(Turns as the game numbers them, both players'. ms per plan, interleaved: 17.8 at 4 worlds, 34.3 at 8, 69.7 at 16.)
+
+| Bot | Wins | Win% | 95% interval | As 1st | As 2nd | ms per plan | Plans per turn |
+|---|---|---|---|---|---|---|---|
+| 16 worlds | 163/300 | 54.3% | 48.7-59.9% | 97/150 | 66/150 | 72 | 2.49 |
+| 4 worlds | 137/300 | 45.7% | 40.1-51.3% | 84/150 | 53/150 | 17.9 | 2.47 |
+
+Seeds won both / split / lost both by 16 worlds: 30 / 103 / 17 (sign z = (30 − 17) / √47 = 1.90). No game reached the 300-turn cap; mean 23.3 turns.
+
+About 11 minutes wall in all, 6.7 of them (403 s) the match.
+
+#### Reading it
+
+- **The choice changes on about one plan in eleven with four times the worlds**, evenly through the game (8-10% in every band of turns with many plans), and **a fresh sample of 4 changes it more often than 16 do** (11.3%). So most of what changes is the noise of a 4-world sample: the plans where two lines are judged within sampling noise of each other. The 8-world line changes less than the 16-world one (6.7% against 8.7%) because half its worlds are the 4 it is compared with, against a quarter of the 16's; neither is a different kind of choice.
+- **The match leans towards 16 worlds but doesn't settle it**: 54.3%, interval 48.7-59.9%, and 30 seeds won both against 17 lost both (sign z 1.90, about p = 0.06 two-sided). With 300 games it can only rule out gaps of about 6 points, so the effect of four times the worlds is somewhere between nothing and about 10 points, at **4.0× the time per plan** (72 against 17.9 ms).
+- **On the belief**: the choice changes little (under a tenth of plans, mostly near-ties), as predicted; whether those near-ties are worth a few points of strength is not decided by this match. If they are, it is the cheapest kind of strength there is (no training), and the same budget spent on 4 worlds at 4× the states per world would be the fair comparison before changing the default, which is out of this slice's scope (a decision on this result, in its own PR). The obvious next measurement is an SPRT of 16 against 4 worlds, H0 50% against H1 55%.
+
 ## Milestone 7: Rust tracer bullet (toolchain and first-slice engine)
 
 2026-10-21, #137 (tracked by #127), CPython 3.14, Apple M1 (8 GB) shared with three other agents' builds and tests. The first end-to-end path through Rust: maturin builds `minimax_games._native` from `rust/`, and its Star Realms engine plays the starter decks and the 30-card first slice (design, Compiled engine).
