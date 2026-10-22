@@ -19,7 +19,7 @@ use crate::star_realms::bots::{greedy_move, play_greedy};
 use crate::star_realms::card::{Card, Effect};
 use crate::star_realms::features;
 use crate::star_realms::heuristic::{heuristic_move, play_heuristic};
-use crate::star_realms::planner::enumerate;
+use crate::star_realms::planner::{Replies, enumerate};
 use crate::star_realms::rng::Random;
 use crate::star_realms::rules::{
     Action, Few, advance, advance_legal, auto_play, legal_actions, new_game, winner,
@@ -725,10 +725,28 @@ fn seat_player(d: &Bound<'_, PyDict>) -> PyResult<Player> {
                     "the model was fitted to other features than the encoder's",
                 ));
             }
+            let replies = match d.get_item("reply")? {
+                Some(reply) if !reply.is_none() => {
+                    let reply = reply.cast_into::<PyDict>()?;
+                    let r = Replies {
+                        candidates: item(&reply, "candidates")?,
+                        worlds: item(&reply, "worlds")?,
+                        budget: item(&reply, "budget")?,
+                    };
+                    if r.candidates < 1 || r.worlds < 1 || r.budget < 2 * r.worlds {
+                        return Err(PyValueError::new_err(format!(
+                            "a reply needs at least 1 candidate, 1 world and 2 states per world, not {r:?}"
+                        )));
+                    }
+                    Some(r)
+                }
+                _ => None,
+            };
             Player::Planner {
                 value,
                 worlds,
                 budget,
+                replies,
             }
         }
         other => {
@@ -755,9 +773,16 @@ fn seat_player(d: &Bound<'_, PyDict>) -> PyResult<Player> {
 /// deck before its discard pile is reshuffled, and per plan of the finished
 /// games its `plan_game`, `plan_turn`, `plan_seat` (int64) and
 /// `plan_complete` (bool: whether it examined every end of the turn in
-/// every world), in play order. None changes a game.
+/// every world), in play order; with `replies`, per plan of the finished
+/// games its `reply_game`, `reply_turn`, `reply_seat`, `reply_states` (the
+/// states it visited, its replies' included), `reply_looked` (candidates
+/// looked through, 0 if none), `reply_rank` (the pick's rank among them by
+/// the judgement, 1 for the judgement's own, 0 if none) (int64) and
+/// `reply_complete` (bool: whether every reply examined every end of the
+/// opponent's turn), in play order, and per game each seat's `seconds`
+/// spent planning (float64, a column per seat). None changes a game.
 #[pyfunction]
-#[pyo3(signature = (players, games, threads=1, max_turns=300, record=false, judge=false, diagnose=false))]
+#[pyo3(signature = (players, games, threads=1, max_turns=300, record=false, judge=false, diagnose=false, replies=false))]
 #[allow(clippy::too_many_arguments)]
 fn self_play<'py>(
     py: Python<'py>,
@@ -768,6 +793,7 @@ fn self_play<'py>(
     record: bool,
     judge: bool,
     diagnose: bool,
+    replies: bool,
 ) -> PyResult<Bound<'py, PyDict>> {
     let players = players
         .iter()
@@ -796,6 +822,7 @@ fn self_play<'py>(
         actions: record,
         judgements: judge,
         diagnostics: diagnose,
+        replies,
     };
     let played = py.detach(|| play_games(&players, &games, threads, max_turns, recording));
     let columns = features::columns();
@@ -810,9 +837,13 @@ fn self_play<'py>(
     let mut plan_complete: Vec<bool> = Vec::new();
     let mut counts = Vec::with_capacity(2 * played.len());
     let mut diverged = Vec::with_capacity(2 * played.len());
+    let mut seconds: Vec<f64> = Vec::with_capacity(2 * played.len());
+    let mut notes: [Vec<i64>; 6] = Default::default();
+    let mut reply_complete: Vec<bool> = Vec::new();
     for (i, p) in played.iter().enumerate() {
         counts.extend(p.plans.iter().map(|&n| n as i64));
         diverged.extend(p.diverged.iter().map(|&n| n as i64));
+        seconds.extend(p.seconds);
         let Some(won_by) = p.winner else {
             continue;
         };
@@ -829,6 +860,20 @@ fn self_play<'py>(
             plan_turn.push(i64::from(turn));
             plan_seat.push(int(seat));
             plan_complete.push(complete);
+        }
+        for n in &p.replies {
+            let fields = [
+                int(i),
+                i64::from(n.turn),
+                int(n.seat),
+                int(n.states),
+                int(n.note.looked),
+                int(n.note.rank),
+            ];
+            for (column, field) in notes.iter_mut().zip(fields) {
+                column.push(field);
+            }
+            reply_complete.push(n.note.complete);
         }
     }
     let d = PyDict::new(py);
@@ -849,6 +894,16 @@ fn self_play<'py>(
         d.set_item("plan_turn", int_array(py, plan_turn))?;
         d.set_item("plan_seat", int_array(py, plan_seat))?;
         d.set_item("plan_complete", plan_complete.into_pyarray(py))?;
+    }
+    if replies {
+        let names = ["game", "turn", "seat", "states", "looked", "rank"];
+        for (name, column) in names.iter().zip(notes) {
+            d.set_item(format!("reply_{name}"), int_array(py, column))?;
+        }
+        d.set_item("reply_complete", reply_complete.into_pyarray(py))?;
+        let seconds =
+            Array2::from_shape_vec((played.len(), 2), seconds).expect("two seats per game");
+        d.set_item("seconds", seconds.into_pyarray(py))?;
     }
     let winners: Vec<Option<usize>> = played.iter().map(|p| p.winner).collect();
     d.set_item("winner", winners)?;

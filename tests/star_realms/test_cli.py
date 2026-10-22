@@ -594,3 +594,40 @@ def test_examine_replans_the_budget_bound_plans_then_plays_the_paired_match(
     assert "240 states vs 60 states: 1 seed in both seats (seed 5)" in out
     assert "Seeds won both / split / lost both by 240 states:" in out
     assert "ms per plan" in out
+
+
+def test_reply_plays_the_paired_match_and_reports_the_changed_choices(
+    capsys: pytest.CaptureFixture[str],
+):
+    main(
+        [
+            "reply",
+            "--model",
+            "mlp",
+            "--seeds",
+            "2",
+            "--base-seed",
+            "7",
+            "--worlds",
+            "2",
+            "--budget",
+            "200",
+            "--candidates",
+            "3",
+            "--reply-worlds",
+            "2",
+            "--reply-budget",
+            "40",
+            "--rival-worlds",
+            "4",
+            "--rival-budget",
+            "400",
+            "--threads",
+            "2",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert "2 seeds in both seats (7-8)" in out
+    assert "Seeds won both / split / lost both by the reply player:" in out
+    assert "Changed" in out
+    assert "Reading" in out

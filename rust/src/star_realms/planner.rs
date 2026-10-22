@@ -25,6 +25,7 @@
 use std::collections::VecDeque;
 use std::collections::hash_map::Entry;
 use std::hash::{Hash, Hasher};
+use std::time::Instant;
 
 use rustc_hash::{FxHashMap, FxHasher};
 
@@ -771,59 +772,251 @@ pub struct Plan {
 /// move. Scores are whole numbers, so their sums are exact, and the mean is
 /// the same correctly rounded division as Python's `int / int`.
 pub fn plan(worlds: &[GameState], budget: usize, value: &Value) -> Plan {
-    let found = enumerate(worlds, budget);
-    let first = &worlds[0];
-    let mut row = vec![0.0; features::columns()];
-    let mut scratch = Vec::new();
-    let scores: Vec<i64> = found
-        .ends
-        .iter()
-        .map(|end| {
-            row.fill(0.0);
-            features::encode_into(&mut row, end);
-            value.score(end, &row, first.current, &mut scratch)
-        })
-        .collect();
-    let mut values: Vec<Vec<i64>> = vec![Vec::new(); found.lines.len()];
-    for reached in &found.reached {
-        for (candidate, rows) in reached.iter().enumerate() {
-            let best = rows.iter().map(|&r| scores[r]).max();
-            values[candidate].push(best.expect("a candidate reaches an end"));
+    Scored::new(worlds, budget, value).plan(&worlds[0])
+}
+
+/// An enumeration with its ends scored, and each candidate's value in each
+/// world that reached it.
+struct Scored {
+    found: Enumeration,
+    /// Each row's score from the mover's side.
+    scores: Vec<i64>,
+    /// Each candidate's best score in each world that reached it.
+    values: Vec<Vec<i64>>,
+}
+
+impl Scored {
+    fn new(worlds: &[GameState], budget: usize, value: &Value) -> Self {
+        let found = enumerate(worlds, budget);
+        let mover = worlds[0].current;
+        let mut row = vec![0.0; features::columns()];
+        let mut scratch = Vec::new();
+        let scores: Vec<i64> = found
+            .ends
+            .iter()
+            .map(|end| {
+                row.fill(0.0);
+                features::encode_into(&mut row, end);
+                value.score(end, &row, mover, &mut scratch)
+            })
+            .collect();
+        let mut values: Vec<Vec<i64>> = vec![Vec::new(); found.lines.len()];
+        for reached in &found.reached {
+            for (candidate, rows) in reached.iter().enumerate() {
+                let best = rows.iter().map(|&r| scores[r]).max();
+                values[candidate].push(best.expect("a candidate reaches an end"));
+            }
+        }
+        Scored {
+            found,
+            scores,
+            values,
         }
     }
-    let reached = values.iter().map(Vec::len).max().unwrap_or(0);
-    if reached == 0 {
-        return Plan {
-            line: vec![ordered(first)[0].1],
-            value: None,
-            states: found.states,
-            complete: false,
+
+    /// The candidates reached in the most worlds, with their means, best
+    /// first, ties to the first found (`planner._choose`); empty if none is
+    /// reached.
+    fn ranked(&self) -> Vec<(usize, f64)> {
+        let reached = self.values.iter().map(Vec::len).max().unwrap_or(0);
+        if reached == 0 {
+            return Vec::new();
+        }
+        let mut ranked: Vec<(usize, f64)> = self
+            .values
+            .iter()
+            .enumerate()
+            .filter(|(_, scores)| scores.len() == reached)
+            .map(|(c, scores)| (c, scores.iter().sum::<i64>() as f64 / reached as f64))
+            .collect();
+        // stable, so equal means keep the order found
+        ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
+        ranked
+    }
+
+    /// `candidate`'s decisions from `first`, the first world's state.
+    fn line(&self, first: &GameState, candidate: usize) -> Vec<Action> {
+        let mut state = first.clone();
+        let mut line = Vec::new();
+        for &i in &self.found.lines[candidate] {
+            let action = legal_actions(&state)[i];
+            state = advance_legal(&state, action);
+            line.push(action);
+        }
+        line
+    }
+
+    /// The row of `candidate`'s best end in `world`, the first found of the
+    /// best, if the world reached it.
+    fn best_end(&self, world: usize, candidate: usize) -> Option<usize> {
+        let rows = self.found.reached[world].get(candidate)?;
+        rows.iter().copied().reduce(|best, r| {
+            if self.scores[r] > self.scores[best] {
+                r
+            } else {
+                best
+            }
+        })
+    }
+
+    /// The judgement's plan: the best-ranked candidate, or the greedy move
+    /// if none is reached.
+    fn plan(&self, first: &GameState) -> Plan {
+        let Some(&(candidate, mean)) = self.ranked().first() else {
+            return Plan {
+                line: vec![ordered(first)[0].1],
+                value: None,
+                states: self.found.states,
+                complete: false,
+            };
+        };
+        Plan {
+            line: self.line(first, candidate),
+            value: Some(mean),
+            states: self.found.states,
+            complete: self.found.complete,
+        }
+    }
+}
+
+/// The reply option (docs/star-realms.md, Learned values: looking through
+/// the reply): the best `candidates` of a plan are each worth the mean over
+/// worlds of the mover's chance after the opponent replies from the
+/// candidate's best end in that world, the opponent planning its turn from
+/// `worlds` sub-worlds of its own view at `budget` states in all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Replies {
+    pub candidates: usize,
+    pub worlds: usize,
+    pub budget: usize,
+}
+
+/// What looking through the replies came to in one plan; the default when
+/// no reply was looked through.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Note {
+    /// Candidates looked through: 0 if fewer than 2 competed.
+    pub looked: usize,
+    /// The pick's rank among them by the judgement, 1 for the judgement's
+    /// own pick (0 if none was looked through).
+    pub rank: usize,
+    /// Whether every reply examined every end of the opponent's turn in
+    /// every sub-world.
+    pub complete: bool,
+    /// States the replies visited.
+    pub states: usize,
+}
+
+/// The opponent's reply from an end of the mover's turn.
+#[derive(Clone, Debug)]
+pub struct Reply {
+    /// The sub-worlds it planned from: the end after the opponent's
+    /// automatic play, its hidden cards sampled again from the opponent's
+    /// view. Empty if the game was over before the opponent's first move.
+    pub worlds: Vec<GameState>,
+    /// The opponent's plan, if it made one.
+    pub plan: Option<Plan>,
+    /// The chance of the player who ended the turn after the reply, as a
+    /// score from their side: the negated value of the opponent's plan, or
+    /// the end's own score if the game was over first. `None` if the plan
+    /// found no end.
+    pub score: Option<f64>,
+}
+
+/// The opponent's reply from `end`, an end of the mover's turn in one
+/// world, planned as the planner plans a turn: the opponent's automatic
+/// play, then `replies.worlds` sub-worlds sampled from `rng` and the
+/// opponent's view (its hand is the end's; its deck order, the other
+/// player's hand and the Trade Deck are drawn again), planned at
+/// `replies.budget` states by `value` from the opponent's side.
+pub fn reply(end: &GameState, value: &Value, replies: &Replies, rng: &mut Random) -> Reply {
+    let ended = 1 - end.current;
+    let own_score = |state: &GameState| {
+        let mut row = vec![0.0; features::columns()];
+        features::encode_into(&mut row, state);
+        value.score(state, &row, ended, &mut Vec::new()) as f64
+    };
+    if winner(end).is_some() {
+        return Reply {
+            worlds: Vec::new(),
+            plan: None,
+            score: Some(own_score(end)),
         };
     }
+    let mut start = end.clone();
+    auto_play(&mut start);
+    if winner(&start).is_some() {
+        return Reply {
+            worlds: Vec::new(),
+            plan: None,
+            score: Some(own_score(&start)),
+        };
+    }
+    let view = observe(&start, start.current);
+    let worlds: Vec<GameState> = (0..replies.worlds)
+        .map(|_| sample_world(&view, rng))
+        .collect();
+    let made = plan(&worlds, replies.budget, value);
+    let score = made.value.map(|v| -v);
+    Reply {
+        worlds,
+        plan: Some(made),
+        score,
+    }
+}
+
+/// `plan`, looking through the opponent's replies if `replies` is given,
+/// the sub-worlds drawn from `rng`; with `None`, exactly `plan`.
+pub fn plan_with(
+    worlds: &[GameState],
+    budget: usize,
+    value: &Value,
+    replies: Option<&Replies>,
+    rng: &mut Random,
+) -> (Plan, Note) {
+    let first = &worlds[0];
+    let scored = Scored::new(worlds, budget, value);
+    let ranked = scored.ranked();
+    let top = &ranked[..ranked.len().min(replies.map_or(0, |r| r.candidates))];
+    let Some(replies) = replies.filter(|_| top.len() >= 2) else {
+        // fewer than 2 candidates to choose between: no reply can change
+        // the choice, so none is looked through
+        return (scored.plan(first), Note::default());
+    };
+    let mut note = Note {
+        looked: top.len(),
+        complete: true,
+        ..Note::default()
+    };
     let mut best: Option<(usize, f64)> = None;
-    for (candidate, scores) in values.iter().enumerate() {
-        if scores.len() != reached {
-            continue;
+    for (rank, &(candidate, _)) in top.iter().enumerate() {
+        let (mut total, mut worlds_reached) = (0.0, 0);
+        for world in 0..scored.found.reached.len() {
+            let Some(row) = scored.best_end(world, candidate) else {
+                continue;
+            };
+            let found = reply(&scored.found.ends[row], value, replies, rng);
+            if let Some(made) = &found.plan {
+                note.states += made.states;
+                note.complete &= made.complete;
+            }
+            total += found.score.unwrap_or(scored.scores[row] as f64);
+            worlds_reached += 1;
         }
-        let mean = scores.iter().sum::<i64>() as f64 / reached as f64;
+        let mean = total / f64::from(worlds_reached);
         if best.is_none_or(|(_, top)| mean > top) {
-            best = Some((candidate, mean));
+            best = Some((rank, mean));
         }
     }
-    let (candidate, mean) = best.expect("a candidate reached in the most worlds");
-    let mut state = first.clone();
-    let mut line = Vec::new();
-    for &i in &found.lines[candidate] {
-        let action = legal_actions(&state)[i];
-        state = advance_legal(&state, action);
-        line.push(action);
-    }
-    Plan {
-        line,
+    let (rank, mean) = best.expect("at least 2 candidates looked through");
+    note.rank = rank + 1;
+    let plan = Plan {
+        line: scored.line(first, top[rank].0),
         value: Some(mean),
-        states: found.states,
-        complete: found.complete,
-    }
+        states: scored.found.states + note.states,
+        complete: scored.found.complete,
+    };
+    (plan, note)
 }
 
 fn sorted(cards: &[Card]) -> Vec<Card> {
@@ -860,11 +1053,15 @@ pub fn seen(view: &View) -> View {
 /// to pile order, the one the line reached in the first world, planning
 /// again if not (`diverged`) or once the line is played. `examined` notes
 /// each plan's turn and whether it examined every end of the turn in every
-/// world (`Plan::complete`).
+/// world (`Plan::complete`). With `replies` (`with_replies`) it looks
+/// through the opponent's replies (`plan_with`), the sub-worlds drawn from
+/// the same rng; `noted` keeps each plan's turn, states and `Note`, and
+/// `seconds` the time spent planning.
 pub struct PlannerBot<'a> {
     value: &'a Value,
     worlds: usize,
     budget: usize,
+    replies: Option<Replies>,
     rng: Random,
     turn: Option<u32>,
     line: VecDeque<(View, Action)>,
@@ -872,6 +1069,8 @@ pub struct PlannerBot<'a> {
     pub turns: u64,
     pub diverged: u64,
     pub examined: Vec<(u32, bool)>,
+    pub noted: Vec<(u32, usize, Note)>,
+    pub seconds: f64,
 }
 
 impl<'a> PlannerBot<'a> {
@@ -882,6 +1081,7 @@ impl<'a> PlannerBot<'a> {
             value,
             worlds,
             budget,
+            replies: None,
             rng: Random::new(seed),
             turn: None,
             line: VecDeque::new(),
@@ -889,7 +1089,23 @@ impl<'a> PlannerBot<'a> {
             turns: 0,
             diverged: 0,
             examined: Vec::new(),
+            noted: Vec::new(),
+            seconds: 0.0,
         }
+    }
+
+    /// The bot looking through the opponent's replies, or not if `None`.
+    pub fn with_replies(mut self, replies: Option<Replies>) -> Self {
+        if let Some(r) = &replies {
+            assert!(r.candidates >= 1, "at least 1 candidate");
+            assert!(r.worlds >= 1, "a reply needs at least 1 world");
+            assert!(
+                r.budget >= 2 * r.worlds,
+                "at least 2 reply states per world"
+            );
+        }
+        self.replies = replies;
+        self
     }
 
     /// The bot's move from `view`, among the legal `actions`
@@ -910,9 +1126,18 @@ impl<'a> PlannerBot<'a> {
             let worlds: Vec<GameState> = (0..self.worlds)
                 .map(|_| sample_world(view, &mut self.rng))
                 .collect();
-            let made = plan(&worlds, self.budget, self.value);
+            let start = Instant::now();
+            let (made, note) = plan_with(
+                &worlds,
+                self.budget,
+                self.value,
+                self.replies.as_ref(),
+                &mut self.rng,
+            );
+            self.seconds += start.elapsed().as_secs_f64();
             self.plans += 1;
             self.examined.push((view.turn, made.complete));
+            self.noted.push((view.turn, made.states, note));
             let mut state = worlds[0].clone();
             for action in made.line {
                 self.line
@@ -955,6 +1180,189 @@ mod tests {
             let stops = action == Action::EndTurn || reveals(&at, &next) || winner(&next).is_some();
             assert_eq!(stops, i + 1 == made.line.len());
             at = next;
+        }
+    }
+
+    /// A small learned value that tells positions apart.
+    fn small_value() -> Value {
+        let columns = features::columns();
+        let w = (0..columns)
+            .map(|i| 0.02 * ((i * 7 % 11) as f64 - 5.0))
+            .collect();
+        Value::new(
+            vec![0.0; columns],
+            vec![1.0; columns],
+            Form::Logistic { w, b: 0.0 },
+        )
+        .unwrap()
+    }
+
+    /// Positions from the planner's side, a few turns into seeded games,
+    /// and worlds sampled from each.
+    fn sampled(count: usize) -> Vec<Vec<GameState>> {
+        let mut found = Vec::new();
+        for seed in 0..12u64 {
+            let mut state = new_game(seed);
+            auto_play(&mut state);
+            let mut turns = 0;
+            while winner(&state).is_none() && state.turn < 3 + seed as u32 % 9 {
+                let actions = legal_actions(&state);
+                state = advance_legal(&state, greedy_move(state.must_scrap, &actions));
+                turns += 1;
+            }
+            assert!(turns > 0);
+            if winner(&state).is_some() {
+                continue;
+            }
+            let view = observe(&state, state.current);
+            let mut rng = Random::new(seed);
+            found.push((0..count).map(|_| sample_world(&view, &mut rng)).collect());
+        }
+        found
+    }
+
+    #[test]
+    fn with_replies_off_the_plan_is_today_s() {
+        let value = small_value();
+        for worlds in sampled(3) {
+            let mut rng = Random::new(1);
+            let (made, note) = plan_with(&worlds, 1_500, &value, None, &mut rng);
+            assert_eq!(made, plan(&worlds, 1_500, &value));
+            assert_eq!(note, Note::default());
+        }
+    }
+
+    /// Ends of the planner's turn, not won, from the sampled positions.
+    fn ends() -> Vec<GameState> {
+        sampled(2)
+            .iter()
+            .flat_map(|worlds| {
+                enumerate(worlds, 1_000)
+                    .ends
+                    .into_iter()
+                    .filter(|end| winner(end).is_none())
+                    .step_by(37)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_reply_never_sees_its_own_draws_before_its_first_chance_event() {
+        let value = small_value();
+        let replies = Replies {
+            candidates: 3,
+            worlds: 2,
+            budget: 600,
+        };
+        let mut rng = Random::new(5);
+        let (mut lines, mut redrawn) = (0, 0);
+        for end in ends() {
+            let opponent = end.current;
+            let found = reply(&end, &value, &replies, &mut rng);
+            assert_eq!(found.worlds.len(), 2);
+            let decks = |w: &GameState| w.players[opponent].deck.to_vec();
+            if decks(&found.worlds[0]) != decks(&found.worlds[1]) {
+                redrawn += 1;
+            }
+            let Some(made) = found.plan else { continue };
+            lines += 1;
+            let mut at = found.worlds.clone();
+            for (i, &action) in made.line.iter().enumerate() {
+                let views: Vec<View> = at.iter().map(|s| seen(&observe(s, opponent))).collect();
+                assert!(
+                    views.iter().all(|v| *v == views[0]),
+                    "the sub-worlds differ in sight"
+                );
+                for state in &mut at {
+                    assert!(legal_actions(state).contains(&action));
+                    let next = advance_legal(state, action);
+                    let last = i + 1 == made.line.len();
+                    if !last {
+                        assert!(!reveals(state, &next), "a draw before the line's end");
+                    }
+                    *state = next;
+                }
+            }
+        }
+        assert!(lines > 10, "only {lines} replies planned");
+        assert!(
+            redrawn > lines / 2,
+            "the opponent's deck order is drawn again"
+        );
+    }
+
+    /// Each competing candidate's line and its value by the judgement, best
+    /// first, as `plan` ranks them.
+    fn judged(worlds: &[GameState], budget: usize, value: &Value) -> Vec<(Vec<Action>, f64)> {
+        let scored = Scored::new(worlds, budget, value);
+        scored
+            .ranked()
+            .into_iter()
+            .map(|(c, mean)| (scored.line(&worlds[0], c), mean))
+            .collect()
+    }
+
+    #[test]
+    fn a_reply_s_pick_is_among_the_judgement_s_best_candidates() {
+        let value = small_value();
+        let replies = Replies {
+            candidates: 3,
+            worlds: 2,
+            budget: 300,
+        };
+        let (mut looked, mut changed) = (0, 0);
+        for worlds in sampled(3) {
+            let ranked = judged(&worlds, 1_500, &value);
+            let mut rng = Random::new(9);
+            let (made, note) = plan_with(&worlds, 1_500, &value, Some(&replies), &mut rng);
+            if ranked.len() < 2 {
+                assert_eq!(note, Note::default());
+                continue;
+            }
+            looked += 1;
+            assert_eq!(note.looked, ranked.len().min(3));
+            assert!((1..=note.looked).contains(&note.rank));
+            assert_eq!(made.line, ranked[note.rank - 1].0);
+            if note.rank > 1 {
+                changed += 1;
+            }
+        }
+        assert!(looked > 5, "only {looked} plans looked through replies");
+        assert!(changed > 0, "the reply never changed the choice");
+    }
+
+    #[test]
+    fn with_one_candidate_the_reply_changes_nothing() {
+        let value = small_value();
+        let replies = Replies {
+            candidates: 1,
+            worlds: 2,
+            budget: 300,
+        };
+        for worlds in sampled(3) {
+            let mut rng = Random::new(2);
+            let (made, note) = plan_with(&worlds, 1_500, &value, Some(&replies), &mut rng);
+            assert_eq!(made, plan(&worlds, 1_500, &value));
+            assert_eq!(note, Note::default());
+        }
+    }
+
+    #[test]
+    fn a_plan_with_replies_never_exceeds_its_budget() {
+        let value = small_value();
+        for (budget, reply_budget) in [(40, 4), (300, 30), (1_500, 250)] {
+            let replies = Replies {
+                candidates: 3,
+                worlds: 2,
+                budget: reply_budget,
+            };
+            for worlds in sampled(4) {
+                let mut rng = Random::new(3);
+                let (made, note) = plan_with(&worlds, budget, &value, Some(&replies), &mut rng);
+                let most = budget + 3 * worlds.len() * reply_budget;
+                assert!(made.states <= most, "{} > {most}", made.states);
+                assert!(note.states <= 3 * worlds.len() * reply_budget);
+            }
         }
     }
 
