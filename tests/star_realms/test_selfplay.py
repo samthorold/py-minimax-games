@@ -294,13 +294,20 @@ def test_each_played_end_is_recorded_with_the_judgement_of_whoever_played_it():
     assert not np.isnan(played.judgement).all()
 
 
-def test_judging_changes_no_game():
+def test_judging_and_diagnosing_change_no_game():
     games = _batch()
     plain = play(games, threads=2, record=True)
-    judged = play(games, threads=2, record=True, judge=True)
+    judged = play(games, threads=2, record=True, judge=True, diagnose=True)
     assert plain.judgement is None
+    assert plain.left is None
+    assert plain.examined is None
     assert judged.judgement is not None
     assert judged.judgement.shape == judged.y.shape
+    assert judged.left is not None
+    assert judged.left.shape == (len(judged.y), 2)
+    assert judged.examined is not None
+    finished = [w is not None for w in judged.winners]
+    assert len(judged.examined.game) == judged.plans[finished].sum()
     assert judged.actions == plain.actions
     assert judged.winners == plain.winners
     assert judged.turns == plain.turns
@@ -308,3 +315,65 @@ def test_judging_changes_no_game():
     assert np.array_equal(judged.y, plain.y)
     assert np.array_equal(judged.plans, plain.plans)
     assert np.array_equal(judged.diverged, plain.diverged)
+
+
+def test_each_end_records_the_cards_each_player_has_left_to_draw():
+    # the cards left in each player's deck before their discard pile is
+    # reshuffled, the player who ended first, as the Python engine has them
+    seeds = range(4)
+    played = play([(seed, "heuristic", "heuristic") for seed in seeds], diagnose=True)
+    assert played.left is not None
+    expected = [
+        [len(s.players[1 - s.current].deck), len(s.players[s.current].deck)]
+        for seed in seeds
+        for s in fit.boundaries(seed).states
+    ]
+    assert played.left.tolist() == expected
+
+
+class _Examining(PlannerBot):
+    """The Python planner, noting each plan's turn and whether it examined
+    every end of the turn in every world (`Plan.complete`)."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # ty: ignore[invalid-argument-type]
+        self.examined: list[tuple[int, bool]] = []
+
+    def _plan(self, view: View):
+        state, made = super()._plan(view)
+        self.examined.append((view.turn, made.complete))
+        return state, made
+
+
+def test_each_plan_records_its_turn_and_whether_it_examined_every_end():
+    # a budget small enough that some plans run out
+    value = _value("mlp")
+    planner = Planner(value, worlds=2, budget=150)
+    games: list[Pairing] = [(21, planner, "heuristic"), (22, "heuristic", planner)]
+    played = play(games, diagnose=True)
+    assert played.examined is not None
+    for game, (seed, *seats) in enumerate(games):
+        me = seats.index(planner)
+        bot = _Examining(
+            seed + me,
+            worlds=2,
+            budget=150,
+            evaluator=ValueEvaluator(value),
+            backend="rust",
+        )
+        pair = (bot, HeuristicBot()) if me == 0 else (HeuristicBot(), bot)
+        play_match(pair, seed)
+        mine = played.examined.game == game
+        assert np.all(played.examined.seat[mine] == me)
+        found = list(
+            zip(
+                played.examined.turn[mine].tolist(),
+                played.examined.complete[mine].tolist(),
+                strict=True,
+            )
+        )
+        assert found == bot.examined
+        assert len(found) == played.plans[game, me]
+    # some plans ran out and some didn't
+    assert played.examined.complete.any()
+    assert not played.examined.complete.all()

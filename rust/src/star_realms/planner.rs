@@ -858,7 +858,9 @@ pub fn seen(view: &View) -> View {
 /// `worlds` worlds sampled from its view with an rng seeded as Python's
 /// `random.Random(seed)`, and plays each plan's line while its view is, up
 /// to pile order, the one the line reached in the first world, planning
-/// again if not (`diverged`) or once the line is played.
+/// again if not (`diverged`) or once the line is played. `examined` notes
+/// each plan's turn and whether it examined every end of the turn in every
+/// world (`Plan::complete`).
 pub struct PlannerBot<'a> {
     value: &'a Value,
     worlds: usize,
@@ -869,6 +871,7 @@ pub struct PlannerBot<'a> {
     pub plans: u64,
     pub turns: u64,
     pub diverged: u64,
+    pub examined: Vec<(u32, bool)>,
 }
 
 impl<'a> PlannerBot<'a> {
@@ -885,6 +888,7 @@ impl<'a> PlannerBot<'a> {
             plans: 0,
             turns: 0,
             diverged: 0,
+            examined: Vec::new(),
         }
     }
 
@@ -908,6 +912,7 @@ impl<'a> PlannerBot<'a> {
                 .collect();
             let made = plan(&worlds, self.budget, self.value);
             self.plans += 1;
+            self.examined.push((view.turn, made.complete));
             let mut state = worlds[0].clone();
             for action in made.line {
                 self.line

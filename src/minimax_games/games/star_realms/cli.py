@@ -108,6 +108,13 @@ gap (see `gap`): `--champion`'s games on `--games` seeds from `--base-seed`,
 mixed as a policy-iteration round mixes them with `--pool`'s champions,
 every end judged; it prints the gap, a calibration table and the gap by game
 phase, for the ends the champion chose and for those its opponents chose.
+`--every K` plays only every Kth game of that mix.
+
+`python -m minimax_games.games.star_realms diagnose` plays the same games
+(the same options; by default every 3rd of the 1,000, a third of the time)
+and prints the other diagnostics (see `diagnostics`): the judgement's error
+by each player's cards left before a reshuffle and with a rare card held or
+not, and the share of the champion's turns not examined in full, by turn.
 
 `python -m minimax_games.games.star_realms population PLAYER` plays a player
 against the reference population (see `population`): `--games` games
@@ -137,6 +144,7 @@ from minimax_games._native import star_realms as native
 from minimax_games.games.star_realms import (
     bench,
     cheat,
+    diagnostics,
     fit,
     gap,
     iterate,
@@ -369,7 +377,10 @@ def main(argv: list[str] | None = None) -> None:
         native_bench(argv[1:])
         return
     if argv[:1] == ["gap"]:
-        gapping(argv[1:])
+        print(gap.report(_measure(argv[1:], "gap", every=1)))
+        return
+    if argv[:1] == ["diagnose"]:
+        print(diagnostics.report(_measure(argv[1:], "diagnose", every=3)))
         return
     if argv[:1] == ["population"]:
         populating(argv[1:])
@@ -400,10 +411,11 @@ def main(argv: list[str] | None = None) -> None:
         print(f"Player {result.winner + 1} wins on turn {result.turns}")
 
 
-def gapping(argv: list[str]) -> None:
-    """The exploitation gap of a champion on its own games (`gap`)."""
+def _measure(argv: list[str], command: str, every: int) -> gap.Measurement:
+    """A champion's games, as the `gap` and `diagnose` commands play them
+    (`gap.measure`)."""
     parser = argparse.ArgumentParser(
-        prog="python -m minimax_games.games.star_realms gap"
+        prog=f"python -m minimax_games.games.star_realms {command}"
     )
     parser.add_argument(
         "--champion", default="pf01", help="the committed model (default: %(default)s)"
@@ -439,16 +451,22 @@ def gapping(argv: list[str]) -> None:
         default=planner.BUDGET,
         help="the planners' states per plan (default: %(default)s)",
     )
+    parser.add_argument(
+        "--every",
+        type=int,
+        default=every,
+        help="play only every Kth game of the mix (default: %(default)s)",
+    )
     args = parser.parse_args(argv)
-    measured = gap.measure(
+    return gap.measure(
         args.champion,
         args.pool,
         range(args.base_seed, args.base_seed + args.games),
         threads=args.threads,
         worlds=args.worlds,
         budget=args.budget,
+        every=args.every,
     )
-    print(gap.report(measured))
 
 
 def native_bench(argv: list[str]) -> None:

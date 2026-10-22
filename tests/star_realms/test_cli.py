@@ -468,6 +468,22 @@ def test_gap_reports_the_champion_s_chosen_and_held_out_positions(capsys):
     assert "turns 25+" in out
 
 
+def test_diagnose_reports_the_three_diagnostics_on_every_kth_game(capsys):
+    main(
+        [
+            *("diagnose", "--champion", "pf01", "--pool", "mlp", "pf01"),
+            *("--games", "8", "--every", "2", "--base-seed", "20"),
+            *("--threads", "2", "--worlds", "1", "--budget", "60"),
+        ]
+    )
+    out = capsys.readouterr().out
+    assert "4 of 8 games (every 2 of the mix on seeds 20-27)" in out
+    assert "(a) By cards left to draw before a reshuffle" in out
+    assert "far 5+" in out
+    assert "(b) With a card the Trade Deck has one copy of" in out
+    assert "(c) The champion's turns not examined in full" in out
+
+
 def test_probe_reports_the_champion_s_synergy_by_function_and_phase(capsys):
     argv = [
         *("probe", "synergy", "--model", "pf01", "--games", "2"),
