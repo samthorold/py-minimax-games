@@ -65,6 +65,18 @@ impl<'a> Bot<'a> {
     }
 }
 
+/// What a game records beyond its rows and result: each is off by default,
+/// and none changes a game.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Record {
+    /// Every decision, in order.
+    pub actions: bool,
+    /// The judgement of each turn-boundary state by the player who ended
+    /// the turn: its value's win probability for the state's row, NaN if
+    /// that player doesn't judge (greedy and the heuristic).
+    pub judgements: bool,
+}
+
 /// A game to play: its seed and the players of seats 0 and 1, as indices
 /// into the batch's players.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,6 +93,9 @@ pub struct Played {
     pub rows: Vec<f64>,
     /// Who had just ended their turn at each of those states.
     pub ended: Vec<usize>,
+    /// The judgement of each of those states by whoever ended the turn, if
+    /// asked for (`Record::judgements`).
+    pub judgements: Vec<f64>,
     /// The winner, `None` if the game passed `max_turns`.
     pub winner: Option<usize>,
     pub turns: u32,
@@ -88,12 +103,12 @@ pub struct Played {
     /// otherwise than planned (0 for a bot that doesn't plan).
     pub plans: [u64; 2],
     pub diverged: [u64; 2],
-    /// Every decision, in order, if asked for.
+    /// Every decision, in order, if asked for (`Record::actions`).
     pub actions: Vec<Action>,
 }
 
 /// Play `game` among `players`.
-pub fn play_game(players: &[Player], game: Game, max_turns: u32, record: bool) -> Played {
+pub fn play_game(players: &[Player], game: Game, max_turns: u32, record: Record) -> Played {
     let mut bots = [
         Bot::new(&players[game.seats[0]], game.seed),
         Bot::new(&players[game.seats[1]], game.seed.wrapping_add(1)),
@@ -102,12 +117,14 @@ pub fn play_game(players: &[Player], game: Game, max_turns: u32, record: bool) -
     let mut played = Played {
         rows: Vec::new(),
         ended: Vec::new(),
+        judgements: Vec::new(),
         winner: None,
         turns: 0,
         plans: [0; 2],
         diverged: [0; 2],
         actions: Vec::new(),
     };
+    let mut scratch = Vec::new();
     let mut state = new_game(game.seed);
     auto_play(&mut state);
     while winner(&state).is_none() && state.turn <= max_turns {
@@ -117,7 +134,7 @@ pub fn play_game(players: &[Player], game: Game, max_turns: u32, record: bool) -
             Bot::Heuristic => heuristic_move(&observe(&state, state.current), &actions),
             Bot::Planner(bot) => bot.choose(&observe(&state, state.current), &actions),
         };
-        if record {
+        if record.actions {
             played.actions.push(action);
         }
         apply_legal(&mut state, action);
@@ -125,7 +142,16 @@ pub fn play_game(players: &[Player], game: Game, max_turns: u32, record: bool) -
             let start = played.rows.len();
             played.rows.resize(start + columns, 0.0);
             features::encode_into(&mut played.rows[start..], &state);
-            played.ended.push(1 - state.current);
+            let ended = 1 - state.current;
+            played.ended.push(ended);
+            if record.judgements {
+                played.judgements.push(match &players[game.seats[ended]] {
+                    Player::Planner { value, .. } => {
+                        value.predict(&played.rows[start..], &mut scratch)
+                    }
+                    Player::Greedy | Player::Heuristic => f64::NAN,
+                });
+            }
         }
         auto_play(&mut state);
     }
@@ -145,7 +171,7 @@ pub fn play_games(
     games: &[Game],
     threads: usize,
     max_turns: u32,
-    record: bool,
+    record: Record,
 ) -> Vec<Played> {
     let next = AtomicUsize::new(0);
     let mut results: Vec<Option<Played>> = vec![None; games.len()];
@@ -210,7 +236,7 @@ mod tests {
                 seed,
                 seats: [0, 0],
             };
-            let played = play_game(&players, game, 1000, false);
+            let played = play_game(&players, game, 1000, Record::default());
             let expected = play_heuristic(seed, 1000);
             assert_eq!(
                 (played.winner, played.turns),
@@ -229,8 +255,12 @@ mod tests {
                 seats: [seed as usize % 3, (seed as usize + 1) % 3],
             })
             .collect();
-        let one = play_games(&players, &games, 1, 300, true);
-        assert_eq!(play_games(&players, &games, 3, 300, true), one);
+        let record = Record {
+            actions: true,
+            judgements: false,
+        };
+        let one = play_games(&players, &games, 1, 300, record);
+        assert_eq!(play_games(&players, &games, 3, 300, record), one);
         assert!(one.iter().any(|p| p.plans[0] > 0));
     }
 }

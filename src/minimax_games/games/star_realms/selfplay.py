@@ -107,6 +107,8 @@ class SelfPlay:
     position: np.ndarray
     """Each row's place in its game: 0 for the state the first turn's
     `EndTurn` leaves, then 1, 2, ..., one per turn."""
+    seat: np.ndarray
+    """Each row's seat that had just ended its turn (0 moves first)."""
     winners: tuple[int | None, ...]
     """Each game's winner, `None` if it passed `max_turns`."""
     turns: tuple[int, ...]
@@ -117,6 +119,10 @@ class SelfPlay:
     """Plans made again because the game went otherwise than planned."""
     actions: list[list[native.NativeAction]] | None
     """Each game's decisions, if recorded."""
+    judgement: np.ndarray | None = None
+    """If asked for, each row's judgement by the player who ended the turn:
+    its model's win probability for the row (`Model.predict`), NaN for a
+    player who doesn't judge (the heuristic, greedy)."""
 
     @property
     def games(self) -> int:
@@ -129,10 +135,12 @@ def play(
     threads: int = 1,
     max_turns: int = MAX_TURNS,
     record: bool = False,
+    judge: bool = False,
 ) -> SelfPlay:
     """Play `games` in Rust on `threads` threads, the GIL released, each
     stopping unfinished past `max_turns`; with `record`, keep every
-    decision."""
+    decision; with `judge`, each played end's judgement by whoever played
+    it. Neither changes a game."""
     players: list[Player] = []
     index: dict[tuple[str, object], int] = {}
 
@@ -148,18 +156,25 @@ def play(
 
     seats = [(seed, seat(a), seat(b)) for seed, a, b in games]
     found = native.self_play(
-        [_native_player(p) for p in players], seats, threads, max_turns, record
+        [_native_player(p) for p in players],
+        seats,
+        threads,
+        max_turns,
+        record,
+        judge,
     )
     return SelfPlay(
         x=found["features"],
         y=found["y"],
         game=found["game"],
         position=found["position"],
+        seat=found["seat"],
         winners=tuple(found["winner"]),
         turns=tuple(found["turns"]),
         plans=found["plans"],
         diverged=found["diverged"],
         actions=found.get("actions"),
+        judgement=found.get("judgement"),
     )
 
 

@@ -76,12 +76,15 @@ def self_play(
     threads: int = 1,
     max_turns: int = 300,
     record: bool = False,
+    judge: bool = False,
 ) -> dict[str, Any]:
     """Play `games`, `(seed, seat 0, seat 1)` with the seats as indices into
     `players` (`{"kind": "greedy"}`, `{"kind": "heuristic"}` or `{"kind":
     "planner", "worlds": n, "budget": n, "model": {...}}`) on `threads`
     threads, the GIL released: the finished games' turn-boundary rows
-    (`features`, float32) with each row's label `y`, `game` and `position`
-    in it (0 for the first turn's end); per game its `winner` (None if
-    unfinished) and `turns`, and `plans` and `diverged` (a column per seat);
-    with `record`, each game's `actions`."""
+    (`features`, float32) with each row's label `y`, `game`, `position` in
+    it (0 for the first turn's end) and `seat` that ended it; per game its
+    `winner` (None if unfinished) and `turns`, and `plans` and `diverged` (a
+    column per seat); with `record`, each game's `actions`; with `judge`,
+    each row's `judgement` (float64) by the seat that ended it, NaN for a
+    seat that doesn't judge. Neither changes a game."""

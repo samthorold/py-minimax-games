@@ -2079,6 +2079,65 @@ Script, log, summaries and the per-seed results (seed, first, second, winner, tu
 - **Timing noise**: `p32` has pf01's form and size yet timed at 15.79 against 14.52 ms per plan, so one 40-game timing run is good to about 10%. The ratios above are rough to that degree. By #173's numbers (7.2 ms for pi03's one member without the features), the features themselves cost about 1.15× at one member.
 - **For the owner**: replacing pf01 with a one-member model would make policy iteration's self-play and gating with the champion about 1.8× cheaper at no measured loss of strength. Whether "level within 5 points on 300 games" is enough, or wants a longer match (an SPRT for H0 50% against H1 45%, say, to bound the loss), is the owner's call; nothing was replaced here.
 
+## Milestone 9
+
+The yardstick, and today's champion, `pf01`, on it (docs/star-realms.md, End state and Milestones 9 and 10). No player is trained; each subsection measures one end-state belief.
+
+### Milestone 9: the exploitation gap
+
+- Date: 2026-10-22
+- Commit: this PR (#184; on `b25066c`): self-play's `judge` (`selfplay::Record`), `gap.py` and the `gap` command.
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0. 2 self-play threads, with three other agents' builds and runs on the machine at the same time (load average 8-10).
+- Seeds: 18,400,000-18,400,999, clear of every range a champion was fitted to and of every earlier experiment's (all below 10,000,000).
+
+**Belief tested** (End state, What it learns from): *choosing the best of many noisy judgements favours the overestimated ones, so the errors that cost games are in the positions the player chooses between.* If so, the champion's judgement of the ends it chose exceeds how often it went on to win from them. A gap near zero says learning from rejected positions isn't needed.
+
+```sh
+uv run python -m minimax_games.games.star_realms gap --champion pf01 --pool mlp pi03 pf01 --games 1000 --base-seed 18400000 --threads 2
+```
+
+(`--pool`, `--base-seed` and `--games` are the defaults.) 1,000 games of `pf01`, mixed as a policy-iteration round mixes them: 500 against itself, 250 against the heuristic, 250 against a champion drawn per game from `mlp`, `pi03` and `pf01`; every player at the planner's full settings (4 worlds, 20,000 states per plan). **Chosen** are the ends `pf01` played (17,900 positions), each with the judgement it recorded as it played it: its value on the position its turn ended in. **Held out** are the ends its opponents chose (4,865 positions, from the 426 games not against itself), judged by `pf01`. The gap is the mean judged chance less the share of those positions whose player went on to win; ± is one standard error, counting a game's positions together.
+
+| Positions | n | Games | Judged | Won | Gap |
+|---|---|---|---|---|---|
+| Chosen | 17,900 | 1,000 | 0.533 | 0.530 | **+0.002 ± 0.005** |
+| Held out | 4,865 | 426 | 0.363 | 0.343 | +0.020 ± 0.018 |
+
+Calibration, by judged chance:
+
+| Judged | Chosen n | Judged | Won | Gap | Held-out n | Judged | Won | Gap |
+|---|---|---|---|---|---|---|---|---|
+| 0.0-0.1 | 1,366 | 0.047 | 0.040 | +0.007 ± 0.008 | 931 | 0.042 | 0.034 | +0.007 ± 0.010 |
+| 0.1-0.2 | 1,188 | 0.152 | 0.160 | −0.008 ± 0.015 | 654 | 0.151 | 0.142 | +0.009 ± 0.025 |
+| 0.2-0.3 | 1,320 | 0.252 | 0.238 | +0.014 ± 0.017 | 635 | 0.248 | 0.202 | +0.047 ± 0.026 |
+| 0.3-0.4 | 1,685 | 0.352 | 0.334 | +0.018 ± 0.016 | 629 | 0.348 | 0.297 | +0.051 ± 0.031 |
+| 0.4-0.5 | 2,293 | 0.453 | 0.450 | +0.003 ± 0.013 | 606 | 0.451 | 0.419 | +0.032 ± 0.034 |
+| 0.5-0.6 | 2,514 | 0.550 | 0.563 | −0.013 ± 0.012 | 495 | 0.550 | 0.491 | +0.059 ± 0.038 |
+| 0.6-0.7 | 2,321 | 0.647 | 0.653 | −0.006 ± 0.015 | 319 | 0.646 | 0.699 | −0.053 ± 0.041 |
+| 0.7-0.8 | 1,725 | 0.748 | 0.734 | +0.013 ± 0.016 | 226 | 0.748 | 0.761 | −0.013 ± 0.042 |
+| 0.8-0.9 | 1,695 | 0.850 | 0.842 | +0.008 ± 0.015 | 191 | 0.851 | 0.869 | −0.019 ± 0.043 |
+| 0.9-1.0 | 1,793 | 0.953 | 0.955 | −0.002 ± 0.008 | 179 | 0.948 | 0.966 | −0.018 ± 0.017 |
+
+By game phase (the game's turn, both players' turns counted):
+
+| Turns | Chosen n | Judged | Won | Gap | Held-out n | Judged | Won | Gap |
+|---|---|---|---|---|---|---|---|---|
+| 1-6 | 4,722 | 0.533 | 0.540 | −0.007 ± 0.006 | 1,278 | 0.423 | 0.352 | +0.070 ± 0.021 |
+| 7-12 | 4,722 | 0.544 | 0.540 | +0.004 ± 0.005 | 1,278 | 0.371 | 0.352 | +0.019 ± 0.019 |
+| 13-18 | 4,600 | 0.538 | 0.536 | +0.003 ± 0.005 | 1,256 | 0.364 | 0.352 | +0.012 ± 0.017 |
+| 19-24 | 2,895 | 0.511 | 0.506 | +0.005 ± 0.006 | 781 | 0.307 | 0.320 | −0.013 ± 0.019 |
+| 25+ | 961 | 0.514 | 0.481 | **+0.033 ± 0.012** | 272 | 0.205 | 0.290 | −0.085 ± 0.043 |
+
+12.6 minutes wall (23 CPU-minutes) on 2 threads with the machine shared, so about 3-4 minutes on 8 quiet threads; `--games 500` halves it, with an error of about ±0.007 on the chosen gap.
+
+#### Reading it
+
+- **pf01 has no exploitation gap to speak of.** Its judgement of the ends it chose is 0.533 against 0.530 won, a gap of +0.002 ± 0.005, and every bin of the calibration table is within 0.02 of its outcome (each within about 1.2 standard errors). Choosing the best of up to 20,000 judged ends per turn hasn't made it overrate what it chose. **The belief fails for today's player**, so learning from rejected positions isn't needed now (End state, What it learns from, updated in this PR). It is a diagnostic to re-run on each new champion, since a stronger or differently fitted judgement could change it.
+- **Why the selection effect is small here**, a likely reading, not measured: the planner chooses among ends whose judgements mostly differ by what the turn bought and dealt, and most ends of a turn are plainly worse than the best few (How it explores). An error large enough to be selected has to beat that spread, and a value fitted to about 370,000 positions of games like these seldom makes one. The ends that are nearly tied are the ones a selection effect could bias, but a near tie also costs little when it goes wrong.
+- **The one place a gap shows is long games**: from turn 25 on, the chosen gap is +0.033 ± 0.012 (961 positions, about 3 standard errors). Long games are rarer in the training data, which is the likeliest reason (not tested here). It is small, 5% of the positions, and worth watching on the next champion rather than acting on.
+- **Held out is not a clean control.** The opponents' ends are calibrated about as well overall (+0.020 ± 0.018), but in a different shape: overrated early (+0.070 ± 0.021 in turns 1-6) and in the middle bins of judged chance, underrated late. The judgement scores a position as if it were played on by the kind of player its training games had, and these positions are played on by the heuristic and older champions against pf01, who are weaker than that: an opponent's position early in the game is worth less to them than to pf01. So the held-out gap mixes plain miscalibration with who is playing. That the chosen positions show no gap at all, while the same judgement misreads others' positions by up to 0.07, says the selection effect isn't hiding beneath a miscalibration it cancels.
+- **For #185**: the chosen judgements, with their outcomes and turns, are what the other diagnostics break down further (`gap.positions`, from `selfplay.play(..., judge=True)`).
+
 ## Milestone 7: Rust tracer bullet (toolchain and first-slice engine)
 
 2026-10-21, #137 (tracked by #127), CPython 3.14, Apple M1 (8 GB) shared with three other agents' builds and tests. The first end-to-end path through Rust: maturin builds `minimax_games._native` from `rust/`, and its Star Realms engine plays the starter decks and the 30-card first slice (design, Compiled engine).

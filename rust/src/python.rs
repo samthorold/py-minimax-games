@@ -24,7 +24,7 @@ use crate::star_realms::rng::Random;
 use crate::star_realms::rules::{
     Action, Few, advance, advance_legal, auto_play, legal_actions, new_game, winner,
 };
-use crate::star_realms::selfplay::{Game as SelfPlayGame, Player, play_games};
+use crate::star_realms::selfplay::{Game as SelfPlayGame, Player, Record, play_games};
 use crate::star_realms::state::{GameState, Pile, PlayerState};
 use crate::star_realms::value::{Extra, Form, More, Value};
 use crate::star_realms::view::{PlayerView, View, observe, sample_world};
@@ -744,13 +744,15 @@ fn seat_player(d: &Bound<'_, PyDict>) -> PyResult<Player> {
 /// released, each game stopping unfinished past `max_turns`. Returns a
 /// dict: `features`, the turn-boundary states' rows of the finished games
 /// in game order (float32), with each row's label `y` (1.0 if the player
-/// who just ended won), `game` (its index in `games`) and `position` (its
-/// place in that game, 0 for the first turn's end); per game its
-/// `winner` (`None` if unfinished) and `turns`, and `plans` and `diverged`
-/// (int64, a column per seat); with `record`, each game's decisions as
-/// `actions`.
+/// who just ended won), `game` (its index in `games`), `position` (its
+/// place in that game, 0 for the first turn's end) and `seat` (the seat
+/// that just ended); per game its `winner` (`None` if unfinished) and
+/// `turns`, and `plans` and `diverged` (int64, a column per seat); with
+/// `record`, each game's decisions as `actions`; with `judge`, each row's
+/// `judgement` (float64) by the seat that ended it, NaN for a seat that
+/// doesn't judge. Neither changes a game.
 #[pyfunction]
-#[pyo3(signature = (players, games, threads=1, max_turns=300, record=false))]
+#[pyo3(signature = (players, games, threads=1, max_turns=300, record=false, judge=false))]
 fn self_play<'py>(
     py: Python<'py>,
     players: Vec<Bound<'py, PyDict>>,
@@ -758,6 +760,7 @@ fn self_play<'py>(
     threads: usize,
     max_turns: u32,
     record: bool,
+    judge: bool,
 ) -> PyResult<Bound<'py, PyDict>> {
     let players = players
         .iter()
@@ -782,12 +785,18 @@ fn self_play<'py>(
     if threads < 1 {
         return Err(PyValueError::new_err("self-play needs at least 1 thread"));
     }
-    let played = py.detach(|| play_games(&players, &games, threads, max_turns, record));
+    let recording = Record {
+        actions: record,
+        judgements: judge,
+    };
+    let played = py.detach(|| play_games(&players, &games, threads, max_turns, recording));
     let columns = features::columns();
     let mut x: Vec<f32> = Vec::new();
     let mut y: Vec<f64> = Vec::new();
     let mut game = Vec::new();
     let mut position = Vec::new();
+    let mut seat = Vec::new();
+    let mut judgements: Vec<f64> = Vec::new();
     let mut counts = Vec::with_capacity(2 * played.len());
     let mut diverged = Vec::with_capacity(2 * played.len());
     for (i, p) in played.iter().enumerate() {
@@ -801,6 +810,8 @@ fn self_play<'py>(
         y.extend(p.ended.iter().map(|&e| f64::from(u8::from(e == won_by))));
         game.extend(std::iter::repeat_n(int(i), p.ended.len()));
         position.extend((0..p.ended.len()).map(int));
+        seat.extend(p.ended.iter().map(|&e| int(e)));
+        judgements.extend(&p.judgements);
     }
     let d = PyDict::new(py);
     let rows = y.len();
@@ -809,6 +820,10 @@ fn self_play<'py>(
     d.set_item("y", y.into_pyarray(py))?;
     d.set_item("game", int_array(py, game))?;
     d.set_item("position", int_array(py, position))?;
+    d.set_item("seat", int_array(py, seat))?;
+    if judge {
+        d.set_item("judgement", judgements.into_pyarray(py))?;
+    }
     let winners: Vec<Option<usize>> = played.iter().map(|p| p.winner).collect();
     d.set_item("winner", winners)?;
     let turns: Vec<u32> = played.iter().map(|p| p.turns).collect();
