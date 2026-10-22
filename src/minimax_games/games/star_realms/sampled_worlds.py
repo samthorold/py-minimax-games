@@ -171,7 +171,7 @@ class Record:
 
 
 @cache
-def _evaluator(model: str | None) -> tuple[Evaluator, Backend]:
+def champion(model: str | None) -> tuple[Evaluator, Backend]:
     """The committed model `model` with the Rust enumeration, loaded once a
     process, or the linear evaluation with the Python one if None."""
     if model is None:
@@ -188,7 +188,7 @@ def _records(
 ) -> list[Record]:
     """The comparisons of every plan both players make in game `seed`, each
     player a `Probe` of `model`, in the order they were made."""
-    evaluator, backend = _evaluator(model)
+    evaluator, backend = champion(model)
     probes = (
         Probe(seed, counts, per_world, evaluator, backend),
         Probe(seed, counts, per_world, evaluator, backend),
