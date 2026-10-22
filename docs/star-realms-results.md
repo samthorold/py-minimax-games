@@ -2127,6 +2127,40 @@ About 11 minutes wall in all, 6.7 of them (403 s) the match.
 - **The match leans towards 16 worlds but doesn't settle it**: 54.3%, interval 48.7-59.9%, and 30 seeds won both against 17 lost both (sign z 1.90, about p = 0.06 two-sided). With 300 games it can only rule out gaps of about 6 points, so the effect of four times the worlds is somewhere between nothing and about 10 points, at **4.0× the time per plan** (72 against 17.9 ms).
 - **On the belief**: the choice changes little (under a tenth of plans, mostly near-ties), as predicted; whether those near-ties are worth a few points of strength is not decided by this match. If they are, it is the cheapest kind of strength there is (no training), and the same budget spent on 4 worlds at 4× the states per world would be the fair comparison before changing the default, which is out of this slice's scope (a decision on this result, in its own PR). The obvious next measurement is an SPRT of 16 against 4 worlds, H0 50% against H1 55%.
 
+### Milestone 9: the reference population and pf01's baseline
+
+- Date: 2026-10-22
+- Commit: this PR (#183; on `b25066c`): the `population` command (`population.py`).
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0. 2 threads, **shared** with three other agents, so the time is contended.
+- Seeds: 0-499 against every member, `pf01` first on even seeds (the ladder's seeds and seats). Planners at 4 worlds and 20,000 states per plan, all in Rust; max 300 turns.
+
+**The belief it tests**: the reason the design measures against a population rather than the last champion, that a chain of head-to-head wins can each be narrow and still not add up to playing better against everything. If it holds, `pf01`'s margins over the older members fall short of what the chain of promotions predicts, or it loses to one of them.
+
+```sh
+uv run python -m minimax_games.games.star_realms population pf01 --threads 2 --out docs/population/pf01
+```
+
+| Opponent | Wins | Win% | 95% interval | As 1st | Predicted by the chain |
+|---|---|---|---|---|---|
+| heuristic | 370/500 | **74.0%** | 70.0-77.7% | 196/250 | - |
+| `mlp` | 308/500 | **61.6%** | 57.3-65.8% | 171/250 | 64.3% |
+| `pi03` | 283/500 | **56.6%** | 52.2-60.9% | 150/250 | (its confirmation at promotion, fresh seeds: 54.0%) |
+| **Mean** | | **64.1%** | 61.7-66.5% | | |
+
+(Wilson intervals; the mean's is the normal one from the three rates' variances. No game was unfinished; mean 23.5-23.8 turns.) "Predicted by the chain" adds the Elo gaps of the promotions: `pi03` over `mlp` 58.0% (56 Elo) and `pf01` over `pi03` 56.6% here (46 Elo) give 64.3% for `pf01` over `mlp`.
+
+Per-seed results (seed, first, second, winner, turns, the form of gating and ladder matches): [population/pf01/](population/pf01/), one CSV per opponent. A later candidate's run pairs with them seed by seed: `population <candidate> --paired docs/population/pf01`.
+
+- **The command reproduces the recorded results**: its 500 games against the heuristic are `f32`'s ladder match (Milestone 8: hand-made features at pi03's data size, `features-window/ladder-f32.csv`) game for game, winners and turns, with `f32` named `pf01`. Pairing them with `pi03`'s ladder (`policy-iteration/run-1/ladder-r03.csv`) gives that section's 80 seeds won only by `pf01` and 61 only by `pi03` (z 1.60).
+- **Time**: 14.7 minutes (879 s) on 2 threads, contended. On 8 free threads the same three matches took 71 s (the ladder) and 93 s (500 games against `pi03`, the confirmation) in Milestone 8, so the whole run is about 4 minutes there; a candidate cheaper than `pf01` takes less. With `--games 300` the run is 40% shorter and still pairs, on the seeds both played.
+
+#### Reading it
+
+- **`pf01` loses to none of the population**, and every interval is above 50%. The bar the design sets for promotion is met by today's champion, as it should be: the population is the chain of champions it beat.
+- **Among the learned players the chain adds up**: 61.6% against `mlp` where the two promotions predict 64.3%, well inside the interval (57.3-65.8%). The champions so far are transitive, so far as 500 games can tell; no narrow win hid a weakness against an older champion.
+- **Against the heuristic it doesn't**: `mlp` won 69.0% on these seeds, `pi03` 70.2% and `pf01` 74.0%. Two promotions worth about 100 Elo head to head moved the rate against the scripted bot by 5 points (paired with `pi03`, z 1.6). So the belief holds where the population differs in kind from the champions: progress measured on champions alone overstates progress against a different opponent. It is the case for keeping the heuristic, and hand-crafted opponents, in the population.
+- **The yardstick for Milestone 10**: a candidate must beat `pf01` head to head and lose to none of the heuristic, `mlp` and `pi03`, with its rates and its paired seeds against `pf01`'s here. The mean, 64.1% (61.7-66.5%), summarises it; with 500 games each it moves by about ±2.4 points on noise alone, so pairing (seed by seed against these CSVs) is the sharper comparison.
+
 ### Milestone 9: the exploitation gap
 
 - Date: 2026-10-22
