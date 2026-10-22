@@ -31,7 +31,7 @@ from minimax_games._native import star_realms as native
 from minimax_games.games.star_realms import features
 from minimax_games.games.star_realms.fit import MAX_TURNS
 from minimax_games.games.star_realms.planner import BUDGET, WORLDS
-from minimax_games.games.star_realms.value import Model
+from minimax_games.games.star_realms.value import Model, reads_more
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -64,7 +64,7 @@ def native_model(model: Model) -> dict[str, Any]:
     """`model` as the Rust forward pass takes it: its form, its
     standardisation and each member's parameters, as float64 arrays, and
     for a model reading the extra features, the card tables they read
-    (`features.extra_tables`)."""
+    (`features.extra_tables`, with `MORE`'s if it reads them)."""
 
     def arrays(params: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         return {
@@ -78,7 +78,7 @@ def native_model(model: Model) -> dict[str, Any]:
         "members": [arrays(params) for params in model.members],
     }
     if model.extra:
-        crossing["extra"] = features.extra_tables()
+        crossing["extra"] = features.extra_tables(more=reads_more(model.extra))
     return crossing
 
 

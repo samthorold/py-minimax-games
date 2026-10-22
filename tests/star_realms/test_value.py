@@ -290,3 +290,46 @@ def test_only_the_known_extra_features_are_taken():
     x, y = toy()
     with pytest.raises(ValueError, match="extra"):
         fit(LOGISTIC, x, y, seed=0, epochs=1, extra=("kill threat",))
+
+
+def test_pf01_scores_as_it_did_before_the_more_features():
+    model = value.load("pf01")
+    assert model.extra == features.EXTRA
+    p = model.predict(state_rows()[0])
+    pinned = [
+        "0x1.bd3ae6ccc6e0ep-2",
+        "0x1.87aff82d866e7p-2",
+        "0x1.91d66f2a14b90p-2",
+        "0x1.f6c47d1837369p-2",
+        "0x1.217e2f586a6e4p-3",
+    ]
+    assert [float(v).hex() for v in p[::10]] == pinned
+
+
+def test_a_model_with_more_features_reads_them_after_the_extra_ones(tmp_path):
+    x, y = state_rows()
+    more = features.EXTRA + features.MORE
+    model = value.fit_ensemble(
+        Mlp(hidden=3),
+        x,
+        y,
+        seeds=(0, 1),
+        epochs=1,
+        names=features.NAMES,
+        extra=more,
+    )
+    assert model.extra == more
+    assert len(model.mean) == len(features.NAMES) + len(more)
+    widened = np.hstack([x, features.extra(x, more=True).astype(x.dtype)])
+    plain = Model(model.form, model.names, model.mean, model.std, model.members)
+    np.testing.assert_array_equal(model.predict(x), plain.predict(widened))
+    model.save(tmp_path / "m.npz")
+    loaded = Model.load(tmp_path / "m.npz")
+    assert loaded.extra == more
+    assert np.array_equal(loaded.predict(x), model.predict(x))
+
+
+def test_the_more_features_come_only_with_the_extra_ones():
+    x, y = toy()
+    with pytest.raises(ValueError, match="extra"):
+        fit(LOGISTIC, x, y, seed=0, epochs=1, extra=features.MORE)
