@@ -28,7 +28,7 @@ A player trained to challenge the **champion**, not yet promoted.
 ### Measuring
 
 **Reference population**:
-The fixed set of opponents every candidate plays on fixed seeds: the heuristic, the planner on `evaluate`, every champion, and any hand-crafted player kept as an opponent.
+The fixed set of opponents every candidate plays on fixed seeds: the heuristic, every champion, and any hand-crafted player kept as an opponent.
 _Avoid_: ladder (the older, champion-only chain), gauntlet
 
 **Probe**:
