@@ -93,7 +93,7 @@ An idea the probes find the judgement hasn't learned becomes the next experiment
 
 Every experiment reports three things, all cheap enough to stay inside the feedback loop:
 
-- **Strength**, against a fixed **reference population** (the heuristic, the planner on `evaluate`, and every champion), on fixed seeds paired with each opponent's recorded results on them: the win rate against each, and their mean. A champion is promoted when it loses to none of them and beats the current one head to head. A population, not only the last champion, because a chain of head-to-head wins can each be narrow and still not add up to playing better against everything.
+- **Strength**, against a fixed **reference population** (the heuristic and every champion), on fixed seeds paired with each opponent's recorded results on them: the win rate against each, and their mean. Every member plays at full speed, so a run takes minutes; the planner on `evaluate` is left out because it plays only at the speed of the reference engine, which would put tens of minutes into every run, and every champion is above it (`mlp` beat it), so its recorded results stand without it. A champion is promoted when it loses to none of them and beats the current one head to head. A population, not only the last champion, because a chain of head-to-head wins can each be narrow and still not add up to playing better against everything.
 - **Understanding**: the probes above, on the trained judgement. They judge constructed positions and play no games.
 - **Diagnostics**, on games already played: the exploitation gap, the judgement's error near a reshuffle against far from one and on positions with a rare card, and the share of turns not examined in full.
 
