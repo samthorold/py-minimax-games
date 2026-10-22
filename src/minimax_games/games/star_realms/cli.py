@@ -103,6 +103,12 @@ Run it again with the same `--out` to resume after the last finished round.
 and `--hours` are the stopping rules; the round's sizes and the planner's
 settings default to the agreed design's.
 
+`python -m minimax_games.games.star_realms gap` measures the exploitation
+gap (see `gap`): `--champion`'s games on `--games` seeds from `--base-seed`,
+mixed as a policy-iteration round mixes them with `--pool`'s champions,
+every end judged; it prints the gap, a calibration table and the gap by game
+phase, for the ends the champion chose and for those its opponents chose.
+
 `python -m minimax_games.games.star_realms population PLAYER` plays a player
 against the reference population (see `population`): `--games` games
 against each member but itself on seeds 0 up, on `--threads` threads, with
@@ -126,6 +132,7 @@ from minimax_games.games.star_realms import (
     bench,
     cheat,
     fit,
+    gap,
     iterate,
     planner,
     population,
@@ -350,6 +357,9 @@ def main(argv: list[str] | None = None) -> None:
     if argv[:1] == ["native-bench"]:
         native_bench(argv[1:])
         return
+    if argv[:1] == ["gap"]:
+        gapping(argv[1:])
+        return
     if argv[:1] == ["population"]:
         populating(argv[1:])
         return
@@ -377,6 +387,57 @@ def main(argv: list[str] | None = None) -> None:
     result = play_match((first, second), args.seed, log=print if args.log else None)
     if not args.log:
         print(f"Player {result.winner + 1} wins on turn {result.turns}")
+
+
+def gapping(argv: list[str]) -> None:
+    """The exploitation gap of a champion on its own games (`gap`)."""
+    parser = argparse.ArgumentParser(
+        prog="python -m minimax_games.games.star_realms gap"
+    )
+    parser.add_argument(
+        "--champion", default="pf01", help="the committed model (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--pool",
+        nargs="+",
+        default=["mlp", "pi03", "pf01"],
+        help="the champions a quarter of the games are against, one drawn per"
+        " game (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--games", type=int, default=1000, help="how many games (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--base-seed",
+        type=int,
+        default=gap.SEEDS,
+        help="the first game's seed (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--threads", type=int, default=1, help="threads to play on (default: 1)"
+    )
+    parser.add_argument(
+        "--worlds",
+        type=int,
+        default=planner.WORLDS,
+        help="the planners' worlds (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--budget",
+        type=int,
+        default=planner.BUDGET,
+        help="the planners' states per plan (default: %(default)s)",
+    )
+    args = parser.parse_args(argv)
+    measured = gap.measure(
+        args.champion,
+        args.pool,
+        range(args.base_seed, args.base_seed + args.games),
+        threads=args.threads,
+        worlds=args.worlds,
+        budget=args.budget,
+    )
+    print(gap.report(measured))
 
 
 def native_bench(argv: list[str]) -> None:

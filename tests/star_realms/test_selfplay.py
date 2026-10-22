@@ -274,3 +274,37 @@ def test_a_model_s_extra_features_cross_with_it():
     # without them, its inputs don't fit the rows
     with pytest.raises(ValueError, match="features"):
         native.predict({k: v for k, v in model.items() if k != "extra"}, REAL_ROWS)
+
+
+def test_each_played_end_is_recorded_with_the_judgement_of_whoever_played_it():
+    games = _batch()
+    played = play(games, judge=True)
+    assert played.judgement is not None
+    finished = [g for g, w in zip(games, played.winners, strict=True) if w is not None]
+    assert len(finished) == played.games
+    for row, (game, seat) in enumerate(zip(played.game, played.seat, strict=True)):
+        player = games[game][1 + seat]
+        if isinstance(player, Planner):
+            expected = player.model.predict(played.x[row : row + 1].astype(np.float64))
+            assert abs(played.judgement[row] - expected[0]) <= TOLERANCE
+        else:
+            assert np.isnan(played.judgement[row])
+    # the first turn is seat 0's, then the seats alternate
+    assert np.array_equal(played.seat, played.position % 2)
+    assert not np.isnan(played.judgement).all()
+
+
+def test_judging_changes_no_game():
+    games = _batch()
+    plain = play(games, threads=2, record=True)
+    judged = play(games, threads=2, record=True, judge=True)
+    assert plain.judgement is None
+    assert judged.judgement is not None
+    assert judged.judgement.shape == judged.y.shape
+    assert judged.actions == plain.actions
+    assert judged.winners == plain.winners
+    assert judged.turns == plain.turns
+    assert np.array_equal(judged.x, plain.x)
+    assert np.array_equal(judged.y, plain.y)
+    assert np.array_equal(judged.plans, plain.plans)
+    assert np.array_equal(judged.diverged, plain.diverged)
