@@ -482,6 +482,21 @@ def test_probe_reports_the_champion_s_synergy_by_function_and_phase(capsys):
     assert "logit" in out
 
 
+def test_probe_reports_the_champion_s_faction_pair_table(capsys):
+    argv = [
+        *("probe", "faction-pair", "--model", "pf01", "--games", "2"),
+        *("--worlds", "1", "--budget", "40", "--samples", "1"),
+    ]
+    main(argv)
+    out = capsys.readouterr().out
+    assert "Faction-pair probe of pf01" in out
+    for faction in ("Blob", "Trade Federation", "Star Empire", "Machine Cult"):
+        assert faction in out
+    assert "mostly of no one faction" in out
+    assert "interaction" in out
+    assert "logit" in out
+
+
 def test_worlds_compares_the_plans_by_count_then_plays_the_paired_match(
     capsys: pytest.CaptureFixture[str],
 ):

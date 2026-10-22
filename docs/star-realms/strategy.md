@@ -17,6 +17,7 @@ A game ends when one player's Authority reaches zero, and nearly all damage is c
 
 - **Cards of the same function are worth more together.** [lore] A deck gains from a second and third card that draws, scraps, or makes the opponent discard, beyond the worth of each alone: a deck can be built around a function, not only around a faction.
 - **Some factions pair particularly well.** [lore] Beyond a single faction's ally abilities, some pairs of factions suit each other: their strengths cover each other's gaps, so a two-faction deck of the right pair beats either faction alone.
+  - What `pf01`'s judgement learned (the faction-pair probe, [results](../star-realms-results.md), Milestone 9: probe, faction pairs): a card adds most to a deck mostly of its own faction, in every faction, and of the twelve pairs of different factions it singles out only one, a Machine Cult card added to a deck mostly of Trade Federation, and that only slightly. It says what the judgement believes, not which pairs are best, so the belief stays [lore].
 
 ## Denial
 
