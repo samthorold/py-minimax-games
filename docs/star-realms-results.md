@@ -2081,7 +2081,7 @@ Script, log, summaries and the per-seed results (seed, first, second, winner, tu
 
 ## Milestone 9
 
-The yardstick, and today's champion, `pf01`, on it ([the design](star-realms.md), Milestone 9). No player is trained; each subsection is one end-state test, and names the belief it tests.
+The yardstick, and today's champion, `pf01`, on it ([the design](star-realms.md), Milestone 9). No player is trained; each subsection is one end-state test, and names the belief it tests. The last, [the baseline](#milestone-9-the-baseline), summarises them all and closes the milestone.
 
 ### Milestone 9: more sampled worlds
 
@@ -2565,6 +2565,62 @@ The reply player's plans (all 9,276 of them, every game finished):
 - **By the design's rule the result is neither of its two outcomes**: the belief doesn't *fail* (the reply player doesn't beat 16 worlds; sign z isn't +2 or more), but it doesn't *hold* as stated either, because the choice changes far more than 11.3%. The case the design names for it, many changed choices with no strength, is "the diagnostic moving without strength"; here it is moving against strength. What the belief is about, that the judgement summarises the reply better than this lookahead does, is supported: a third of the champion's choices were overruled by looking a turn further, and play got weaker, not stronger.
 - **Why the reply misleads, as far as this match can tell**: from turn 13 on fewer than half the plans had every reply examined in full (36-46%), and a reply cut short plays the best end found so far, underrating the opponent's turn exactly in the large late turns; the reply's own judgement is also a sample of 2 sub-worlds against the player's 4 worlds, so its value is noisier than the plain plan's. Neither is separated here. The pick was the 3rd candidate on 14.4% of the plans looked through, less often than the 2nd (24.8%), so 3 candidates weren't obviously too few.
 - **What follows** (decisions on this result, out of this slice): the reply isn't adopted, and How it chooses' lookahead half stands as the end state says it (lookahead adds a little and soon stops; here, the opponent's reply adds nothing at equal cost). Whether a reply examined in full and judged over more sub-worlds would do better is a different, costlier player; the examination test (Milestone 9: more examination where the budget runs out) found four times the states adds no measurable strength to the player's own turn, so nothing here argues for spending more on the opponent's. Together the two halves of How it chooses' test agree: neither more examination nor the opponent's reply turns extra budget into strength, and of the uses of extra budget measured so far only more sampled worlds leans positive.
+
+### Milestone 9: the baseline
+
+- Date: 2026-10-22
+- Commit: this PR (#193; on `56ff4ab`). Docs only: every number below is from the sections above, and no game was played for this one.
+
+`pf01` on every end-state test that needs no new player. Each row links the section that holds its command, seeds, machine and full tables; the commands are repeated below so the whole baseline can be reproduced from here. Every run took minutes (2-15 on 2 contended threads; about a third of that on 8 free ones).
+
+**Strength**, against the reference population (seeds 0-499, `pf01` first on even seeds; per-seed results in [population/pf01/](population/pf01/), which a candidate pairs with):
+
+| Opponent | `pf01`'s win rate | 95% interval |
+|---|---|---|
+| heuristic | 74.0% | 70.0-77.7% |
+| `mlp` | 61.6% | 57.3-65.8% |
+| `pi03` | 56.6% | 52.2-60.9% |
+| Mean | **64.1%** | 61.7-66.5% |
+
+**The tests**, each with its belief, `pf01`'s number and what it says:
+
+| Test | Belief (End state part) | `pf01` | Reading | Record |
+|---|---|---|---|---|
+| Strength against the population | A chain of narrow wins can fail to add up (How progress is measured) | Loses to none; 61.6% against `mlp` where the chain predicts 64.3% | Champions are transitive; progress against the heuristic (+5 points for ~100 Elo) is overstated by champions alone, so hand-crafted opponents stay in the population | [the reference population](#milestone-9-the-reference-population-and-pf01s-baseline) |
+| Exploitation gap | Choosing the best of noisy judgements favours overestimated ones (What it learns from) | +0.002 ± 0.005 on 17,900 chosen ends; +0.033 ± 0.012 past turn 24 | **Fails**: learning from rejected positions **not needed** | [the exploitation gap](#milestone-9-the-exploitation-gap) |
+| Error near a reshuffle | When a card will be drawn matters as much as owning it (What it sees) | Gap −0.001 near, −0.007 far; squared miss with no consistent direction within phases | Not supported: the deck's cycle **not needed** | [errors by reshuffle distance and rare cards](#milestone-9-the-judgements-errors-by-reshuffle-distance-and-rare-cards-and-turns-not-examined) |
+| Error with a rare card | What is learned of common cards carries to rare ones (What it sees) | Within phases, positions with a rare card judged a little better (0.211 against 0.232 in turns 1-6) | Not called for by this diagnostic | the same |
+| Turns not examined in full | Almost every turn can be examined in full (How it chooses) | 18% of turns; 0% in turns 1-6, 57% from turn 25 | Holds early, not late | the same |
+| More examination where the budget runs out | Lookahead adds a little and soon stops (How it chooses) | Choice changes on 2.6% of plans; 80,000 states against 20,000: 50.8% (46.8-54.8%), sign z 1.04, at 2.9× the time | **Holds**: a preference over moves **not needed** | [more examination](#milestone-9-more-examination-where-the-budget-runs-out) |
+| Looking through the reply | The judgement already summarises the reply (How it chooses) | Choice changes on 33.7% of plans; 44.7% (39.1-50.3%) against 16 worlds at equal states, sign z −2.00 | Neither of the rule's outcomes: the reply overrules the judgement often and play gets weaker; not adopted | [looking through the reply](#milestone-9-looking-through-the-reply) |
+| More sampled worlds | A few sampled worlds are enough (How it chooses) | Choice changes on 8.7% at 16 worlds (a fresh 4-world sample: 11.3%); 16 worlds against 4: 54.3% (48.7-59.9%), sign z 1.90, at 4.0× the time | The choice changes little; strength between 0 and about 10 points, undecided | [more sampled worlds](#milestone-9-more-sampled-worlds) |
+| Probe: same-function synergy | Cards of the same function are worth more together (strategy) | Logit, 2nd card − 1st: draw −0.061, scrap −0.041, discard +0.017, control −0.028 | Not learned for draw or scrap; a little for discard, early | [same-function synergy](#milestone-9-probe-same-function-synergy) |
+| Probe: faction pairs | Some factions pair particularly well (strategy) | Own-faction interaction +0.08 to +0.22 logit; one cross pair, Machine Cult into Trade Federation, +0.033 ± 0.009 | Values a faction's own cards far above any pairing | [faction pairs](#milestone-9-probe-faction-pairs) |
+| Probe: denial | Keeping a card from the opponent has value (strategy) | Sees 2.2% of a row card's worth to the next buyer; 75.8% of its Trade Row scraps deny (heuristic 56.1%), 38.6% of its buys (heuristic 44.1%) | A weak form: steers its scraps, not its buys | [denial](#milestone-9-probe-denial) |
+| Probe: investment against the race | Strong players invest early, then turn to combat (strategy) | Combat above trade per unit in every phase; trade below nothing after turn 8; economy 55.8% of buys in turns 1-4, 34-39% from turn 13 | Judges and buys as the revised lore says strong players do (the section read it against the earlier lore, invest more and for longer than bots, which it fails) | [investment against the race](#milestone-9-probe-investment-against-the-race) |
+
+The commands, with the seeds that reproduce each result (each section above gives the full options and timings):
+
+```sh
+uv run python -m minimax_games.games.star_realms population pf01 --threads 2 --out docs/population/pf01   # seeds 0-499
+uv run python -m minimax_games.games.star_realms gap --champion pf01 --pool mlp pi03 pf01 --games 1000 --base-seed 18400000 --threads 2
+uv run python -m minimax_games.games.star_realms diagnose --champion pf01 --pool mlp pi03 pf01 --games 1000 --every 3 --base-seed 18400000 --threads 2
+uv run python -m minimax_games.games.star_realms examine --games 200 --base-seed 19870000 --jobs 2
+uv run python -m minimax_games.games.star_realms examine --games 0 --match-seeds 300 --match-base-seed 19875000 --jobs 2
+uv run python -m minimax_games.games.star_realms reply --seeds 150 --base-seed 19880000 --threads 2
+uv run python -m minimax_games.games.star_realms worlds --games 60 --base-seed 18600000 --match-seeds 150 --match-base-seed 18610000 --jobs 2
+uv run python -m minimax_games.games.star_realms probe synergy --model pf01 --games 200 --threads 2        # seeds 12,000,000-12,000,199
+uv run python -m minimax_games.games.star_realms probe faction-pair --model pf01 --games 200 --threads 2   # the same seeds
+uv run python -m minimax_games.games.star_realms probe denial --model pf01 --games 200 --base-seed 19200000 --threads 2
+uv run python -m minimax_games.games.star_realms probe investment --model pf01 --games 200 --base-seed 19191000 --threads 2
+```
+
+#### Reading it
+
+- **None of the end state's conditional parts is called for by `pf01`.** Its judgement isn't overrated where it chooses (so no learning from rejected positions), more examination on the turns too large to examine changes little and wins nothing (so no preference over moves), and its error doesn't grow near a reshuffle (so no description of the deck's cycle). Each is re-measured on a new champion, since a different judgement can make a different error.
+- **Extra budget at decision time buys little.** Of three ways to spend four times the states, more examination adds nothing measurable, the opponent's reply costs strength, and more sampled worlds lean positive without settling it. The champion's strength is in its judgement, as How it chooses says.
+- **The probes find two ideas the judgement hasn't built**: same-function synergy for cards that draw or scrap, and the Trade Row as it bears on the next buyer (2% seen; its buys don't deny). Faction pairs and investment show the judgement holding a coherent view (its own faction first; invest early, then combat), so they point to no experiment.
+- **What it sets for Milestone 10**: the order of its steps, and why, is in the design (Milestones, 10). A candidate is measured against the strength table above, paired seed by seed, and reports the probe or diagnostic its belief predicts will move.
 
 ## Milestone 7: Rust tracer bullet (toolchain and first-slice engine)
 
