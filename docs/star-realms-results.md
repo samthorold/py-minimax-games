@@ -2669,6 +2669,58 @@ A test checks that wins are credited to the right player in either order (a plan
 - **Milestone 9's lean was noise.** That match (54.3% over 300 games) and this one (43.5% over 200) are on disjoint seeds with the same players; together 16 worlds won 250 of 500 games, exactly 50.0% (Wilson 45.6-54.4%), and the seeds won both and lost both are 43 and 43 (sign z 0). Each match alone looked like a sign z of about 2, in opposite directions; together they say more worlds makes no measurable difference. This match's own −2.08 is no evidence that 16 worlds is *worse*: the SPRT stops when the record is far down, so the record it stops on is biased towards the bound it crossed.
 - **On the belief**: the choice changes little with more worlds (8.7% of plans, mostly near-ties; Milestone 9: more sampled worlds), and now strength doesn't change measurably either. A few sampled worlds are enough, as How it chooses says. With the other two uses of extra budget measured in Milestone 9 (more examination: nothing measurable; the opponent's reply: it costs strength), none of the three ways to spend four times the states at decision time pays. The champion's strength is in its judgement.
 
+### Milestone 10: pf01 read again under the reading rules
+
+- Date: 2026-10-23
+- Commit: `18e9123`'s code (since then only docs have changed, in #215). No code changed for this.
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0. 2 threads, run one after another.
+- Seeds: 21,000,000 up, clear of every earlier range (the highest before ends at 19,990,009): the head-to-head 21,000,000-21,000,299; examination 21,100,000-21,100,199, its match 21,110,000-21,110,299; the reply 21,200,000-21,200,149; the gap and diagnostics 21,300,000-21,300,999; the investment probe 21,400,000-21,400,199, synergy and faction pairs 21,410,000-21,410,199, denial 21,420,000-21,420,199. The population is played on its fixed seeds 0-499 by design, so `pf01`'s run reproduces Milestone 9's exactly; `b32`'s two runs there are new readings.
+
+#215 gave every End state hypothesis a reading rule. Most of the rules were written after Milestone 9 had read `pf01`, so a status taken from those readings would be a rule fitted to a known result. This reads `pf01` again, under each rule, on seeds the rules weren't written against, and the [register](star-realms/register.md) takes its statuses from here.
+
+```sh
+uv run python -m minimax_games.games.star_realms population pf01 --threads 2 --out runs/reread/population-pf01
+uv run python -m minimax_games.games.star_realms tournament --bots planner:pf01 planner:pi03 --games 300 --base-seed 21000000 --jobs 2
+uv run python -m minimax_games.games.star_realms examine --games 200 --base-seed 21100000 --jobs 2
+uv run python -m minimax_games.games.star_realms examine --games 0 --match-seeds 300 --match-base-seed 21110000 --jobs 2
+uv run python -m minimax_games.games.star_realms reply --seeds 150 --base-seed 21200000 --threads 2
+uv run python -m minimax_games.games.star_realms gap --champion pf01 --pool mlp pi03 pf01 --games 1000 --base-seed 21300000 --threads 2
+uv run python -m minimax_games.games.star_realms diagnose --champion pf01 --pool mlp pi03 pf01 --games 1000 --every 3 --base-seed 21300000 --threads 2
+uv run python -m minimax_games.games.star_realms probe investment --model pf01 --games 200 --base-seed 21400000 --threads 2
+uv run python -m minimax_games.games.star_realms probe synergy --model pf01 --games 200 --base-seed 21410000 --threads 2
+uv run python -m minimax_games.games.star_realms probe faction-pair --model pf01 --games 200 --base-seed 21410000 --threads 2
+uv run python -m minimax_games.games.star_realms probe denial --model pf01 --games 200 --base-seed 21420000 --threads 2
+uv run python -m minimax_games.games.star_realms population runs/features-175/b32.npz --opponents pi03 --threads 2 --out runs/reread/population-b32-pi03 --paired docs/population/pf01
+uv run python -m minimax_games.games.star_realms population runs/features-175/b32.npz --opponents pf01 --threads 2 --out runs/reread/population-b32
+```
+
+`b32` is #175's fit without the hand-made features: the same data, form and seeds as the fit with them that became `pf01` (Milestone 8: hand-made features at pi03's data size), saved in `runs/features-175/`.
+
+| Hypothesis (End state part) | Reading | By its rule | Wall time |
+|---|---|---|---|
+| Stronger than every player before it (The whole player) | Loses to none: 74.0%, 61.6%, 56.6%. Against `pi03` on fresh seeds: 174/300, **58.0%** (52.3-63.4%) | **Supported** | 8.4 + 1.2 min |
+| A person could play it (The whole player) | 2.47 plans a turn at 8.65 ms a plan (the Python planner on the Rust enumeration), about 12 of its turns a game: **about 0.25 s** of thinking a game | **Supported** | |
+| Learns at the speed the feedback loop needs (The whole player) | Every instrument here 1.7-13.4 minutes on 2 threads (the reply the longest); training a candidate not timed | **Due**: the training half wasn't read | |
+| Lookahead adds little (How it chooses) | Four times the examination: 308/600, **51.3%** (47.3-55.3%), sign z 1.46. The reply, against the champion at equal cost (16 worlds, as its instrument plays): 121/300, **40.3%** (34.9-46.0%), sign z −3.71 | **Supported**: neither interval wholly above 50% | 5.0 + 13.4 min |
+| Within the turn, tactics are calculated (How it chooses) | 11.1% of 11,901 plans ran out; 22.5% of those changed their choice at four times the states: **2.5% of all plans**. Turns not examined in full: 16.9% (0% in turns 1-6, 60% from turn 25) | **Supported**: under 5% | 3.2 min |
+| Judging the position a move leads to (What it judges) | The examination match above | **Supported** | |
+| The decisions that win are investments (What it judges) | Early, a unit of trade +0.0050 (Shuttle) and +0.0194 (Freighter); economy 54.0% of buys in turns 1-4, 34.4-44.6% in every band from turn 13 | **Supported** | 1.7 min |
+| A judgement of positions can be checked and explained (What it judges) | Chosen positions by tenth of judged chance: every tenth within 0.010 but one, **0.1-0.2 at +0.031 ± 0.014**; all four probes give a reading | **Refuted**: one tenth off by more than 0.03 | 7.6 min |
+| The deck's cycle (What it sees) | Chosen positions' squared miss, near against far, by phase: 0.231/0.233, 0.193/0.193, 0.139/0.147, 0.111/0.126, 0.197/0.143. Near is above far only from turn 25 | **Refuted**: near above far in fewer than two phases | 2.7 min |
+| Cards as proportions (What it sees) | Paired against `pi03` on seeds 0-499: `b32` 50.6% where `pf01` won 56.6%; seeds won only by `pf01` 103, only by `b32` 73, **sign z 2.26** | **Supported** | 3.2 min |
+| Cards by what they do, the rare-card arm (What it sees) | Squared miss with a rare card against without, by phase: 0.216/0.236, 0.193/0.201, 0.143/0.173 (10 positions without). Never above | That arm doesn't support it; the synergy arm needs #211, so the row stays **untested** | |
+| Positions compared and rejected (What it learns from) | Gap on 18,014 chosen positions **−0.001 ± 0.005**; from turn 25, +0.014 ± 0.014 | **Refuted**: not above 0.02 | |
+
+Synergy, faction pairs and denial gave readings much like Milestone 9's (logs in `runs/reread/`), and each took 1.7-1.8 minutes.
+
+#### Reading it
+
+- **Ten hypotheses now have a status read under a declared rule.** Seven are supported and three refuted, one of which calls for a decision (below). The register is updated in this PR.
+- **The checked-and-explained rule is refuted by 0.001, inside its own error.** Its 0.1-0.2 tenth is off by +0.031 ± 0.014, against a rule of "within 0.03" that doesn't allow for sampling error, and every other tenth is within 0.010. The rule stands as written: changing it after this reading is the drift the End state exists to stop. Whether to revise the End state (a rule that counts the error, say a tenth off by more than 0.03 *and* twice its standard error) is the owner's call. Until then the register shows it refuted, with this note.
+- **Proportions: paired, they win; head to head, they're level.** The rule's instrument, pairing each fit against `pi03`, supports the hypothesis (sign z 2.26). It agrees with #175's +3.4 on other seeds. But `b32` played `pf01` directly on seeds 0-499 and won 246 of 500 (`pf01` 50.8%, 46.4-55.2%). So the features pay against a third player, not against each other. One reading, not tested: the features help the judgement against a style it can now read (`pi03`'s) more than they make it play better in general. It is recorded, not acted on, because no hypothesis is about it yet.
+- **The late-game exploitation gap didn't hold.** Milestone 9's +0.033 ± 0.012 from turn 25 is +0.014 ± 0.014 on fresh seeds. It doesn't need declaring as a finer hypothesis now, but the register's note stays for the next champion.
+- **The training half of the speed hypothesis is still due.** Each instrument ran in at most 13.4 minutes, but no candidate was trained here. The next one to be trained reads it.
+
 ## Milestone 7: Rust tracer bullet (toolchain and first-slice engine)
 
 2026-10-21, #137 (tracked by #127), CPython 3.14, Apple M1 (8 GB) shared with three other agents' builds and tests. The first end-to-end path through Rust: maturin builds `minimax_games._native` from `rust/`, and its Star Realms engine plays the starter decks and the 30-card first slice (design, Compiled engine).
