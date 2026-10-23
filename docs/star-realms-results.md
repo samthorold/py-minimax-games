@@ -2622,6 +2622,53 @@ uv run python -m minimax_games.games.star_realms probe investment --model pf01 -
 - **The probes find two ideas the judgement hasn't built**: same-function synergy for cards that draw or scrap, and the Trade Row as it bears on the next buyer (2% seen; its buys don't deny). Faction pairs and investment show the judgement holding a coherent view (its own faction first; invest early, then combat), so they point to no experiment.
 - **What it sets for Milestone 10**: the order of its steps, and why, is in the design (Milestones, 10). A candidate is measured against the strength table above, paired seed by seed, and reports the probe or diagnostic its belief predicts will move.
 
+## Milestone 10
+
+The end state, one belief at a time ([the design](star-realms.md), Milestone 10). Each subsection is one step, and names the belief it tests.
+
+### Milestone 10: 16 worlds against 4, settled
+
+- Date: 2026-10-23
+- Commit: this PR (#210; on `7629448`): `sprt.in_batches` (the SPRT checked after each batch, with a cap), `more_worlds.py` and the `settle-worlds` command (`task settle-worlds`).
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0. 2 threads. **Not shared with other agents** during the run (only the owner's desktop apps; load average about 2 before it started), so the times are cleaner than Milestone 9's.
+- Seeds: 19,900,000-19,900,099, each played in both seats, clear of every earlier range (the highest before, the reply match's, ends at 19,880,149). The timing trial before the run used 19,990,000-19,990,009; its games aren't in the result.
+
+**The belief** (How it chooses): *beyond the turn, hidden cards are chance, not strategy, so judging a few sampled worlds is enough.* Milestone 9's match left it undecided (#186: 16 worlds against 4 won 54.3%, 48.7-59.9%, sign z 1.90). This one settles it with a sequential probability ratio test: H0, the 16-world player wins 50%; H1, it wins 55%; α = β = 0.05, so the bounds on the log-likelihood ratio are ln(0.05/0.95) = −2.94 and ln(0.95/0.05) = +2.94.
+
+**The reading rule**, set before the run (#210): H1 accepted means 16 worlds is worth about 5 points or more, and the belief holds only for the choice; H0 accepted means more worlds is worth less than about 5 points, the belief holds and 4 worlds stays; the cap without a decision means the gain is within the band between the hypotheses, read as H0 for the default and recorded as undecided.
+
+```sh
+uv run python -m minimax_games.games.star_realms settle-worlds --threads 2
+```
+
+(`--model pf01`, `--worlds 16 4`, `--budgets 80000 20000`, `--base-seed 19900000`, `--batch 50`, `--cap 1200`, `--h0 0.5 --h1 0.55 --alpha 0.05 --beta 0.05` are the defaults.) `planner:pf01` at 16 worlds (80,000 states, 5,000 per world) against itself at 4 (20,000), in batches of 50 seeds, every seed played twice, once with each first, a whole batch of 100 games in one Rust batch; after each batch the record so far is tested.
+
+- **The statistic is games**: each finished game is a win or a loss for the 16-world player, unfinished ones count in neither (none happened). The hypotheses are win rates in games, so games are the unit they are stated in. Seed pairs with splits as draws would need a model of how often a seed splits (61% of them here, 69% in #186) to turn 55% of games into a rate of pairs won, and it changes with the players. Pairing still matters: the two games of a seed are negatively correlated (the seed's cards favour one seat), so a test that treats them as independent overstates the variance and is a little conservative, its error rates no larger than stated. The seeds won both, split and lost both are reported beside it with the sign z.
+- **Checked after each batch, not each game**: a batch is one Rust batch and keeps a seed's two games together. A record can overshoot a bound within a batch, which only makes the test more conservative.
+- **The cap and the expected length, stated before the run**: a timing trial (10 seeds, 20 games) ran at about 1.1 s per game on 2 threads. Each game moves the log-likelihood ratio by ln 1.1 = +0.095 for a win or ln 0.9 = −0.105 for a loss, so at a true rate of 50% or 55% the test needs about 530 games on average (about 10 minutes), and at 52.5%, between the hypotheses, where the ratio has no drift, about 860 (about 16 minutes). The cap is 1,200 games (12 batches, about 22 minutes): above the longest average, and in the low tens of minutes the issue allows.
+
+| After | Games | 16 worlds' wins | Win% | 95% interval | LLR | Seeds won both / split / lost both | Sign z |
+|---|---|---|---|---|---|---|---|
+| Batch 1 | 100 | 43 | 43.0% | 33.7-52.8% | −1.91 | 8 / 27 / 15 | −1.46 |
+| Batch 2 | 200 | 87 | 43.5% | 36.8-50.4% | **−3.61** | 13 / 61 / 26 | −2.08 |
+
+**H0 accepted after 200 games** (LLR −3.61, past −2.94).
+
+| Bot | Wins | Win% | 95% interval | As 1st | As 2nd | ms per plan | States per plan |
+|---|---|---|---|---|---|---|---|
+| 16 worlds (80,000) | 87/200 | **43.5%** | 36.8-50.4% | 54/100 | 33/100 | 57.6 | 10,596 |
+| 4 worlds (20,000) | 113/200 | 56.5% | 49.6-63.2% | 67/100 | 46/100 | 13.8 | 2,712 |
+
+Seeds won both / split / lost both by 16 worlds: 13 / 61 / 26 (sign z = (13 − 26) / √39 = −2.08). No game reached the 300-turn cap; mean 23.4 turns. 210 s wall on 2 threads (3.5 minutes), well under the expected length, because the record fell to the lower bound faster than a 50% player's would.
+
+A test checks that wins are credited to the right player in either order (a planner with 2,000 states against one with 2 wins nearly every game whichever is listed first), since the result runs against #186's.
+
+#### Reading it
+
+- **By the rule: H0 accepted, the belief holds, and 4 worlds stays.** More sampled worlds is worth less than about 5 points to `pf01`; this match puts 16 worlds *below* 4 (43.5%, interval 36.8-50.4%), at 4.2× the time per plan (57.6 against 13.8 ms) and 3.9× the states.
+- **Milestone 9's lean was noise.** That match (54.3% over 300 games) and this one (43.5% over 200) are on disjoint seeds with the same players; together 16 worlds won 250 of 500 games, exactly 50.0% (Wilson 45.6-54.4%), and the seeds won both and lost both are 43 and 43 (sign z 0). Each match alone looked like a sign z of about 2, in opposite directions; together they say more worlds makes no measurable difference. This match's own −2.08 is no evidence that 16 worlds is *worse*: the SPRT stops when the record is far down, so the record it stops on is biased towards the bound it crossed.
+- **On the belief**: the choice changes little with more worlds (8.7% of plans, mostly near-ties; Milestone 9: more sampled worlds), and now strength doesn't change measurably either. A few sampled worlds are enough, as How it chooses says. With the other two uses of extra budget measured in Milestone 9 (more examination: nothing measurable; the opponent's reply: it costs strength), none of the three ways to spend four times the states at decision time pays. The champion's strength is in its judgement.
+
 ## Milestone 7: Rust tracer bullet (toolchain and first-slice engine)
 
 2026-10-21, #137 (tracked by #127), CPython 3.14, Apple M1 (8 GB) shared with three other agents' builds and tests. The first end-to-end path through Rust: maturin builds `minimax_games._native` from `rust/`, and its Star Realms engine plays the starter decks and the 30-card first slice (design, Compiled engine).

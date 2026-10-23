@@ -12,6 +12,7 @@ longest, which is what the game limit (`tournament.play_sprt`) is for.
 
 import enum
 import math
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 
 Z = 1.959964
@@ -69,6 +70,49 @@ class Sprt:
         if llr <= self.lower:
             return Hypothesis.H0
         return None
+
+
+@dataclass(frozen=True, slots=True)
+class Batch:
+    """A batch of games' results for bot A: unfinished games are among the
+    `games` but count in neither `wins` nor `losses`."""
+
+    wins: int
+    losses: int
+    games: int
+
+
+@dataclass(frozen=True, slots=True)
+class Check:
+    """The test after a batch: the record so far, its log-likelihood ratio
+    and the hypothesis it accepts (None if neither)."""
+
+    games: int
+    wins: int
+    losses: int
+    llr: float
+    decision: Hypothesis | None
+
+
+def in_batches(test: Sprt, batches: Iterable[Batch], cap: int) -> Iterator[Check]:
+    """The SPRT checked after each of `batches`, drawn one at a time: a
+    check per batch, the last once a bound is crossed or `cap` games
+    (unfinished ones included) are played, undecided if no bound was.
+
+    Checked only after each batch, a record that crosses a bound and comes
+    back within one goes on, and one that crosses overshoots: both make the
+    test a little more conservative than Wald's, its error rates no larger
+    than `alpha` and `beta`. A batch keeps a seed's two games together and
+    lets them be played as one Rust batch."""
+    games = wins = losses = 0
+    for batch in batches:
+        games += batch.games
+        wins += batch.wins
+        losses += batch.losses
+        decision = test.decide(wins, losses)
+        yield Check(games, wins, losses, test.llr(wins, losses), decision)
+        if decision is not None or games >= cap:
+            return
 
 
 def wilson(wins: int, games: int, z: float = Z) -> tuple[float, float]:

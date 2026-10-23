@@ -88,6 +88,17 @@ one Rust batch on `--threads`. It prints the strength (win rates, the
 seeds won both, split and lost both, the sign z, ms and states per plan)
 and the changed choices by game phase, with the design's reading.
 
+`python -m minimax_games.games.star_realms settle-worlds` settles whether
+more sampled worlds make the champion stronger (see `more_worlds`): an
+SPRT (`--h0` 50% against `--h1` 55%, `--alpha` and `--beta` 0.05) of
+`planner:<--model>` (pf01) at `--worlds` 16 and 4, `--budgets` 80,000 and
+20,000 states, `--batch` seeds at a time from `--base-seed`, each in both
+seats, each batch one Rust batch on `--threads`, until a bound is crossed
+or `--cap` games. It prints a line after each batch (the record and its
+interval, the LLR against its bounds, the seeds won both, split and lost
+both with the sign z, ms and states per plan) and the match at its end,
+with the reading.
+
 `python -m minimax_games.games.star_realms profile` profiles the cheat's
 budgeted decisions (see `profiling`) at the same positions and in the first
 `--game-turns` turns of a seeded cheat-vs-heuristic game, and writes a report
@@ -179,6 +190,7 @@ from minimax_games.games.star_realms import (
     fit,
     gap,
     iterate,
+    more_worlds,
     planner,
     population,
     probe,
@@ -426,6 +438,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if argv[:1] == ["reply"]:
         replying(argv[1:])
+        return
+    if argv[:1] == ["settle-worlds"]:
+        settling_worlds(argv[1:])
         return
     parser = argparse.ArgumentParser(prog="python -m minimax_games.games.star_realms")
     parser.add_argument("--seed", type=int, default=0, help="the game's seed")
@@ -924,6 +939,79 @@ def replying(argv: list[str]) -> None:
     )
     for line in reply.report(found):
         print(line)
+    print(f"{time.perf_counter() - start:.0f} s wall on {args.threads} threads")
+
+
+def settling_worlds(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(
+        prog="python -m minimax_games.games.star_realms settle-worlds"
+    )
+    default = Sprt()
+
+    def option(flag: str, value: float, text: str, kind: type = int) -> None:
+        parser.add_argument(
+            flag, type=kind, default=value, help=f"{text} (default: %(default)s)"
+        )
+
+    parser.add_argument(
+        "--model", default="pf01", help="the committed model (default: %(default)s)"
+    )
+    option("--base-seed", more_worlds.SEEDS, "the first seed")
+    option("--batch", more_worlds.BATCH, "seeds per batch, each in both seats")
+    option("--cap", more_worlds.CAP, "the most games played")
+    for flag, pair, text in (
+        ("--worlds", (16, 4), "each player's worlds, the tested one first"),
+        ("--budgets", (80_000, 20_000), "each player's states per plan"),
+    ):
+        parser.add_argument(
+            flag,
+            type=int,
+            nargs=2,
+            default=pair,
+            help=f"{text} (default: %(default)s)",
+        )
+    option("--h0", default.p0, "the tested player's win rate under H0", float)
+    option("--h1", default.p1, "its win rate under H1", float)
+    option("--alpha", default.alpha, "the chance of accepting H1 under H0", float)
+    option("--beta", default.beta, "the chance of accepting H0 under H1", float)
+    option("--threads", 1, "threads to play on (same results)")
+    option("--max-turns", more_worlds.MAX_TURNS, "stop a game unfinished past this")
+    args = parser.parse_args(argv)
+    try:
+        test = Sprt(p0=args.h0, p1=args.h1, alpha=args.alpha, beta=args.beta)
+    except ValueError as error:
+        parser.error(str(error))
+    worlds, budgets = tuple(args.worlds), tuple(args.budgets)
+    names = (f"{worlds[0]} worlds", f"{worlds[1]} worlds")
+    print(
+        f"planner:{args.model} at {worlds[0]} worlds ({budgets[0]:,} states)"
+        f" against {worlds[1]} worlds ({budgets[1]:,}): seeds from"
+        f" {args.base_seed}, {args.batch} a batch in both seats, at most"
+        f" {args.cap} games; max {args.max_turns} turns",
+        flush=True,
+    )
+    start = time.perf_counter()
+    for tally, check in more_worlds.sequential(
+        args.model,
+        test,
+        base_seed=args.base_seed,
+        batch=args.batch,
+        cap=args.cap,
+        worlds=worlds,
+        budgets=budgets,
+        threads=args.threads,
+        max_turns=args.max_turns,
+    ):
+        print(
+            f"[{time.perf_counter() - start:.0f} s] "
+            + more_worlds.progress(tally, check, test),
+            flush=True,
+        )
+    print()
+    for line in more_worlds.report(tally, check, test, names):
+        print(line)
+    last = args.base_seed + tally.games // 2 - 1
+    print(f"Seeds {args.base_seed}-{last}, each in both seats.")
     print(f"{time.perf_counter() - start:.0f} s wall on {args.threads} threads")
 
 

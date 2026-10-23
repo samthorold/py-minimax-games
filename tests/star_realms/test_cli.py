@@ -631,3 +631,37 @@ def test_reply_plays_the_paired_match_and_reports_the_changed_choices(
     assert "Seeds won both / split / lost both by the reply player:" in out
     assert "Changed" in out
     assert "Reading" in out
+
+
+def test_settle_worlds_plays_the_sprt_in_batches_and_reports_each(
+    capsys: pytest.CaptureFixture[str],
+):
+    main(
+        [
+            "settle-worlds",
+            "--model",
+            "mlp",
+            "--batch",
+            "2",
+            "--cap",
+            "8",
+            "--base-seed",
+            "7",
+            "--worlds",
+            "4",
+            "2",
+            "--budgets",
+            "400",
+            "200",
+            "--threads",
+            "2",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert "planner:mlp at 4 worlds (400 states) against 2 worlds (200)" in out
+    assert "seeds from 7, 2 a batch in both seats, at most 8 games" in out
+    assert out.count("LLR") >= 3  # each of 2 batches, and the end
+    assert "4 games:" in out and "8 games:" in out
+    assert "Seeds won both / split / lost both by 4 worlds:" in out
+    assert "Reading: undecided at the cap" in out
+    assert "s wall on 2 threads" in out
