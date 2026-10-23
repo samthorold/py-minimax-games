@@ -37,16 +37,23 @@ A question put to a trained **judgement** about one idea from Star Realms strate
 **Exploitation gap**:
 How much a player's **judgement** of the positions it chose exceeds how often it went on to win from them.
 
-**Belief**:
-A claim about Star Realms or about choosing moves that a part of the **end state** rests on, with the cheapest test that could show it false.
+**Hypothesis**:
+A claim about Star Realms or about choosing moves that a part of the **end state** rests on, with the cheapest test that could show it false; a hypothesis because the end state itself is uncertain.
+_Avoid_: belief, claim
+
+**Reading rule**:
+What result of a **hypothesis**'s test supports it and what refutes it, declared with the hypothesis before the test is read.
+
+**Register**:
+The status of every **hypothesis** (untested, supported or refuted) as of today's **champion**, with the reading behind it and when it is next due for review. A reading of today's player, not a verdict: a test stays whatever its status.
 
 **End state**:
-The player the work moves towards, described by what it knows and does and the **beliefs** behind them, never by how it is built.
+The player the work moves towards, described by what it knows and does and the **hypotheses** behind them, never by how it is built.
 
 ## Example dialogue
 
 > **Dev:** The candidate beat the champion 56%. Promote it?
-> **Expert:** Only if it lost to nobody in the reference population. And which belief did it test?
+> **Expert:** Only if it lost to nobody in the reference population. And which hypothesis did it test?
 > **Dev:** The deck's cycle. The judgement's error near a reshuffle fell by half.
 > **Expert:** Then strength and the diagnostic agree: that's a result. Did the probes change?
 > **Dev:** The faction-pair probe still finds no pairs. And we aren't learning from rejected positions: the exploitation gap was small.
