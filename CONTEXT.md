@@ -42,7 +42,7 @@ A claim about Star Realms or about choosing moves that a part of the **end state
 _Avoid_: belief, claim
 
 **Reading rule**:
-What result of a **hypothesis**'s test supports it and what refutes it, declared with the hypothesis before the test is read.
+What result of a **hypothesis**'s test supports it, what refutes it, and what is too close to call (undecided) given the instrument's error, declared with the hypothesis before the test is read.
 
 **Register**:
 The status of every **hypothesis** (untested, supported or refuted) as of today's **champion**, with the reading behind it and when it is next due for review. A reading of today's player, not a verdict: a test stays whatever its status.
