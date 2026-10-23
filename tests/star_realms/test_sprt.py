@@ -2,7 +2,13 @@ import math
 
 import pytest
 
-from minimax_games.games.star_realms.sprt import Hypothesis, Sprt, wilson
+from minimax_games.games.star_realms.sprt import (
+    Batch,
+    Hypothesis,
+    Sprt,
+    in_batches,
+    wilson,
+)
 
 
 def test_the_bounds_come_from_the_error_rates():
@@ -75,3 +81,42 @@ def test_the_wilson_interval_brackets_the_win_rate():
     assert wilson(0, 10)[0] == 0
     assert wilson(10, 10)[1] == pytest.approx(1)
     assert wilson(0, 0) == (0.0, 1.0)
+
+
+def test_batches_stop_at_the_batch_that_crosses_a_bound():
+    played = []
+
+    def batches():
+        for n in range(10):
+            played.append(n)
+            yield Batch(wins=20, losses=0, games=20)
+
+    checks = list(in_batches(Sprt(p0=0.5, p1=0.55), batches(), cap=1_000))
+    # 20 wins don't reach log(19) / log(1.1), about 30.9; 40 do
+    assert [c.decision for c in checks] == [None, Hypothesis.H1]
+    assert played == [0, 1]
+    assert checks[-1].wins == 40 and checks[-1].games == 40
+    assert checks[-1].llr == pytest.approx(40 * math.log(1.1))
+
+
+def test_batches_of_losses_accept_h0():
+    checks = list(
+        in_batches(Sprt(), iter([Batch(0, 20, 20), Batch(0, 20, 20)]), cap=1_000)
+    )
+    assert [c.decision for c in checks] == [None, Hypothesis.H0]
+
+
+def test_an_even_record_stops_undecided_at_the_cap_counting_unfinished_games():
+    played = []
+
+    def batches():
+        for n in range(100):
+            played.append(n)
+            # one game of each batch unfinished
+            yield Batch(wins=10, losses=9, games=20)
+
+    checks = list(in_batches(Sprt(), batches(), cap=100))
+    assert len(played) == len(checks) == 5
+    assert checks[-1].games == 100
+    assert checks[-1].decision is None
+    assert (checks[-1].wins, checks[-1].losses) == (50, 45)
