@@ -1,0 +1,34 @@
+Denial probe of pf01: 4589 positions from its games against itself on seeds 22000000-22000199 (4 worlds, 20000 states per plan), and the heuristic's against itself on the same seeds
+Judged effect (chance) on the player who just ended of the card the next player values most in the Trade Row, against the one they value least:
+phase   positions    effect      sd      se   valued    seen  seen se  below 0
+all          4589   -0.0080  0.0199  0.0003   0.3365    2.4%     0.1%    65.8%
+early        1400   -0.0078  0.0153  0.0004   0.4253    1.8%     0.1%    72.9%
+middle       1600   -0.0113  0.0242  0.0006   0.3619    3.1%     0.1%    66.8%
+late         1589   -0.0048  0.0181  0.0005   0.2326    2.1%     0.2%    58.7%
+
+Judged effect (logit) on the player who just ended of the card the next player values most in the Trade Row, against the one they value least:
+phase   positions    effect      sd      se   valued    seen  seen se  below 0
+all          4589   -0.0401  0.1065  0.0016   2.0374    2.0%     0.1%    65.8%
+early        1400   -0.0354  0.0685  0.0018   2.2904    1.5%     0.1%    72.9%
+middle       1600   -0.0573  0.1230  0.0031   2.1198    2.7%     0.1%    66.8%
+late         1589   -0.0268  0.1136  0.0028   1.7314    1.5%     0.2%    58.7%
+
+Buys and Trade Row scraps worth less in the chooser's deck than kept from the opponent (denial), by pf01's judgement:
+player     phase   kind  choices  denial denial se      own     kept
+pf01       all     buy      4710   36.7%      0.8%  +0.0883  +0.0754
+pf01       all     scrap     308   71.1%      2.8%  +0.0565  +0.0881
+pf01       early   buy      1629   35.2%      1.2%  +0.1164  +0.1004
+pf01       early   scrap      22   86.4%      7.5%  +0.1029  +0.1579
+pf01       middle  buy      1634   34.8%      1.2%  +0.0979  +0.0788
+pf01       middle  scrap     114   71.9%      4.2%  +0.0827  +0.1279
+pf01       late    buy      1447   40.5%      1.3%  +0.0458  +0.0434
+pf01       late    scrap     172   68.6%      3.8%  +0.0332  +0.0529
+heuristic  all     buy      5133   44.1%      0.8%  +0.0682  +0.0630
+heuristic  all     scrap     282   55.3%      3.6%  +0.1346  +0.1492
+heuristic  early   buy      1417   41.4%      1.4%  +0.1041  +0.0937
+heuristic  early   scrap       0    nan%      nan%     +nan     +nan
+heuristic  middle  buy      1813   42.7%      1.2%  +0.0752  +0.0672
+heuristic  middle  scrap      89   57.3%      5.5%  +0.1949  +0.2169
+heuristic  late    buy      1903   47.5%      1.1%  +0.0348  +0.0363
+heuristic  late    scrap     193   54.4%      4.0%  +0.1068  +0.1179
+Games 166.8 s, probe 0.7 s

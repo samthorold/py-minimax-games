@@ -1,0 +1,23 @@
+{
+  "pf01": {
+    "train_log_loss": 0.4963,
+    "held_out_log_loss": 0.5088
+  },
+  "control": {
+    "extra": 28,
+    "train_log_loss": 0.4963,
+    "held_out_log_loss": 0.5088,
+    "fit_seconds": 29.4
+  },
+  "t32": {
+    "extra": 40,
+    "train_log_loss": 0.4963,
+    "held_out_log_loss": 0.509,
+    "fit_seconds": 32.0
+  },
+  "control_against_pf01": {
+    "parameters_identical": true,
+    "largest_parameter_difference": 0.0,
+    "largest_held_out_prediction_difference": 0.0
+  }
+}

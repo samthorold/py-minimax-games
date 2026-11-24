@@ -1,0 +1,17 @@
+t32 against the reference population: 500 games each, seeds 0-499, seats alternating; planners 4 worlds, 20000 states per plan; max 300 turns
+Opponent   Wins     Win%   95% interval  As 1st
+heuristic  385/500  77.0%  73.1%-80.5%   206/250
+mlp        311/500  62.2%  57.9%-66.3%   181/250
+pi03       274/500  54.8%  50.4%-59.1%   149/250
+pf01       271/500  54.2%  49.8%-58.5%   149/250
+Mean                62.1%  60.0%-64.1%
+
+Unfinished: 0
+Win rates are of the finished games; the mean's interval is approximate.
+t32 against heuristic, paired with pf01 on 500 seeds: won only by t32 44, only by pf01 29 (sign z 1.76)
+t32 against mlp, paired with pf01 on 500 seeds: won only by t32 53, only by pf01 50 (sign z 0.30)
+t32 against pi03, paired with pf01 on 500 seeds: won only by t32 45, only by pf01 54 (sign z -0.90)
+t32 over every member paired: won only by t32 142, only by pf01 133 (sign z 0.54)
+t32 against pf01: no recorded results
+Per-seed results: runs/trade-row-209/population-t32/
+Wall time: 1373.7s on 2 threads

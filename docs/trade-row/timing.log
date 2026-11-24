@@ -1,0 +1,6 @@
+run 1 pf01: 24.44 ms per plan
+run 1 control: 24.27 ms per plan
+run 1 t32: 25.74 ms per plan
+run 2 pf01: 24.35 ms per plan
+run 2 control: 24.26 ms per plan
+run 2 t32: 26.25 ms per plan

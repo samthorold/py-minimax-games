@@ -2721,6 +2721,80 @@ Synergy, faction pairs and denial gave readings much like Milestone 9's (logs in
 - **The late-game exploitation gap didn't hold.** Milestone 9's +0.033 ± 0.012 from turn 25 is +0.014 ± 0.014 on fresh seeds. It doesn't need declaring as a finer hypothesis now, but the register's note stays for the next champion.
 - **The training half of the speed hypothesis is still due.** Each instrument ran in at most 13.4 minutes, but no candidate was trained here. The next one to be trained reads it.
 
+### Milestone 10: the Trade Row as it bears on whoever buys next
+
+- Date: 2026-11-24
+- Commit: this PR (#209; on `3e9d28b`): `features.TRADE_ROW` (`features.extra(x, trade_row=True)`), `value.EXTRAS`' fourth entry, the Rust forward pass reading them (`value::TradeRow`); `probe denial --judge` and standard errors counted by game for the share seen and the denial shares; `population`'s sign z over every member paired.
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0, numpy 2.5.4. 2 threads throughout, run one after another. **Shared with other agents' work**: load average about 2.3 when the fits started and 5-6 during the population run, so the wall times are contended.
+- Seeds: the population on its fixed seeds 0-499 (by design); the denial probes 22,000,000-22,000,199, clear of every earlier range (the highest before, Milestone 10's denial reread, ends at 21,420,199). The planner's cost on seeds 600-639 against the heuristic, as #173 and #178 timed it.
+
+**The beliefs** (What it sees): *the Trade Row as it bears on whoever buys next*, and its finer *…because it lets the player deny*, under their rules as the End state wrote them before this slice (the grill of 2026-11-24); and the training half of *the player learns at the speed the feedback loop needs* (The whole player). The design's 10.1 says why this step comes first and why as hand-made features.
+
+**Predicted** (the supported cell of each rule): the share seen rises from 2.2% to at least 25%, the buys' denial share rises above `pf01`'s, and the candidate plays stronger (sign z of 2 or more).
+
+```sh
+VECLIB_MAXIMUM_THREADS=2 OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 \
+  uv run python docs/trade-row/trade_row.py runs/trade-row-209 runs/run-2/data
+uv run python -m minimax_games.games.star_realms population runs/trade-row-209/t32.npz --threads 2 --out runs/trade-row-209/population-t32 --paired docs/population/pf01
+uv run python -m minimax_games.games.star_realms probe denial --model runs/trade-row-209/t32.npz --judge pf01 --games 200 --base-seed 22000000 --threads 2
+uv run python -m minimax_games.games.star_realms probe denial --model pf01 --games 200 --base-seed 22000000 --threads 2
+uv run python docs/trade-row/timing.py runs/trade-row-209/control.npz runs/trade-row-209/t32.npz
+```
+
+- **The description** (`features.TRADE_ROW`, 12 features from the 190 counts alone, so no stored row was regenerated and no game replayed). Per player, the player who just ended and the one to move alike: the Trade Row's cards whose cost is at most their trade per hand (5 × the pool's primary trade / its size, plus their bases' in play, as `MORE` counts it), **by faction** (4), their **total cost** (the worth measure), and their **fit**, the sum over them of their faction's density in the player's pool. A constructed position worked by hand pins each (`test_what_each_player_can_afford_of_a_known_trade_row`), and the Rust forward pass computes them from tables `features.extra_tables(trade_row=True)` adds under `trade_row`, checked against numpy on real rows and on whole planner games.
+- **The fits**: `pf01`'s recipe exactly, run 2's saved rounds 1-4 (369,419 training states, 92,354 held out), a 4-member mlp ensemble from seeds 0-3, width 32, `value.fit`'s defaults, reading `features.EXTRA`: `control` as it is, `t32` with `TRADE_ROW` after `EXTRA`. **The control reproduces `pf01` bit for bit** (every parameter, mean and spread identical, and so every prediction), so `t32` differs from `pf01` only by the features, and `pf01`'s committed results are the control's.
+
+Script, logs, the fits' summary and the per-seed population results: [trade-row/](trade-row/).
+
+| Model | Extra features | Training log-loss | Held-out log-loss | Fit, 2 threads | ms per plan (two timings, 1 thread, contended) |
+|---|---|---|---|---|---|
+| `pf01` | 28 | 0.4963 | 0.5088 | | 24.44, 24.35 |
+| `control` (= `pf01`) | 28 | 0.4963 | 0.5088 | 29.4 s | 24.27, 24.26 |
+| `t32` | 40 | 0.4963 | 0.5090 | **32.0 s** | 25.74, 26.25 (1.06-1.08×) |
+
+**Strength**, `t32` against the reference population on seeds 0-499, paired seed by seed with `pf01`'s committed results ([population/pf01/](population/pf01/)):
+
+| Opponent | `t32` | 95% interval | `pf01` | Won only by `t32` / only by `pf01` | Sign z |
+|---|---|---|---|---|---|
+| heuristic | 385/500, 77.0% | 73.1-80.5% | 74.0% | 44 / 29 | 1.76 |
+| `mlp` | 311/500, 62.2% | 57.9-66.3% | 61.6% | 53 / 50 | 0.30 |
+| `pi03` | 274/500, 54.8% | 50.4-59.1% | 56.6% | 45 / 54 | −0.90 |
+| **Every member paired** | | | | **142 / 133** | **0.54** |
+| `pf01`, head to head | 271/500, 54.2% | 49.8-58.5% | | (not paired) | |
+
+(No game unfinished. 22.9 minutes wall on 2 contended threads, for four opponents where `pf01`'s run has three.)
+
+**The denial probe** on each player's games against itself, the same 200 seeds:
+
+| | Positions | Effect (chance), se | Valued | **Seen**, se by game | Seen (logit) |
+|---|---|---|---|---|---|
+| `t32`, by its own judgement | 4,483 | −0.0102, 0.0003 | 0.336 | **3.0% ± 0.1%** | 2.5% |
+| `pf01`, by its own judgement | 4,589 | −0.0080, 0.0003 | 0.337 | 2.4% ± 0.1% | 2.0% |
+
+| Choices (all turns) | By `pf01`'s judgement (ruled on) | By the chooser's own (beside it) |
+|---|---|---|
+| `t32`'s buys (4,626) | **39.2% ± 0.8%** deny | 38.5% ± 0.8% |
+| `pf01`'s buys (4,710) | **36.7% ± 0.8%** deny | (the same) |
+| Heuristic's buys (5,133) | 44.1% ± 0.8% | 44.2% by `t32`'s |
+| `t32`'s Trade Row scraps (297) | 69.4% ± 2.9% | 71.4% ± 3.1% |
+| `pf01`'s Trade Row scraps (308) | 71.1% ± 2.8% | |
+
+(Standard errors counted by game: a game's positions and choices share its players and its run of cards. Phases are in the logs. Each probe took about 3 minutes, almost all of it the games.)
+
+#### Reading it
+
+| Hypothesis | Reading | By its rule |
+|---|---|---|
+| The Trade Row as it bears on whoever buys next | Seen 3.0% ± 0.1%, far below a quarter; sign z 0.54 over every member | **Undecided**, the kind the rule names apart: the judgement shown the row doesn't see a quarter of a row card's worth, so the description didn't get through, and the next step is a better description, not more games |
+| …because it lets the player deny | Buys deny 39.2% against `pf01`'s 36.7%, by `pf01`'s judgement: +2.5 ± 1.1 points (2.2 times the error) | **Undecided**: the rule reads this only while the parent is supported |
+| Learns at the speed the feedback loop needs (training half) | The candidate trained in 32.0 s on 2 threads (the control 29.4 s), against a limit of 27 minutes | **Supported** for the training half; the instruments' half was last read on `pf01` (Milestone 10: pf01 read again) and isn't re-read here |
+
+- **The prediction failed where the rule says to look first: the share seen.** The features moved the judgement's reading of the row from 2.4% to 3.0% of a card's worth to the next buyer, a real change (six times its error) and a fraction of the quarter predicted. The held-out log-loss didn't fall either (0.5090 against 0.5088), so the fit found nothing in them that predicts results on pi03's games. Two readings, neither tested: what each player can afford is already nearly a function of what the row shows and of their trade per hand, which the network could build from `EXTRA`'s ratios and the counts; or the row's effect on a game's result, one swap among many turns, is too small for a value fitted to results to learn from 369,419 states. The rule's answer is the same for both: the next step is a better description.
+- **Strength didn't move measurably.** Over every member, 142 seeds won only by `t32` and 133 only by `pf01` (sign z 0.54), neither of the rule's cells; against the heuristic alone it leans `t32`'s way (z 1.76) and against `pi03` the other (−0.90). Head to head it won 54.2% (49.8-58.5%) against `pf01`, an interval that just reaches 50%, which the rule doesn't read. A candidate that sees 3% of what it was shown isn't expected to play differently, and it doesn't, measurably.
+- **Its buys deny a little more often**, by `pf01`'s judgement: 39.2% against 36.7%, 2.2 times the difference's error, and still below the heuristic's 44.1%, which buys without regard to denial. With 3% of a card's worth seen it can't be buying *to* deny; the difference is more likely its buys shifting with the row features for its own deck (affordable cards that fit it), which a card the opponent would also value meets more often. Recorded, not ruled on: the finer hypothesis is read only while its parent is supported.
+- **Training is fast**: 32 seconds for the candidate on 2 contended threads, a fiftieth of the 27-minute limit, and the features cost the planner about 7% per plan. The cost side of a richer description isn't what limits this step.
+- **Nothing is committed or added to the population.** The issue commits the candidate and makes it an opponent only if the parent is supported; it isn't refuted either, so the End state doesn't change. Its second step, the learned form, waits on the first being supported (the design's 10.1), so the next step on this hypothesis is a better description of the row.
+
 ## Milestone 7: Rust tracer bullet (toolchain and first-slice engine)
 
 2026-10-21, #137 (tracked by #127), CPython 3.14, Apple M1 (8 GB) shared with three other agents' builds and tests. The first end-to-end path through Rust: maturin builds `minimax_games._native` from `rust/`, and its Star Realms engine plays the starter decks and the 30-card first slice (design, Compiled engine).

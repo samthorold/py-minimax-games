@@ -30,6 +30,12 @@ their bases', the pool's density of cards that draw, that scrap and that
 make the opponent discard (in any of a card's abilities) and of bases, and
 the defense of their outposts in play; then the Authority, combat and trade
 leads of the player who just ended over the other.
+
+`extra(x, trade_row=True)` appends `TRADE_ROW` (#209), the Trade Row as it
+bears on each player, also from the counts: per player, the row's cards
+whose cost is at most their trade per hand (as `MORE` counts it), by
+faction, their total cost, and their fit to the player's deck (the sum over
+them of their faction's density in the player's pool).
 """
 
 from collections.abc import Iterable
@@ -161,6 +167,21 @@ MORE: tuple[str, ...] = (
 more=True)` appends them after `EXTRA`'s."""
 
 
+_TRADE_ROW_SIDE: tuple[str, ...] = (
+    *(f"affordable {faction.value}" for faction in _FACTIONS),
+    "affordable cost",
+    "affordable fit",
+)
+
+TRADE_ROW: tuple[str, ...] = (
+    *(f"ended: {name}" for name in _TRADE_ROW_SIDE),
+    *(f"next: {name}" for name in _TRADE_ROW_SIDE),
+)
+"""Each of the Trade Row features' names (#209), in the order `extra(x,
+trade_row=True)` appends them, after `EXTRA`'s (and `MORE`'s, if asked
+for too)."""
+
+
 def _combat(card: Card) -> int:
     """The combat `card`'s primary ability gives unconditionally."""
     return sum(e.amount for e in card.primary if isinstance(e, Combat))
@@ -192,14 +213,15 @@ def _has(card: Card, kinds: tuple[type, ...]) -> float:
     return float(any(isinstance(e, kinds) for e in every))
 
 
-def extra_tables(more: bool = False) -> dict[str, Any]:
+def extra_tables(more: bool = False, trade_row: bool = False) -> dict[str, Any]:
     """What `extra` reads of the cards, by catalogue index: each card's
     primary combat, its faction's index in `Faction` (-1 for none), and each
     base's index among the cards; with `more`, `MORE`'s tables too, under
     `"more"`: each card's primary trade and Authority, whether it draws,
     scraps, makes the opponent discard or is a base (1 or 0), and each
-    base's defense if it is an Outpost (else 0). The Rust forward pass takes
-    these."""
+    base's defense if it is an Outpost (else 0); with `trade_row`,
+    `TRADE_ROW`'s, under `"trade_row"`: each card's primary trade and its
+    cost. The Rust forward pass takes these."""
     cards = [CATALOGUE[name] for name in CARDS]
     tables: dict[str, Any] = {
         "combat": np.array([_combat(c) for c in cards], dtype=np.float64),
@@ -209,11 +231,16 @@ def extra_tables(more: bool = False) -> dict[str, Any]:
         ),
         "base_card": np.array([_POOL[name] for name in BASES], dtype=np.int64),
     }
+
+    def column(values: Iterable[float]) -> np.ndarray:
+        return np.array(list(values), dtype=np.float64)
+
+    if trade_row:
+        tables["trade_row"] = {
+            "trade": column(_gives(c, Trade) for c in cards),
+            "cost": column(c.cost for c in cards),
+        }
     if more:
-
-        def column(values: Iterable[float]) -> np.ndarray:
-            return np.array(list(values), dtype=np.float64)
-
         tables["more"] = {
             "trade": column(_gives(c, Trade) for c in cards),
             "authority": column(_gives(c, Authority) for c in cards),
@@ -229,15 +256,17 @@ def extra_tables(more: bool = False) -> dict[str, Any]:
     return tables
 
 
-_TABLES = extra_tables(more=True)
+_TABLES = extra_tables(more=True, trade_row=True)
 _PLAYER_WIDTH = len(_PLAYER)
 
 
-def extra(x: np.ndarray, more: bool = False) -> np.ndarray:
+def extra(x: np.ndarray, more: bool = False, trade_row: bool = False) -> np.ndarray:
     """The extra features (`EXTRA`) of rows `x` of `NAMES`, as float64,
-    shape `(rows, len(EXTRA))`, and with `more`, `MORE`'s after them. Every
-    sum is of small integers, so exact in any order; each feature then takes
-    at most one division, and a lead one subtraction."""
+    shape `(rows, len(EXTRA))`, with `more`, `MORE`'s after them, and with
+    `trade_row`, `TRADE_ROW`'s after those. Every sum is of small integers,
+    so exact in any order; each feature then takes at most one division (a
+    per-hand sum one division and one addition), and a lead one
+    subtraction."""
     x = np.asarray(x, dtype=np.float64)
     combat, faction = _TABLES["combat"], _TABLES["faction"]
     base_card = _TABLES["base_card"]
@@ -273,14 +302,49 @@ def extra(x: np.ndarray, more: bool = False) -> np.ndarray:
         out += [per_hand, per_hand - (authority + defense), *factions]
     if more:
         out += _more(x, sides[0][0], sides[1][0])
+    if trade_row:
+        out += _trade_row(x)
     return np.stack(out, axis=1)
+
+
+def _per_hand(pool: np.ndarray, in_play: np.ndarray, w: np.ndarray) -> np.ndarray:
+    """What a hand of `HAND` drawn from `pool` holds of `w` on average, plus
+    the bases in play's: `MORE`'s trade and Authority per hand."""
+    n = pool.sum(axis=1)
+    held = np.divide(HAND * (pool @ w), n, out=np.zeros_like(n), where=n > 0)
+    return held + in_play @ w[_TABLES["base_card"]]
+
+
+def _trade_row(x: np.ndarray) -> list[np.ndarray]:
+    """`TRADE_ROW`'s columns of rows `x` (float64): per player, the Trade
+    Row's cards whose cost is at most their trade per hand (as `MORE`
+    counts it), by faction, their total cost, and their fit, the sum over
+    them of their faction's density in the player's pool."""
+    tables = _TABLES["trade_row"]
+    faction = _TABLES["faction"]
+    cards, bases = len(CARDS), len(BASES)
+    row = x[:, _ROW : _ROW + cards]
+    columns: list[np.ndarray] = []
+    for offset in (0, _PLAYER_WIDTH):
+        pool = x[:, offset : offset + cards]
+        in_play = x[:, offset + cards : offset + cards + bases]
+        n = pool.sum(axis=1)
+        trade = _per_hand(pool, in_play, tables["trade"])
+        affordable = np.where(tables["cost"][None, :] <= trade[:, None], row, 0.0)
+        fit = np.zeros_like(n)
+        for f in range(len(_FACTIONS)):
+            count = affordable[:, faction == f].sum(axis=1)
+            columns.append(count)
+            fit += count * pool[:, faction == f].sum(axis=1)
+        columns.append(affordable @ tables["cost"])
+        columns.append(np.divide(fit, n, out=np.zeros_like(n), where=n > 0))
+    return columns
 
 
 def _more(x: np.ndarray, combat: np.ndarray, other: np.ndarray) -> list[np.ndarray]:
     """`MORE`'s columns of rows `x` (float64), given the combat per hand of
     the player who ended and of the other."""
     tables = _TABLES["more"]
-    base_card = _TABLES["base_card"]
     cards, bases = len(CARDS), len(BASES)
     columns: list[np.ndarray] = []
     trade: list[np.ndarray] = []
@@ -289,9 +353,7 @@ def _more(x: np.ndarray, combat: np.ndarray, other: np.ndarray) -> list[np.ndarr
         in_play = x[:, offset + cards : offset + cards + bases]
         n = pool.sum(axis=1)
         for name in ("trade", "authority"):
-            w = tables[name]
-            held = np.divide(HAND * (pool @ w), n, out=np.zeros_like(n), where=n > 0)
-            columns.append(held + in_play @ w[base_card])
+            columns.append(_per_hand(pool, in_play, tables[name]))
         trade.append(columns[-2])
         for name in ("draw", "scrap", "discard", "base"):
             columns.append(

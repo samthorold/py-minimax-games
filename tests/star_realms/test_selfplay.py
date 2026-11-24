@@ -96,9 +96,10 @@ REAL_ROWS = _real_rows()
 
 
 @functools.cache
-def _extra_model(more: bool = False) -> Model:
+def _extra_model(more: bool = False, trade_row: bool = False) -> Model:
     """An ensemble of 2 small networks reading `features.EXTRA` too, and
-    `features.MORE` if `more`, fitted to a few heuristic games."""
+    `features.MORE` if `more` or `features.TRADE_ROW` if `trade_row`,
+    fitted to a few heuristic games."""
     data = fit.dataset(range(40))
     return value.fit_ensemble(
         Mlp(hidden=8),
@@ -107,19 +108,23 @@ def _extra_model(more: bool = False) -> Model:
         seeds=(0, 1),
         epochs=3,
         names=features.NAMES,
-        extra=features.EXTRA + (features.MORE if more else ()),
+        extra=features.EXTRA
+        + (features.MORE if more else ())
+        + (features.TRADE_ROW if trade_row else ()),
     )
 
 
 def _value(name: str) -> Model:
     """A packaged model, `"ensemble"`: three members, `mlp`'s, `pi03`'s and
     `mlp`'s again, all under `mlp`'s standardisation, or `"extra"`, a model
-    reading the extra features (`_extra_model`), or `"more"`, one reading
-    the more features too."""
+    reading the extra features (`_extra_model`), `"more"`, one reading the
+    more features too, or `"row"`, one reading the Trade Row features."""
     if name == "extra":
         return _extra_model()
     if name == "more":
         return _extra_model(more=True)
+    if name == "row":
+        return _extra_model(trade_row=True)
     if name != "ensemble":
         return load(name)
     mlp = load("mlp")
@@ -127,7 +132,9 @@ def _value(name: str) -> Model:
     return Model(mlp.form, mlp.names, mlp.mean, mlp.std, members)
 
 
-@pytest.mark.parametrize("name", ["logistic", "mlp", "ensemble", "extra", "more"])
+@pytest.mark.parametrize(
+    "name", ["logistic", "mlp", "ensemble", "extra", "more", "row"]
+)
 def test_the_forward_pass_agrees_with_numpy_on_real_rows(name: str):
     model = _value(name)
     assert len(REAL_ROWS) > 5_000
@@ -220,6 +227,8 @@ class _Recorder:
         (6, "extra"),
         (13, "more"),
         (8, "more"),
+        (10, "row"),
+        (15, "row"),
     ],
 )
 def test_the_rust_planner_plays_the_python_planner_s_games(seed: int, model: str):
@@ -272,6 +281,11 @@ def test_a_model_s_extra_features_cross_with_it():
     without = {**more, "extra": model["extra"]}
     with pytest.raises(ValueError, match="features"):
         native.predict(without, REAL_ROWS)
+    row = native_model(_extra_model(trade_row=True))
+    assert set(row["extra"]) == {"combat", "faction", "base_card", "trade_row"}
+    assert set(row["extra"]["trade_row"]) == {"trade", "cost"}
+    with pytest.raises(ValueError, match="features"):
+        native.predict({**row, "extra": model["extra"]}, REAL_ROWS)
     # without them, its inputs don't fit the rows
     with pytest.raises(ValueError, match="features"):
         native.predict({k: v for k, v in model.items() if k != "extra"}, REAL_ROWS)

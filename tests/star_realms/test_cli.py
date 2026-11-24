@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from minimax_games.games.star_realms import features, planner
+from minimax_games.games.star_realms import features, planner, value
 from minimax_games.games.star_realms.action import Action
 from minimax_games.games.star_realms.bots import GreedyBot, HeuristicBot
 from minimax_games.games.star_realms.cheat import BUDGET, CheatBot
@@ -527,6 +527,24 @@ def test_probe_reports_the_champion_s_denial_by_phase_beside_the_heuristic_s(
         assert word in out
     assert "buy" in out
     assert "heuristic" in out
+
+
+def test_probe_denial_judges_a_saved_candidate_s_choices_by_the_champion_too(
+    capsys, tmp_path
+):
+    value.load("pf01").save(tmp_path / "cand.npz")
+    argv = [
+        *("probe", "denial", "--model", str(tmp_path / "cand.npz")),
+        *("--judge", "pf01", "--games", "2", "--worlds", "1", "--budget", "40"),
+    ]
+    main(argv)
+    out = capsys.readouterr().out
+    assert "Denial probe of cand" in out
+    # the share seen and the denial shares with standard errors by game
+    assert "seen se" in out
+    assert "by pf01's judgement" in out
+    assert "by cand's judgement" in out
+    assert "denial se" in out
 
 
 def test_probe_investment_reports_trade_against_combat_and_the_buys(capsys):

@@ -212,3 +212,41 @@ def test_more_features_count_engines_outposts_and_leads():
     assert more["combat lead"] == (
         combat["ended: combat per hand"] - combat["next: combat per hand"]
     )
+
+
+def _trade_row(state: GameState) -> dict[str, float]:
+    row = features.extra(features.encode(state)[None, :], trade_row=True)[0]
+    return dict(zip(features.EXTRA + features.TRADE_ROW, row, strict=True))
+
+
+def test_what_each_player_can_afford_of_a_known_trade_row():
+    state = rules.auto_play(rules.new_game(0))
+    ended = rules.apply(state, EndTurn())
+    fighter, cutter = CATALOGUE["Blob Fighter"], CATALOGUE["Cutter"]
+    nxt = ended.players[ended.current]
+    # next: 8 Scouts, 2 Vipers, 2 Blob Fighters: 8 trade in 12 cards
+    nxt = nxt.replace(discard=(*nxt.discard, fighter, fighter))
+    # ended: 8 Scouts, 2 Vipers and a Cutter (2 trade): 10 trade in 11 cards
+    other = ended.players[1 - ended.current]
+    other = other.replace(discard=(*other.discard, cutter))
+    players = [other, other]
+    players[ended.current] = nxt
+    row = tuple(
+        CATALOGUE[n]
+        for n in ("Blob Fighter", "Cutter", "Ram", "Patrol Mech", "Battle Blob")
+    )  # costs 1, 2, 3, 4, 6: Blob, Trade Federation, Blob, Machine Cult, Blob
+    found = _trade_row(ended.replace(players=(players[0], players[1]), trade_row=row))
+    # next: 5 * 8 / 12 = 3.33 trade a hand affords the Fighter, Cutter and Ram
+    assert found["next: affordable Blob"] == 2
+    assert found["next: affordable Trade Federation"] == 1
+    assert found["next: affordable Star Empire"] == 0
+    assert found["next: affordable Machine Cult"] == 0
+    assert found["next: affordable cost"] == 1 + 2 + 3
+    # each affordable card's faction density in the pool: Blob 2/12, TF 0
+    assert found["next: affordable fit"] == (2 * 2 + 1 * 0) / 12
+    # ended: 5 * 10 / 11 = 4.55 affords the Patrol Mech too, not the Battle Blob
+    assert found["ended: affordable Blob"] == 2
+    assert found["ended: affordable Trade Federation"] == 1
+    assert found["ended: affordable Machine Cult"] == 1
+    assert found["ended: affordable cost"] == 1 + 2 + 3 + 4
+    assert found["ended: affordable fit"] == 1 / 11
