@@ -336,3 +336,22 @@ def test_the_more_features_come_only_with_the_extra_ones():
     x, y = toy()
     with pytest.raises(ValueError, match="extra"):
         fit(LOGISTIC, x, y, seed=0, epochs=1, extra=features.MORE)
+
+
+def test_a_model_with_trade_row_features_reads_them_after_the_extra_ones(tmp_path):
+    x, y = state_rows()
+    row = features.EXTRA + features.TRADE_ROW
+    model = value.fit_ensemble(
+        Mlp(hidden=3), x, y, seeds=(0, 1), epochs=1, names=features.NAMES, extra=row
+    )
+    assert model.extra == row
+    assert len(model.mean) == len(features.NAMES) + len(row)
+    widened = np.hstack([x, features.extra(x, trade_row=True).astype(x.dtype)])
+    plain = Model(model.form, model.names, model.mean, model.std, model.members)
+    np.testing.assert_array_equal(model.predict(x), plain.predict(widened))
+    model.save(tmp_path / "m.npz")
+    loaded = Model.load(tmp_path / "m.npz")
+    assert loaded.extra == row
+    assert np.array_equal(loaded.predict(x), model.predict(x))
+    with pytest.raises(ValueError, match="extra"):
+        fit(LOGISTIC, x, y, seed=0, epochs=1, extra=features.TRADE_ROW)

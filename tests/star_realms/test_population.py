@@ -151,6 +151,21 @@ def test_the_report_gives_the_seeds_won_only_by_each_player_when_paired():
     assert f"sign z {paired.z:.2f}" in text
 
 
+def test_the_report_gives_the_sign_z_over_every_member_paired():
+    matches = [
+        population.Match("cand", "mlp", _games("cand", "mlp", "ppoop-o")),
+        population.Match("cand", "pi03", _games("cand", "pi03", "pppp")),
+    ]
+    paired = [
+        population.pair(matches[0], _games("champ", "mlp", "poppoop")),
+        population.pair(matches[1], _games("champ", "pi03", "oppp")),
+    ]
+    # only cand: 2 + 1, only champ: 3 + 0
+    text = "\n".join(population.report(matches, paired))
+    assert "over every member paired: won only by cand 3, only by champ 3" in text
+    assert "sign z 0.00" in text.split("over every member")[1]
+
+
 def test_one_command_plays_the_population_and_pairs_with_a_recorded_run(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ):

@@ -54,6 +54,18 @@ pub const EXTRA_COLUMNS: usize = 2 * (2 + 3 * FACTIONS);
 /// draw, scrap, discard and base densities and the Outposts' defense, then
 /// the Authority, combat and trade leads.
 pub const MORE_COLUMNS: usize = 2 * 7 + 3;
+/// `len(features.TRADE_ROW)`: per player the Trade Row cards they can
+/// afford by faction, their total cost and their fit.
+pub const TRADE_ROW_COLUMNS: usize = 2 * (FACTIONS + 2);
+
+/// What the Trade Row features read of the cards (`features.extra_tables(
+/// trade_row=True)["trade_row"]`, #209), by catalogue index: each card's
+/// primary trade and its cost.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TradeRow {
+    pub trade: Vec<f64>,
+    pub cost: Vec<f64>,
+}
 
 /// What the more features read of the cards (`features.extra_tables(more=
 /// True)["more"]`, #178), by catalogue index: each card's primary trade and
@@ -72,8 +84,9 @@ pub struct More {
 
 /// What the extra features read of the cards (`features.extra_tables`), by
 /// catalogue index: each card's primary combat, its faction (`None` for
-/// none), and each base's card, and the more features' tables if the model
-/// reads them. A row's layout follows from their lengths, as in
+/// none), and each base's card, and the more features' and the Trade Row
+/// features' tables if the model reads them. A row's layout follows from
+/// their lengths, as in
 /// `features.rs`: per player a pool count per card, a count per base,
 /// Authority, base defense and discards owed; then the turn and the Trade
 /// Row.
@@ -83,6 +96,7 @@ pub struct Extra {
     pub faction: Vec<Option<usize>>,
     pub base_card: Vec<usize>,
     pub more: Option<Box<More>>,
+    pub trade_row: Option<Box<TradeRow>>,
 }
 
 /// `held` per hand of a pool of `n` cards, as numpy's `HAND * held / n`
@@ -106,7 +120,9 @@ impl Extra {
 
     /// How many extra features it appends to a row.
     pub fn columns(&self) -> usize {
-        EXTRA_COLUMNS + self.more.as_ref().map_or(0, |_| MORE_COLUMNS)
+        EXTRA_COLUMNS
+            + self.more.as_ref().map_or(0, |_| MORE_COLUMNS)
+            + self.trade_row.as_ref().map_or(0, |_| TRADE_ROW_COLUMNS)
     }
 
     /// Whether its tables fit together.
@@ -129,6 +145,49 @@ impl Extra {
                 .all(|t| t.len() == cards)
                     && m.outpost_defense.len() == self.base_card.len()
             })
+            && self
+                .trade_row
+                .as_ref()
+                .is_none_or(|t| t.trade.len() == cards && t.cost.len() == cards)
+    }
+
+    /// `features._trade_row`: per player, the Trade Row cards whose cost is
+    /// at most their trade per hand, by faction, their total cost, and the
+    /// sum over them of their faction's density in the player's pool.
+    fn push_trade_row(&self, t: &TradeRow, row: &[f64], out: &mut Vec<f64>) {
+        let cards = self.cards();
+        let bases = self.base_card.len();
+        let width = self.player_columns();
+        let shown = &row[2 * width + 1..2 * width + 1 + cards];
+        for offset in [0, width] {
+            let pool = &row[offset..offset + cards];
+            let in_play = &row[offset + cards..offset + cards + bases];
+            let n: f64 = pool.iter().sum();
+            let on_bases: f64 = in_play
+                .iter()
+                .zip(&self.base_card)
+                .map(|(k, &c)| k * t.trade[c])
+                .sum();
+            let trade = per_hand(dot(pool, &t.trade), n) + on_bases;
+            let mut counts = [0.0; FACTIONS];
+            let mut nfs = [0.0; FACTIONS];
+            let mut cost = 0.0;
+            for c in 0..cards {
+                if let Some(f) = self.faction[c] {
+                    nfs[f] += pool[c];
+                }
+                if t.cost[c] <= trade {
+                    if let Some(f) = self.faction[c] {
+                        counts[f] += shown[c];
+                    }
+                    cost += shown[c] * t.cost[c];
+                }
+            }
+            let fit: f64 = counts.iter().zip(&nfs).map(|(k, nf)| k * nf).sum();
+            out.extend(counts);
+            out.push(cost);
+            out.push(density(fit, n));
+        }
     }
 
     /// `features._more`: the more features of `row`, given each side's
@@ -228,6 +287,9 @@ impl Extra {
         if let Some(more) = &self.more {
             self.push_more(more, row, [sides[0].0, sides[1].0], out);
         }
+        if let Some(trade_row) = &self.trade_row {
+            self.push_trade_row(trade_row, row, out);
+        }
     }
 }
 
@@ -239,7 +301,8 @@ pub struct Value {
     mean: Vec<f64>,
     std: Vec<f64>,
     members: Vec<Form>,
-    extra: Option<Extra>,
+    /// Boxed, so that a planner holding a value stays small.
+    extra: Option<Box<Extra>>,
 }
 
 fn sigmoid(z: f64) -> f64 {
@@ -308,14 +371,14 @@ impl Value {
             return Err("the extra features' card tables don't fit together".to_string());
         }
         Ok(Value {
-            extra: Some(extra),
+            extra: Some(Box::new(extra)),
             ..self
         })
     }
 
     /// How many features a row has (the extra features are the model's own).
     pub fn columns(&self) -> usize {
-        self.mean.len() - self.extra.as_ref().map_or(0, Extra::columns)
+        self.mean.len() - self.extra.as_ref().map_or(0, |extra| extra.columns())
     }
 
     /// The win probability of the player who just ended, from `row`, raw
@@ -479,6 +542,7 @@ mod tests {
             faction: vec![Some(0), Some(1)],
             base_card: vec![1],
             more: None,
+            trade_row: None,
         }
     }
 
@@ -573,6 +637,41 @@ mod tests {
         short.more.as_mut().unwrap().outpost_defense.clear();
         let refused = value(15 + EXTRA_COLUMNS + MORE_COLUMNS).with_extra(short);
         assert!(refused.is_err());
+    }
+
+    #[test]
+    fn trade_row_features_count_what_each_player_can_afford() {
+        // card 0 (faction 0) gives 1 trade and costs 1; card 1 (the base,
+        // faction 1) gives none and costs 3
+        let extra = Extra {
+            trade_row: Some(Box::new(TradeRow {
+                trade: vec![1.0, 0.0],
+                cost: vec![1.0, 3.0],
+            })),
+            ..tiny_extra()
+        };
+        assert_eq!(extra.columns(), EXTRA_COLUMNS + TRADE_ROW_COLUMNS);
+        // ended: 3 of card 0 and 1 of card 1, 5 * 3 / 4 = 3.75 trade a
+        // hand; next: 2 of card 0, 5 * 2 / 2 = 5; the Trade Row shows 2 of
+        // card 0 and 1 of card 1, both affordable to both
+        let mut row = vec![0.0; 15];
+        row[..6].copy_from_slice(&[3.0, 1.0, 1.0, 40.0, 5.0, 0.0]);
+        row[6..12].copy_from_slice(&[2.0, 0.0, 0.0, 30.0, 0.0, 0.0]);
+        row[13..15].copy_from_slice(&[2.0, 1.0]);
+        let mut out = Vec::new();
+        extra.push(&row, &mut out);
+        let found = &out[EXTRA_COLUMNS..];
+        // per faction, then cost, then fit: ended's densities are 3/4, 1/4
+        let fit = (2.0 * 3.0 + 1.0 * 1.0) / 4.0;
+        assert_eq!(&found[..6], &[2.0, 1.0, 0.0, 0.0, 5.0, fit]);
+        assert_eq!(&found[6..], &[2.0, 1.0, 0.0, 0.0, 5.0, 2.0 * 2.0 / 2.0]);
+        // a poorer next player, 1 of card 0 in 5 cards (1 trade a hand),
+        // affords card 0 exactly and not card 1
+        row[6..8].copy_from_slice(&[1.0, 4.0]);
+        out.clear();
+        extra.push(&row, &mut out);
+        let found = &out[EXTRA_COLUMNS..];
+        assert_eq!(&found[6..], &[2.0, 0.0, 0.0, 0.0, 2.0, 2.0 * 1.0 / 5.0]);
     }
 
     #[test]

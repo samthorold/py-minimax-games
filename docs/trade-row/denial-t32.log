@@ -1,0 +1,53 @@
+Denial probe of t32: 4483 positions from its games against itself on seeds 22000000-22000199 (4 worlds, 20000 states per plan), and the heuristic's against itself on the same seeds
+Judged effect (chance) on the player who just ended of the card the next player values most in the Trade Row, against the one they value least:
+phase   positions    effect      sd      se   valued    seen  seen se  below 0
+all          4483   -0.0102  0.0229  0.0003   0.3364    3.0%     0.1%    68.3%
+early        1400   -0.0130  0.0177  0.0005   0.4212    3.1%     0.1%    80.8%
+middle       1599   -0.0127  0.0274  0.0007   0.3564    3.6%     0.1%    66.4%
+late         1484   -0.0050  0.0209  0.0005   0.2348    2.1%     0.3%    58.5%
+
+Judged effect (logit) on the player who just ended of the card the next player values most in the Trade Row, against the one they value least:
+phase   positions    effect      sd      se   valued    seen  seen se  below 0
+all          4483   -0.0506  0.1183  0.0018   2.0282    2.5%     0.1%    68.3%
+early        1400   -0.0573  0.0785  0.0021   2.2583    2.5%     0.1%    80.8%
+middle       1599   -0.0651  0.1367  0.0034   2.1202    3.1%     0.1%    66.4%
+late         1484   -0.0287  0.1249  0.0032   1.7121    1.7%     0.2%    58.5%
+
+Buys and Trade Row scraps worth less in the chooser's deck than kept from the opponent (denial), by t32's judgement:
+player     phase   kind  choices  denial denial se      own     kept
+t32        all     buy      4626   38.5%      0.8%  +0.0901  +0.0773
+t32        all     scrap     297   71.4%      3.1%  +0.0487  +0.0806
+t32        early   buy      1600   36.2%      1.3%  +0.1188  +0.1036
+t32        early   scrap      23   87.0%      7.2%  +0.1068  +0.1670
+t32        middle  buy      1679   38.7%      1.2%  +0.0953  +0.0798
+t32        middle  scrap     109   77.1%      4.2%  +0.0735  +0.1218
+t32        late    buy      1347   41.1%      1.4%  +0.0495  +0.0428
+t32        late    scrap     165   65.5%      3.9%  +0.0242  +0.0413
+heuristic  all     buy      5133   44.2%      0.8%  +0.0691  +0.0640
+heuristic  all     scrap     282   55.0%      3.6%  +0.1360  +0.1495
+heuristic  early   buy      1417   41.8%      1.5%  +0.1060  +0.0957
+heuristic  early   scrap       0    nan%      nan%     +nan     +nan
+heuristic  middle  buy      1813   42.8%      1.2%  +0.0757  +0.0680
+heuristic  middle  scrap      89   59.6%      5.0%  +0.1953  +0.2165
+heuristic  late    buy      1903   47.4%      1.2%  +0.0354  +0.0367
+heuristic  late    scrap     193   52.8%      3.8%  +0.1087  +0.1185
+
+Buys and Trade Row scraps worth less in the chooser's deck than kept from the opponent (denial), by pf01's judgement:
+player     phase   kind  choices  denial denial se      own     kept
+t32        all     buy      4626   39.2%      0.8%  +0.0886  +0.0767
+t32        all     scrap     297   69.4%      2.9%  +0.0487  +0.0800
+t32        early   buy      1600   36.9%      1.2%  +0.1166  +0.1026
+t32        early   scrap      23   87.0%      7.2%  +0.1060  +0.1661
+t32        middle  buy      1679   38.5%      1.2%  +0.0939  +0.0790
+t32        middle  scrap     109   73.4%      4.2%  +0.0730  +0.1218
+t32        late    buy      1347   42.8%      1.3%  +0.0486  +0.0430
+t32        late    scrap     165   64.2%      3.7%  +0.0246  +0.0403
+heuristic  all     buy      5133   44.1%      0.8%  +0.0682  +0.0630
+heuristic  all     scrap     282   55.3%      3.6%  +0.1346  +0.1492
+heuristic  early   buy      1417   41.4%      1.4%  +0.1041  +0.0937
+heuristic  early   scrap       0    nan%      nan%     +nan     +nan
+heuristic  middle  buy      1813   42.7%      1.2%  +0.0752  +0.0672
+heuristic  middle  scrap      89   57.3%      5.5%  +0.1949  +0.2169
+heuristic  late    buy      1903   47.5%      1.1%  +0.0348  +0.0363
+heuristic  late    scrap     193   54.4%      4.0%  +0.1068  +0.1179
+Games 170.4 s, probe 1.0 s

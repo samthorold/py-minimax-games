@@ -459,6 +459,26 @@ def test_the_denial_summary_gives_the_effect_and_its_spread_by_phase(
     assert np.isclose(logit.mean, np.nanmean(found.logit_effect))
 
 
+def test_the_share_seen_has_a_standard_error_counted_by_game(rows: np.ndarray):
+    # effects -1, -1, -3 against 4 valued each: 5/12 seen; per game the
+    # effect seen less 5/12 of the valued is 2 - 10/3 and 3 - 5/3
+    found = probe.Denial(
+        effect=np.array([-1.0, -1.0, -3.0, np.nan]),
+        logit_effect=np.array([-1.0, -1.0, -3.0, np.nan]),
+        valued=np.full(4, 4.0),
+        logit_valued=np.full(4, 4.0),
+        most=np.zeros(4, dtype=int),
+        turn=np.array([1, 2, 3, 4]),
+        game=np.array([0, 0, 1, 2]),
+    )
+    every = probe.denial_summary(found)[0]
+    assert np.isclose(every.seen, 5 / 12)
+    assert np.isclose(every.seen_se, np.sqrt(2 * (16 / 9 + 16 / 9)) / 12)
+    # positions of one game share it
+    game = np.arange(len(rows)) // 10
+    assert np.array_equal(probe.denial(_denying(0.25), rows, game=game).game, game)
+
+
 @pytest.fixture(scope="module")
 def recorded() -> selfplay.SelfPlay:
     """Heuristic games played in Rust with every decision recorded."""
@@ -541,6 +561,7 @@ def test_the_denial_share_is_given_for_buys_and_scraps_by_phase():
         row=np.arange(6),
         card=np.zeros(6, dtype=int),
         scrap=np.array([False, False, False, True, False, True]),
+        game=np.array([0, 0, 1, 1, 2, 2]),
     )
     worth = probe.Worth(
         own=np.array([0.1, 0.1, 0.3, 0.1, np.nan, 0.2]),
@@ -558,6 +579,28 @@ def test_the_denial_share_is_given_for_buys_and_scraps_by_phase():
     assert shares["early", "scrap"].share == 1.0
     assert shares["late", "scrap"].share == 0.0
     assert shares["middle", "scrap"].choices == 0
+
+
+def test_the_denial_share_s_standard_error_is_counted_by_game():
+    # the buys judged are in games 0, 0 and 1, the first of them denial:
+    # per game the denials less the share times the buys are 1 - 2/3 and
+    # 0 - 1/3, and the clustered variance is 2/(2 - 1) times their squares'
+    # sum, over the buys squared
+    chosen = probe.Choices(
+        row=np.arange(4),
+        card=np.zeros(4, dtype=int),
+        scrap=np.zeros(4, dtype=bool),
+        game=np.array([0, 0, 1, 2]),
+    )
+    worth = probe.Worth(
+        own=np.array([0.1, 0.1, 0.3, np.nan]),
+        kept=np.array([0.2, 0.0, 0.0, np.nan]),
+        denial=np.array([True, False, False, False]),
+        turn=np.array([1, 2, 3, 4]),
+    )
+    every = probe.denial_shares(worth, chosen)[0]
+    assert every.choices == 3
+    assert np.isclose(every.share_se, np.sqrt(2 * (2 / 9)) / 3)
 
 
 def _per_unit(trade: float, combat: float) -> probe.Judgement:

@@ -14,7 +14,8 @@ form from different seeds to the same rows (`fit_ensemble`), and its win
 probability is then the mean of theirs: an ensemble, steadier than any one
 fit. A model may also read `features.EXTRA`, hand-made features it
 computes from the counts of each row (`features.extra`) and appends before
-standardising (#173), and `features.MORE` after them (#178). It is saved
+standardising (#173), and `features.MORE` (#178) or
+`features.TRADE_ROW` (#209) after them. It is saved
 as an `.npz` of plain arrays, never a pickle (which runs code when
 loaded), and models in the package's `models/` directory load by name
 (`load`). `ValueEvaluator` wraps one as an `evaluate.Evaluator`.
@@ -284,16 +285,18 @@ EXTRAS: tuple[tuple[str, ...], ...] = (
     (),
     features.EXTRA,
     features.EXTRA + features.MORE,
+    features.EXTRA + features.TRADE_ROW,
 )
-"""The extra features a model may read: none, `features.EXTRA` (#173), or
-those and `features.MORE` after them (#178)."""
+"""The extra features a model may read: none, `features.EXTRA` (#173),
+those and `features.MORE` after them (#178), or those and
+`features.TRADE_ROW` after them (#209)."""
 
 
 def _check_extra(extra: tuple[str, ...]) -> None:
     if extra not in EXTRAS:
         msg = (
             "the extra features are features.EXTRA, those and features.MORE,"
-            f" or none, not {extra}"
+            f" those and features.TRADE_ROW, or none, not {extra}"
         )
         raise ValueError(msg)
 
@@ -303,11 +306,19 @@ def reads_more(extra: tuple[str, ...]) -> bool:
     return extra == EXTRAS[2]
 
 
+def reads_trade_row(extra: tuple[str, ...]) -> bool:
+    """Whether a model of extra features `extra` reads
+    `features.TRADE_ROW`."""
+    return extra == EXTRAS[3]
+
+
 def _widen(x: np.ndarray, extra: tuple[str, ...]) -> np.ndarray:
     """Rows `x` with their extra features appended, in `x`'s precision."""
     if not extra:
         return x
-    widened = features.extra(x, more=reads_more(extra))
+    widened = features.extra(
+        x, more=reads_more(extra), trade_row=reads_trade_row(extra)
+    )
     return np.hstack([x, widened.astype(x.dtype)])
 
 
@@ -343,7 +354,8 @@ def fit(
     feature that never varies is left unscaled), in `x`'s own precision:
     float32 halves a big dataset's memory. The starting parameters and each
     epoch's shuffle come from `seed`, so a fit is deterministic. With
-    `extra` (`features.EXTRA`, or `features.EXTRA + features.MORE`), the
+    `extra` (`features.EXTRA`, or it followed by `features.MORE` or
+    `features.TRADE_ROW`), the
     model reads the rows' extra features too, standardised alongside them."""
     _check_extra(extra)
     names_of_x = names

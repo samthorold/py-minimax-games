@@ -166,7 +166,10 @@ each pair's interaction. `probe denial` reports, from the same games, the
 judged effect of a Trade Row card the next player would value against one
 they wouldn't, by phase, and the share of the champion's buys and Trade Row
 scraps that are denial, beside the heuristic's in its own games on the same
-seeds. `probe investment` reports what a ship giving only trade and one of
+seeds, with standard errors counted by game; `--judge MODEL` judges both
+players' choices by that model's judgement too, so a candidate's are read
+by the champion's. `--model` may be the path of a saved model (`.npz`).
+`probe investment` reports what a ship giving only trade and one of
 the same cost giving only combat add per unit, by phase, and the share of
 economy and combat buys by turn in those games and in the heuristic's
 against itself on the same seeds.
@@ -1438,7 +1441,17 @@ def probing(argv: list[str]) -> None:
         help="the probe to run",
     )
     parser.add_argument(
-        "--model", default="pf01", help="the champion's value (default: %(default)s)"
+        "--model",
+        default="pf01",
+        help="the value probed: a committed model or the path of a saved one"
+        " (.npz) (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--judge",
+        default=None,
+        help="denial only: a committed model that also judges the probed"
+        " player's and the heuristic's choices, so that players are compared"
+        " by one judgement (default: none)",
     )
     parser.add_argument(
         "--games",
@@ -1481,7 +1494,12 @@ def probing(argv: list[str]) -> None:
     )
     args = parser.parse_args(argv)
 
-    model = value.load(args.model)
+    model = (
+        value.Model.load(Path(args.model))
+        if args.model.endswith(".npz")
+        else value.load(args.model)
+    )
+    args.model = population.name(args.model)
     champion = selfplay.Planner(model, worlds=args.worlds, budget=args.budget)
     seeds = range(args.base_seed, args.base_seed + args.games)
     if args.probe == "denial":
@@ -1530,13 +1548,18 @@ def _denial(
     played = probe.games(champion, seeds, threads=args.threads, record=True)
     heuristic = probe.games("heuristic", seeds, threads=args.threads, record=True)
     playing = time.perf_counter() - start
-    found = probe.denial(model.predict, played.x)
-    shares = {}
-    for name, games in ((args.model, played), ("heuristic", heuristic)):
-        chosen = probe.choices(games)
-        shares[name] = probe.denial_shares(
-            probe.worth(model.predict, games.x, chosen), chosen
-        )
+    found = probe.denial(model.predict, played.x, game=played.game)
+    judges = {args.model: model}
+    if args.judge is not None and args.judge != args.model:
+        judges[args.judge] = value.load(args.judge)
+    shares: dict[str, dict[str, list[probe.ShareLine]]] = {}
+    for judge, judgement in judges.items():
+        shares[judge] = {}
+        for name, games in ((args.model, played), ("heuristic", heuristic)):
+            chosen = probe.choices(games)
+            shares[judge][name] = probe.denial_shares(
+                probe.worth(judgement.predict, games.x, chosen), chosen
+            )
     probed = time.perf_counter() - start - playing
     print(
         f"Denial probe of {args.model}: {len(played.x)} positions from its games"
@@ -1549,9 +1572,10 @@ def _denial(
     print()
     for line in probe.denial_report(found, logit=True):
         print(line)
-    print()
-    for line in probe.share_report(shares):
-        print(line)
+    for judge, judged in shares.items():
+        print()
+        for line in probe.share_report(judged, judge=f"{judge}'s judgement"):
+            print(line)
     print(f"Games {playing:.1f} s, probe {probed:.1f} s")
 
 

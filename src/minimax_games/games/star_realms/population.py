@@ -307,4 +307,13 @@ def report(matches: Sequence[Match], paired: Sequence[Paired] = ()) -> list[str]
             f" {p.seeds} seeds: won only by {p.player} {len(p.only_player)},"
             f" only by {p.recorded} {len(p.only_recorded)} (sign z {p.z:.2f})"
         )
+    if len(paired) > 1:
+        mine = sum(len(p.only_player) for p in paired)
+        theirs = sum(len(p.only_recorded) for p in paired)
+        z = (mine - theirs) / math.sqrt(mine + theirs) if mine + theirs else 0.0
+        lines.append(
+            f"{paired[0].player} over every member paired: won only by"
+            f" {paired[0].player} {mine}, only by {paired[0].recorded} {theirs}"
+            f" (sign z {z:.2f})"
+        )
     return lines

@@ -368,15 +368,20 @@ class Denial:
     """The most valued card, as its index in `TRADE_DECK` (-1 where NaN)."""
     turn: np.ndarray
     """Each position's turn, for its phase."""
+    game: np.ndarray
+    """Each position's game, for standard errors counted by game."""
 
 
-def denial(judgement: Judgement, rows: np.ndarray) -> Denial:
+def denial(
+    judgement: Judgement, rows: np.ndarray, game: np.ndarray | None = None
+) -> Denial:
     """For each position in `rows`, which Trade Deck card the next player
     would value most and least, by the judged cost to the player who just
     ended of the next player owning it (a copy out of sight added to their
     draw pool), and the judged chance with each of the two in the Trade Row
     in place of the same row card (the replaced card goes out of sight).
-    Plays no games."""
+    `game` is each position's game (`SelfPlay.game`; by default each its
+    own). Plays no games."""
     x = np.asarray(rows, dtype=np.float64)
     owned = _owned_by_next(judgement, x)
     choices = (~np.isnan(owned)).sum(axis=1)
@@ -420,6 +425,7 @@ def denial(judgement: Judgement, rows: np.ndarray) -> Denial:
         logit_valued=logit_valued,
         most=most,
         turn=x[:, _COLUMN["turn"]],
+        game=np.arange(len(x)) if game is None else np.asarray(game),
     )
 
 
@@ -439,6 +445,9 @@ class Choices:
     scrap: np.ndarray
     """Whether it was scrapped from the Trade Row (else acquired: bought,
     or taken free by Blob Carrier's ally ability)."""
+    game: np.ndarray
+    """The game it was chosen in (`SelfPlay.game` of its row), so that its
+    share's standard error is counted by game."""
 
 
 def choices(played: SelfPlay) -> Choices:
@@ -463,10 +472,12 @@ def choices(played: SelfPlay) -> Choices:
                 found.append((int(rows[turn]), _INDEX[action[1]], scrap))
             turn += kind == "EndTurn"
     row, card, scrap = zip(*found, strict=True) if found else ((), (), ())
+    rows = np.array(row, dtype=int)
     return Choices(
-        row=np.array(row, dtype=int),
+        row=rows,
         card=np.array(card, dtype=int),
         scrap=np.array(scrap, dtype=bool),
+        game=np.asarray(played.game)[rows],
     )
 
 
@@ -531,15 +542,34 @@ class ShareLine:
     """The choices judged (`Worth.own` not NaN)."""
     share: float
     """The share of them that were denial (`Worth.denial`)."""
+    share_se: float
+    """Its standard error, counted by game (`ratio_se`): a game's choices
+    are made by the same players in one run of cards, so they aren't
+    independent."""
     own: float
     """Their mean `Worth.own`."""
     kept: float
     """Their mean `Worth.kept`."""
 
 
+def ratio_se(top: np.ndarray, bottom: np.ndarray, game: np.ndarray) -> float:
+    """The standard error of `sum(top) / sum(bottom)`, counted by game:
+    the ratio's linearisation, `top - ratio * bottom` summed per game, whose
+    spread across games, scaled by `G / (G - 1)` for `G` games, over
+    `sum(bottom)` squared, is its variance. NaN for fewer than 2 games."""
+    games, at = np.unique(game, return_inverse=True)
+    total = float(bottom.sum())
+    if len(games) < 2 or total == 0:
+        return float("nan")
+    ratio = float(top.sum()) / total
+    residual = np.bincount(at, weights=top - ratio * bottom, minlength=len(games))
+    g = len(games)
+    return float(np.sqrt(g / (g - 1) * (residual**2).sum()) / abs(total))
+
+
 def denial_shares(found: Worth, chosen: Choices) -> list[ShareLine]:
     """The share of buys and of Trade Row scraps that were denial, over all
-    turns and then by phase."""
+    turns and then by phase, with its standard error counted by game."""
     lines = []
     judged = ~np.isnan(found.own)
     for phase, at in _phases(found.turn):
@@ -553,6 +583,11 @@ def denial_shares(found: Worth, chosen: Choices) -> list[ShareLine]:
                     kind=kind,
                     choices=n,
                     share=float(found.denial[these].mean()) if n else nan,
+                    share_se=ratio_se(
+                        found.denial[these].astype(np.float64),
+                        np.ones(n),
+                        chosen.game[these],
+                    ),
                     own=float(found.own[these].mean()) if n else nan,
                     kept=float(found.kept[these].mean()) if n else nan,
                 )
@@ -727,6 +762,8 @@ class DenialLine:
     """`-mean / valued`: the share of what the card would be worth to the
     next player that the judgement sees in its being in the Trade Row for
     them (0 if it sees none, 1 if as much as if they owned it already)."""
+    seen_se: float
+    """Its standard error, counted by game (`ratio_se`)."""
     below: float
     """The share of positions where the effect is below 0."""
 
@@ -752,6 +789,7 @@ def denial_summary(found: Denial, logit: bool = False) -> list[DenialLine]:
                 se=_se(e),
                 valued=valued,
                 seen=-mean / valued if n else float("nan"),
+                seen_se=ratio_se(-e, v, found.game[at]),
                 below=float((e < 0).mean()) if n else float("nan"),
             )
         )
@@ -1147,13 +1185,13 @@ def denial_report(found: Denial, logit: bool = False) -> list[str]:
         " next player values most in the Trade Row, against the one they value"
         " least:",
         f"{'phase':<7} {'positions':>9} {'effect':>9} {'sd':>7} {'se':>7}"
-        f" {'valued':>8} {'seen':>7} {'below 0':>8}",
+        f" {'valued':>8} {'seen':>7} {'seen se':>8} {'below 0':>8}",
     ]
     for line in denial_summary(found, logit=logit):
         lines.append(
             f"{line.phase:<7} {line.positions:>9} {line.mean:>+9.4f}"
             f" {line.sd:>7.4f} {line.se:>7.4f} {line.valued:>8.4f}"
-            f" {line.seen:>7.1%} {line.below:>8.1%}"
+            f" {line.seen:>7.1%} {line.seen_se:>8.1%} {line.below:>8.1%}"
         )
     return lines
 
@@ -1171,21 +1209,25 @@ def deck_counts(found: FactionPairs) -> str:
     )
 
 
-def share_report(players: dict[str, list[ShareLine]]) -> list[str]:
+def share_report(
+    players: dict[str, list[ShareLine]], judge: str = "the judgement"
+) -> list[str]:
     """`denial_shares` of each player in `players` as one table: per phase
-    and kind of choice, the choices, the share that were denial and their
-    mean judged worth to the chooser and kept from the opponent."""
+    and kind of choice, the choices, the share that were denial with its
+    standard error by game, and their mean judged worth to the chooser and
+    kept from the opponent, all by `judge`'s judgement."""
     lines = [
         "Buys and Trade Row scraps worth less in the chooser's deck than kept"
-        " from the opponent (denial), by the judgement:",
+        f" from the opponent (denial), by {judge}:",
         f"{'player':<10} {'phase':<7} {'kind':<5} {'choices':>7} {'denial':>7}"
-        f" {'own':>8} {'kept':>8}",
+        f" {'denial se':>9} {'own':>8} {'kept':>8}",
     ]
     for player, shares in players.items():
         for line in shares:
             lines.append(
                 f"{player:<10} {line.phase:<7} {line.kind:<5} {line.choices:>7}"
-                f" {line.share:>7.1%} {line.own:>+8.4f} {line.kept:>+8.4f}"
+                f" {line.share:>7.1%} {line.share_se:>9.1%}"
+                f" {line.own:>+8.4f} {line.kept:>+8.4f}"
             )
     return lines
 
