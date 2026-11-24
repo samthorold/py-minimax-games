@@ -164,7 +164,9 @@ games and reports, for every ordered pair of factions, what one card of the
 second adds to decks mostly of the first: a 4-by-4 table with spreads, and
 each pair's interaction. `probe denial` reports, from the same games, the
 judged effect of a Trade Row card the next player would value against one
-they wouldn't, by phase, and the share of the champion's buys and Trade Row
+they wouldn't, among those they could buy with the trade their next turn
+produced (the games replayed for it), by phase, which cards were most
+valued, and the share of the champion's buys and Trade Row
 scraps that are denial, beside the heuristic's in its own games on the same
 seeds, with standard errors counted by game; `--judge MODEL` judges both
 players' choices by that model's judgement too, so a candidate's are read
@@ -1548,7 +1550,8 @@ def _denial(
     played = probe.games(champion, seeds, threads=args.threads, record=True)
     heuristic = probe.games("heuristic", seeds, threads=args.threads, record=True)
     playing = time.perf_counter() - start
-    found = probe.denial(model.predict, played.x, game=played.game)
+    trade = probe.next_trade(played, seeds)
+    found = probe.denial(model.predict, played.x, game=played.game, trade=trade)
     judges = {args.model: model}
     if args.judge is not None and args.judge != args.model:
         judges[args.judge] = value.load(args.judge)
@@ -1565,12 +1568,17 @@ def _denial(
         f"Denial probe of {args.model}: {len(played.x)} positions from its games"
         f" against itself on seeds {seeds.start}-{seeds.stop - 1}"
         f" ({args.worlds} worlds, {args.budget} states per plan), and the"
-        " heuristic's against itself on the same seeds"
+        " heuristic's against itself on the same seeds. The swap is among the"
+        " cards out of sight the next player could buy with the trade their"
+        f" next turn produced (mean {trade.mean():.2f})"
     )
     for line in probe.denial_report(found):
         print(line)
     print()
     for line in probe.denial_report(found, logit=True):
+        print(line)
+    print()
+    for line in probe.most_report(found):
         print(line)
     for judge, judged in shares.items():
         print()
