@@ -50,6 +50,7 @@ task turn-sizes             # Star Realms: distinct ends per turn (planner workl
 task worlds                 # Star Realms: does the champion's plan change with more sampled worlds
 task examine                # Star Realms: does examining more change the plan where the budget runs out
 task reply                  # Star Realms: does looking through the opponent's reply change its choice
+task regret                 # Star Realms: where the champion's own choices lose win chance, by kind
 task profile                # Star Realms: profile the cheat's search
 task tune                   # Star Realms: tune evaluate's weights by tournament
 task fit                    # Star Realms: fit learned values, gated against evaluate

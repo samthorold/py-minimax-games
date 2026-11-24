@@ -35,7 +35,7 @@ use super::features;
 use super::rng::Random;
 use super::rules::{Action, advance_legal, apply_legal, auto_play, legal_actions, winner};
 use super::state::{GameState, PlayerState, capacity};
-use super::value::Value;
+use super::value::{SPAN, Value, WIN};
 use super::view::{PlayerView, View, observe, sample_world};
 
 /// Whether a play from `before` to `after`, within the mover's turn, is a
@@ -148,6 +148,7 @@ mod merge {
             free_ships,
             scrap_to_draw,
             copying,
+            keyed,
         } = state;
         let mut h = FxHasher::default();
         hash_player(&players[0], &mut h);
@@ -166,6 +167,7 @@ mod merge {
             free_ships,
             scrap_to_draw,
             copying,
+            keyed,
         )
             .hash(&mut h);
         h.finish()
@@ -257,6 +259,7 @@ mod merge {
             free_ships,
             scrap_to_draw,
             copying,
+            keyed,
         } = a;
         (
             rng_seed,
@@ -295,6 +298,7 @@ mod merge {
             &b.scrap_to_draw,
             &b.copying,
         ) && *choosing == b.choosing
+            && *keyed == b.keyed
             && *trade_deck == b.trade_deck
             && players_merged(&players[0], &b.players[0])
             && players_merged(&players[1], &b.players[1])
@@ -773,6 +777,59 @@ pub struct Plan {
 /// the same correctly rounded division as Python's `int / int`.
 pub fn plan(worlds: &[GameState], budget: usize, value: &Value) -> Plan {
     Scored::new(worlds, budget, value).plan(&worlds[0])
+}
+
+/// A candidate turn as `ranked` gives it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Ranked {
+    /// Its line from the first world's state.
+    pub line: Vec<Action>,
+    /// The mean over worlds of the best score of its ends, from the mover's
+    /// side: what `plan` ranks by.
+    pub score: f64,
+    /// The mean over worlds of the best end's chance for the mover: its
+    /// judged chance, 1 in a world where it wins and 0 where it loses.
+    pub chance: f64,
+}
+
+/// A score from `Value::score` as the mover's chance.
+fn chance(score: i64) -> f64 {
+    if score >= WIN {
+        1.0
+    } else if score <= -WIN {
+        0.0
+    } else {
+        (score as f64 / SPAN + 1.0) / 2.0
+    }
+}
+
+/// The distinct turns `plan` compares, best first (`Ranked`). Of
+/// candidates whose best end is the same end in every world (lines that
+/// differ only in order, or before a play that undoes the difference), only
+/// the first ranked is kept: they are one turn. The first is `plan`'s line;
+/// empty if no candidate is reached (where `plan` plays the greedy move).
+pub fn ranked(worlds: &[GameState], budget: usize, value: &Value) -> Vec<Ranked> {
+    let scored = Scored::new(worlds, budget, value);
+    let mut seen = std::collections::HashSet::new();
+    scored
+        .ranked()
+        .into_iter()
+        .filter(|&(candidate, _)| {
+            let ends: Vec<Option<usize>> = (0..scored.found.reached.len())
+                .map(|world| scored.best_end(world, candidate))
+                .collect();
+            seen.insert(ends)
+        })
+        .map(|(candidate, score)| {
+            let values = &scored.values[candidate];
+            let chance = values.iter().map(|&s| chance(s)).sum::<f64>() / values.len() as f64;
+            Ranked {
+                line: scored.line(&worlds[0], candidate),
+                score,
+                chance,
+            }
+        })
+        .collect()
 }
 
 /// An enumeration with its ends scored, and each candidate's value in each

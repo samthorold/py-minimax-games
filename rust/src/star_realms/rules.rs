@@ -5,13 +5,15 @@
 
 use std::cell::RefCell;
 use std::fmt;
+use std::hash::{Hash, Hasher};
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHasher};
 
 use super::card::{Card, CardType, EXPLORER_PILE, Effect, STARTING_DECK, pure_gain, trade_deck};
-use super::rng::Random;
+use super::rng::{Random, mix};
 use super::state::{
-    FIRST_HAND_SIZE, GameState, HAND_SIZE, Pile, PlayerState, TRADE_ROW_SIZE, capacity,
+    FIRST_HAND_SIZE, GameState, HAND_SIZE, Keyed, Owned, Pile, PlayerState, TRADE_ROW_SIZE,
+    capacity,
 };
 
 /// The most cards a `Recycle` or `ScrapAndDraw` names: Recycling Station
@@ -177,6 +179,53 @@ fn draw(player: &mut PlayerState, n: usize, mut seed: u64) -> u64 {
     seed
 }
 
+/// `cards` in the order a keyed shuffle puts them (`Keyed`): each card
+/// sorted by a key from `base`, the player `who`, their `reshuffle` count,
+/// the card and its copy among the same cards in the pile, so the order
+/// depends only on which cards the pile holds.
+fn keyed_order(cards: &[Card], base: u64, who: usize, reshuffle: u32) -> Owned {
+    let round = mix(mix(base ^ mix(who as u64)) ^ u64::from(reshuffle));
+    let mut keyed: Vec<(u64, Card)> = cards
+        .iter()
+        .enumerate()
+        .map(|(i, &card)| {
+            let copy = cards[..i].iter().filter(|&&c| c == card).count() as u64;
+            let mut h = FxHasher::default();
+            (card, copy).hash(&mut h);
+            let key = mix(round ^ mix(h.finish()));
+            (key, card)
+        })
+        .collect();
+    keyed.sort_unstable();
+    keyed.into_iter().map(|(_, card)| card).collect()
+}
+
+/// `draw`, by keyed shuffles: `who`'s reshuffles are counted in `keyed`.
+fn draw_keyed(player: &mut PlayerState, n: usize, keyed: &mut Keyed, who: usize) {
+    for _ in 0..n {
+        if player.deck.is_empty() {
+            if player.discard.is_empty() {
+                break;
+            }
+            player.deck = keyed_order(&player.discard, keyed.base, who, keyed.reshuffles[who]);
+            keyed.reshuffles[who] += 1;
+            player.discard.clear();
+        }
+        let card = player.deck.remove(0);
+        player.hand.push(card);
+    }
+    player.known_top = player.known_top.saturating_sub(n);
+}
+
+/// Player `who` draws `n` cards, by keyed shuffles if the game uses them,
+/// else by the engine's (`draw`).
+fn draw_for(state: &mut GameState, who: usize, n: usize) {
+    match &mut state.keyed {
+        Some(keyed) => draw_keyed(&mut state.players[who], n, keyed, who),
+        None => state.rng_seed = draw(&mut state.players[who], n, state.rng_seed),
+    }
+}
+
 /// Deal a game from `seed` (`rules.new_game` with the whole Trade Deck),
 /// before automatic play.
 pub fn new_game(seed: u64) -> GameState {
@@ -215,6 +264,7 @@ pub fn new_game(seed: u64) -> GameState {
         free_ships: 0,
         scrap_to_draw: 0,
         copying: 0,
+        keyed: None,
     }
 }
 
@@ -659,7 +709,7 @@ pub fn advance_legal(state: &GameState, action: Action) -> GameState {
 }
 
 fn draw_current(state: &mut GameState, cards: usize) {
-    state.rng_seed = draw(&mut state.players[state.current], cards, state.rng_seed);
+    draw_for(state, state.current, cards);
 }
 
 /// Apply `effect`, one of `card`'s (`rules._resolve`).
@@ -955,7 +1005,7 @@ pub fn apply_legal(state: &mut GameState, action: Action) {
                 .discard
                 .extend(in_play.into_iter().map(Card::original));
             player.discard.extend(hand);
-            state.rng_seed = draw(player, HAND_SIZE, state.rng_seed);
+            draw_for(state, me, HAND_SIZE);
             // The next player discards no more cards than they hold.
             let opponent = &mut state.players[1 - me];
             opponent.to_discard = opponent.to_discard.min(opponent.hand.len() as u32);
@@ -1112,5 +1162,92 @@ mod tests {
         assert!(names.contains(&(vec![Card::Scout], vec![Card::Scout])));
         assert!(names.contains(&(vec![Card::Scout, Card::Viper], vec![])));
         assert_eq!(names.len(), 7);
+    }
+
+    /// A state whose current player (0) reshuffles on ending the turn: an
+    /// empty deck and `discard` to shuffle, keyed from `base`.
+    fn reshuffling(discard: &[Card], base: u64) -> GameState {
+        let mut state = dealt(0);
+        let player = &mut state.players[0];
+        player.deck.clear();
+        player.in_play.clear();
+        player.discard = Pile::from_slice(discard).expect("a discard pile");
+        state.keyed = Some(Keyed::new(base));
+        state
+    }
+
+    /// The drawn order of a player's cards after a reshuffle: hand, then deck.
+    fn drawn(state: &GameState, seat: usize) -> Vec<Card> {
+        let player = &state.players[seat];
+        player
+            .hand
+            .iter()
+            .chain(player.deck.iter())
+            .copied()
+            .collect()
+    }
+
+    #[test]
+    fn a_keyed_shuffle_keeps_the_shared_cards_in_order_when_one_card_differs() {
+        let cards = [
+            Card::Scout,
+            Card::Scout,
+            Card::Viper,
+            Card::Scout,
+            Card::Cutter,
+            Card::Scout,
+            Card::Viper,
+            Card::Scout,
+            Card::Scout,
+            Card::Scout,
+        ];
+        let mut more = cards.to_vec();
+        more.push(Card::BattlePod);
+        let a = advance(&reshuffling(&cards, 7), Action::EndTurn).expect("legal");
+        let b = advance(&reshuffling(&more, 7), Action::EndTurn).expect("legal");
+        let shared: Vec<Card> = drawn(&b, 0)
+            .into_iter()
+            .filter(|&c| c != Card::BattlePod)
+            .collect();
+        assert_eq!(drawn(&a, 0), shared);
+        // the pile's own order doesn't matter, only which cards it holds
+        let mut reversed = cards;
+        reversed.reverse();
+        let c = advance(&reshuffling(&reversed, 7), Action::EndTurn).expect("legal");
+        assert_eq!(drawn(&c, 0), drawn(&a, 0));
+        // another base, another order
+        let d = advance(&reshuffling(&cards, 8), Action::EndTurn).expect("legal");
+        assert_ne!(drawn(&d, 0), drawn(&a, 0));
+        assert_eq!(a.keyed.map(|k| k.reshuffles), Some([1, 0]));
+    }
+
+    #[test]
+    fn keyed_shuffles_are_each_player_s_own() {
+        // Player 1's first reshuffle is the same whether or not player 0
+        // reshuffled before it.
+        let cards = [
+            Card::Scout,
+            Card::Viper,
+            Card::Scout,
+            Card::Cutter,
+            Card::Ram,
+        ];
+        let mut a = reshuffling(&cards, 3);
+        let mut b = a.clone();
+        b.keyed = Some(Keyed {
+            base: 3,
+            reshuffles: [5, 0],
+        });
+        for state in [&mut a, &mut b] {
+            let other = &mut state.players[1];
+            other.discard.extend(other.deck.iter().copied());
+            other.discard.extend(other.hand.iter().copied());
+            other.deck.clear();
+            other.hand.clear();
+            state.current = 1;
+            *state = advance(state, Action::EndTurn).expect("legal");
+        }
+        assert_eq!(drawn(&a, 1), drawn(&b, 1));
+        assert_eq!(a.keyed.map(|k| k.reshuffles), Some([0, 1]));
     }
 }

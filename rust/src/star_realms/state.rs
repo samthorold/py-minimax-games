@@ -248,6 +248,32 @@ impl PlayerState {
     }
 }
 
+/// Keyed shuffles (docs/star-realms.md, Learned values: regret by kind of
+/// decision): a reshuffle orders a player's discard pile by a key drawn for
+/// each card from `base`, the player, how many times that player has
+/// reshuffled before, the card and which copy of it this is, instead of by
+/// positions drawn from the game's one stream of seeds. Two games that
+/// differ by a card then reshuffle the cards they share into the same
+/// order, and one player's reshuffles never move the other's: common random
+/// numbers for comparing options rolled out from the same world. Only the
+/// regret instrument's rollouts use it; a dealt game, the Python engine
+/// and the planner's sampled worlds never do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Keyed {
+    pub base: u64,
+    /// Each player's reshuffles so far.
+    pub reshuffles: [u32; 2],
+}
+
+impl Keyed {
+    pub fn new(base: u64) -> Self {
+        Keyed {
+            base,
+            reshuffles: [0; 2],
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GameState {
     pub players: [PlayerState; 2],
@@ -286,6 +312,9 @@ pub struct GameState {
     pub scrap_to_draw: u32,
     /// Stealth Needles just played that must copy a ship right now.
     pub copying: u32,
+    /// Keyed shuffles, if this game reshuffles by them (`Keyed`); `None`,
+    /// the engine's own shuffles, everywhere but the regret instrument.
+    pub keyed: Option<Keyed>,
 }
 
 #[cfg(test)]

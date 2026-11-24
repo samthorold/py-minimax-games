@@ -20,6 +20,9 @@ use crate::star_realms::card::{Card, Effect};
 use crate::star_realms::features;
 use crate::star_realms::heuristic::{heuristic_move, play_heuristic};
 use crate::star_realms::planner::{Replies, enumerate};
+use crate::star_realms::regret::{
+    Policy, rollouts as regret_rollouts, shortlist as regret_shortlist,
+};
 use crate::star_realms::rng::Random;
 use crate::star_realms::rules::{
     Action, Few, advance, advance_legal, auto_play, legal_actions, new_game, winner,
@@ -215,6 +218,7 @@ fn state_from_dict(d: &Bound<'_, PyDict>) -> PyResult<GameState> {
         free_ships: item(d, "free_ships")?,
         scrap_to_draw: item(d, "scrap_to_draw")?,
         copying: item(d, "copying")?,
+        keyed: None,
     })
 }
 
@@ -726,17 +730,7 @@ fn seat_player(d: &Bound<'_, PyDict>) -> PyResult<Player> {
         "planner" => {
             let worlds: usize = item(d, "worlds")?;
             let budget: usize = item(d, "budget")?;
-            if worlds < 1 || budget < 2 * worlds {
-                return Err(PyValueError::new_err(format!(
-                    "a planner needs at least 1 world and 2 states per world, not {worlds} worlds and {budget} states"
-                )));
-            }
-            let value = value_from_dict(&item(d, "model")?)?;
-            if value.columns() != features::columns() {
-                return Err(PyValueError::new_err(
-                    "the model was fitted to other features than the encoder's",
-                ));
-            }
+            let value = policy_value(&item(d, "model")?, worlds, budget)?;
             let replies = match d.get_item("reply")? {
                 Some(reply) if !reply.is_none() => {
                     let reply = reply.cast_into::<PyDict>()?;
@@ -943,6 +937,125 @@ fn self_play<'py>(
     Ok(d)
 }
 
+/// A planner's value from `model`, checked with its `worlds` and `budget`.
+fn policy_value(model: &Bound<'_, PyDict>, worlds: usize, budget: usize) -> PyResult<Value> {
+    if worlds < 1 || budget < 2 * worlds {
+        return Err(PyValueError::new_err(format!(
+            "a planner needs at least 1 world and 2 states per world, not {worlds} worlds and {budget} states"
+        )));
+    }
+    let value = value_from_dict(model)?;
+    if value.columns() != features::columns() {
+        return Err(PyValueError::new_err(
+            "the model was fitted to other features than the encoder's",
+        ));
+    }
+    Ok(value)
+}
+
+fn line_from_py(line: &[Bound<'_, PyTuple>]) -> PyResult<Vec<Action>> {
+    line.iter().map(from_py).collect()
+}
+
+/// The regret instrument's rollouts (`regret.rs`): every line of `lines`
+/// (each a list of action tuples) played from `state` (a dict of the
+/// `GameState` fields, the mover to move) in the world of every seed of
+/// `seeds`, then played out by the planner with `model` on both sides at
+/// `worlds` worlds and `budget` states, with keyed shuffles if `keyed`, on
+/// `threads` threads, each stopping unfinished past `max_turns`. Returns a
+/// dict: `winner` (int64, a row per line and a column per seed, -1 if
+/// unfinished) and `turns` (the same shape).
+#[pyfunction]
+#[pyo3(signature = (model, state, lines, seeds, worlds, budget, keyed=false, threads=1, max_turns=300))]
+#[allow(clippy::too_many_arguments)]
+fn rollouts<'py>(
+    py: Python<'py>,
+    model: &Bound<'py, PyDict>,
+    state: &Bound<'py, PyDict>,
+    lines: Vec<Vec<Bound<'py, PyTuple>>>,
+    seeds: Vec<u64>,
+    worlds: usize,
+    budget: usize,
+    keyed: bool,
+    threads: usize,
+    max_turns: u32,
+) -> PyResult<Bound<'py, PyDict>> {
+    let value = policy_value(model, worlds, budget)?;
+    let start = state_from_dict(state)?;
+    let lines = lines
+        .iter()
+        .map(|line| line_from_py(line))
+        .collect::<PyResult<Vec<_>>>()?;
+    if threads < 1 {
+        return Err(PyValueError::new_err("rollouts need at least 1 thread"));
+    }
+    let policy = Policy {
+        value: &value,
+        worlds,
+        budget,
+    };
+    let found = py
+        .detach(|| regret_rollouts(policy, &start, &lines, &seeds, keyed, threads, max_turns))
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    let shape = (lines.len(), seeds.len());
+    let winners = found
+        .iter()
+        .map(|r| r.winner.map_or(-1, int))
+        .collect::<Vec<_>>();
+    let turns = found.iter().map(|r| i64::from(r.turns)).collect::<Vec<_>>();
+    let d = PyDict::new(py);
+    let grid = |values: Vec<i64>| {
+        Array2::from_shape_vec(shape, values)
+            .expect("a result per line and seed")
+            .into_pyarray(py)
+    };
+    d.set_item("winner", grid(winners))?;
+    d.set_item("turns", grid(turns))?;
+    Ok(d)
+}
+
+/// A shortlisted turn crossing to Python: its line, score and chance.
+type RankedLine<'py> = (Vec<Bound<'py, PyTuple>>, f64, f64);
+
+/// The candidates the planner with `model` at `worlds` worlds and `budget`
+/// states compares at `state` (a dict of the `GameState` fields, the mover
+/// to move), its worlds sampled with an rng seeded with `seed` as its bot
+/// seeds it, one per distinct turn: a list of `(line, score, chance)`,
+/// best first, each line a list of action tuples, its score the mean over
+/// worlds of its best end's from the mover's side (a probability `p` as
+/// `SPAN * (2p - 1)`, a win as `WIN`), which the planner ranks by, and its
+/// chance the mean of those ends' chances for the mover (a win 1). The
+/// first is the line the planner plays.
+#[pyfunction]
+fn shortlist<'py>(
+    py: Python<'py>,
+    model: &Bound<'py, PyDict>,
+    state: &Bound<'py, PyDict>,
+    worlds: usize,
+    budget: usize,
+    seed: u64,
+) -> PyResult<Vec<RankedLine<'py>>> {
+    let value = policy_value(model, worlds, budget)?;
+    let start = state_from_dict(state)?;
+    let policy = Policy {
+        value: &value,
+        worlds,
+        budget,
+    };
+    let found = py.detach(|| regret_shortlist(policy, &start, seed));
+    found
+        .into_iter()
+        .map(|ranked| {
+            let line = ranked
+                .line
+                .into_iter()
+                .map(|a| to_py(py, a))
+                .collect::<PyResult<Vec<_>>>()?;
+            Ok((line, ranked.score, ranked.chance))
+        })
+        .collect()
+}
+
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = m.py();
@@ -957,6 +1070,8 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     star_realms.add_function(wrap_pyfunction!(plan_ends, &star_realms)?)?;
     star_realms.add_function(wrap_pyfunction!(predict, &star_realms)?)?;
     star_realms.add_function(wrap_pyfunction!(self_play, &star_realms)?)?;
+    star_realms.add_function(wrap_pyfunction!(rollouts, &star_realms)?)?;
+    star_realms.add_function(wrap_pyfunction!(shortlist, &star_realms)?)?;
     m.add_submodule(&star_realms)?;
     // So `import minimax_games._native.star_realms` finds it too.
     py.import("sys")?
