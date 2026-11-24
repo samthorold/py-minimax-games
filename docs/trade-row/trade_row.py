@@ -19,6 +19,9 @@ saved models.
 
     uv run python docs/trade-row/trade_row.py runs/trade-row-209 runs/run-2/data
 
+#225 refitted both, unchanged, into `runs/trade-row-225` to read them on
+the denial probe whose swap is among cards the next buyer could afford.
+
 Run it on 2 threads (`VECLIB_MAXIMUM_THREADS=2 OPENBLAS_NUM_THREADS=2
 OMP_NUM_THREADS=2`), as the speed hypothesis reads.
 """

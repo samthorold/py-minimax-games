@@ -2795,6 +2795,66 @@ Script, logs, the fits' summary and the per-seed population results: [trade-row/
 - **Training is fast**: 32 seconds for the candidate on 2 contended threads, a fiftieth of the 27-minute limit, and the features cost the planner about 7% per plan. The cost side of a richer description isn't what limits this step.
 - **Nothing is committed or added to the population.** The issue commits the candidate and makes it an opponent only if the parent is supported; it isn't refuted either, so the End state doesn't change. Its second step, the learned form, waits on the first being supported (the design's 10.1), so the next step on this hypothesis is a better description of the row.
 
+### Milestone 10: the Trade Row read on cards the next buyer could afford
+
+- Date: 2026-11-24
+- Commit: this PR (#225; on `2595286`): `probe.next_trade` (each recorded game replayed in the Rust engine for the trade each turn produced), `probe.denial(..., trade=...)` (the swap among cards costing at most it), `probe.most_report`; `probe denial` uses all three.
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0. 2 threads, run one after another; other agents' work may have shared the machine.
+- Seeds: the denial probes 23,000,000-23,000,199, clear of every earlier range (the highest before, #209's probes, end at 22,000,199; a throwaway check for #225 used 22,000,000-22,000,049, inside that range). No earlier run, log or doc uses a seed of 23,000,000 or above.
+
+**Why again.** #209 read *the Trade Row as it bears on whoever buys next* undecided because its candidate saw 3.0% of a row card's worth to the next buyer. But the probe's swap took the most and least valued of every Trade Deck card out of sight, and on `pf01`'s games the most valued was the Command Ship (cost 8) in 80% of positions, which a next buyer with about 4 trade per hand could afford in 0.5%. The End state's test now swaps between the cards the next buyer values most and least **among those they could buy on their next turn**, costing at most the trade that turn produced in the recorded game (What it sees, the grill of 2026-11-24). This reads `pf01` and #209's candidate on that probe. The rules are unchanged.
+
+```sh
+VECLIB_MAXIMUM_THREADS=2 OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 \
+  uv run python docs/trade-row/trade_row.py runs/trade-row-225 runs/run-2/data
+uv run python -m minimax_games.games.star_realms probe denial --model runs/trade-row-225/t32.npz --judge pf01 --games 200 --base-seed 23000000 --threads 2
+uv run python -m minimax_games.games.star_realms probe denial --model pf01 --games 200 --base-seed 23000000 --threads 2
+```
+
+- **The trade a turn produced** (`probe.next_trade`): each recorded game is replayed from its seed in the Rust engine that played it, and a turn's trade is what was left when it ended plus the cost of every card it bought, since trade is spent on nothing else. A test checks it against the replay at every decision (the trade in hand plus what was spent so far never exceeds it, and reaches it at the turn's end). A turn that chose combat over trade on an "or" card counts only what it took, which undercounts a little. Replaying costs under a second, beside about 3 minutes of games. The position at the end of turn *k* is read against turn *k* + 1, the game's last turn included. The mean was 4.57 trade a turn in both players' games.
+- **The swap** (`probe.denial(..., trade=...)`): the most and least valued cards are taken only from the cards out of sight that cost at most that trade, and a position with fewer than two such cards drops out (41 of `t32`'s 4,524 positions, 44 of `pf01`'s 4,541). A test on real positions with a judgement of known card worths pins the choice and shows it differs from the unrestricted one. *Valued* is unchanged: the gap between those two cards' owned worth.
+- **The refit**: #209's script, unchanged. The control again reproduces `pf01` bit for bit (every parameter identical, held-out predictions identical), so `t32` is #209's candidate: the same fit with the same losses (training 0.4963, held-out 0.5090; 34.5 s on 2 threads, the control 28.2 s). Neither model is committed.
+
+Logs and the fits' summary: [trade-row/affordable/](trade-row/affordable/).
+
+**The share seen**, each player by its own judgement on its games against itself:
+
+| | Positions compared | Effect (chance), se | Valued | **Seen**, se by game | Seen (logit) | Early / middle / late |
+|---|---|---|---|---|---|---|
+| `t32` | 4,483 | −0.0480, 0.0007 | 0.210 | **22.9% ± 0.4%** | 20.7% | 32.3% / 19.3% / 14.1% |
+| `pf01` | 4,497 | −0.0441, 0.0006 | 0.210 | **21.0% ± 0.4%** | 18.9% | 29.2% / 17.8% / 13.7% |
+| #209's probe: `t32`, `pf01` | 4,483, 4,589 | | 0.336, 0.337 | 3.0%, 2.4% | 2.5%, 2.0% | |
+
+**The affordable most valued cards** (in `pf01`'s games; `t32`'s within a point of each in [the log](trade-row/affordable/denial-t32.log)): the Cutter (cost 2) in 28.0% of positions, the Ram (3) 9.9%, the Blob Destroyer (4) 7.1%, the Flagship (6) 5.8%, the Trade Escort (5) 5.7%, the Battle Mech (5) 4.8%, the Command Ship (8) 4.8%, and 29 other cards the rest. By cost: 1, 3.2%; 2, 31.6%; 3, 13.2%; 4, 11.0%; 5, 14.9%; 6, 13.8%; 7, 6.7%; 8, 5.6%. The unrestricted probe chose a card of cost 5-8 every time and the Command Ship 80% of the time.
+
+**The buys' denial share**, by `pf01`'s judgement (each player's view of its own beside it):
+
+| Choices (all turns) | By `pf01`'s judgement (ruled on) | By the chooser's own |
+|---|---|---|
+| `t32`'s buys (4,678) | **38.9% ± 0.8%** deny | 38.3% ± 0.7% |
+| `pf01`'s buys (4,670) | **37.2% ± 0.8%** deny | (the same) |
+| Heuristic's buys (5,168) | 42.8% ± 0.7% | 42.9% by `t32`'s |
+| `t32`'s Trade Row scraps (303) | 75.6% ± 2.5% | 75.6% ± 2.6% |
+| `pf01`'s Trade Row scraps (300) | 73.7% ± 2.8% | |
+
+(Standard errors counted by game. Phases are in the logs. Each probe took about 3.3 minutes, almost all of it the games.)
+
+**Strength** is #209's population run, reused: the refit is the same model, so it wasn't replayed. Over every member paired with `pf01`, 142 seeds won only by `t32` and 133 only by `pf01`, **sign z 0.54** ([population-t32/](trade-row/population-t32/)).
+
+#### Reading it
+
+| Hypothesis | Reading | By its rule |
+|---|---|---|
+| The Trade Row as it bears on whoever buys next | `t32` sees 22.9% ± 0.4%, below a quarter (and `pf01` 21.0% ± 0.4%); sign z 0.54 over every member | **Undecided**, the kind where the description didn't get through: the judgement shown the row doesn't see a quarter of an affordable row card's worth to the next buyer, so the next step is a better description |
+| …because it lets the player deny | `t32`'s buys deny 38.9% against `pf01`'s 37.2%, by `pf01`'s judgement: +1.7 ± 1.1 points (1.5 times the error) | **Undecided**: higher by less than twice the error, and the parent isn't supported |
+
+- **The probe was the problem, and most of it.** On cards the buyer could afford, the share seen rose from 2-3% to about a fifth, for both players. Nearly all of the rise is the instrument: `pf01`, which reads no row features, sees 21.0% where #209's probe found 2.4%. The judgement already sees much of a row card's worth to a buyer who could take it, from the counts alone.
+- **The description adds a little, and gets close to the line without crossing it.** `t32` sees 1.9 points more than `pf01` (each share's error 0.4 points, positions from different games, so about 3 times the difference's error), at 22.9%, 2.1 points below a quarter: about five times its error short. By phase it is above a quarter early (32.3%; `pf01` 29.2%) and below in the middle and late game (19.3%, 14.1%). The rule reads the share over all turns, so it reads undecided.
+- **A reading that sits awkwardly under the rule, reported and not acted on.** The rule's quarter was written against a probe on which the champion saw about 2%. On this probe the champion itself sees 21%, so a quarter now asks a candidate for 4 points more than the champion sees, where it was meant to ask for a large step from near nothing. The rule doesn't say the share is read against the champion's, and changing it is out of scope, so the reading stands as undecided, and whether to restate the rule (say, as a gain over the champion's share) is the owner's call.
+- **The most valued cards are now cheap and varied.** A third of positions value a cost-2 card most, the Cutter alone 28%, and the cost-8 cards make up 5.6%. That is the swap the End state asked for: where a cheap card worth more than its cost shows, which #209's affordability features could register.
+- **Denial is unchanged in kind.** `t32`'s buys deny a little more often than `pf01`'s (+1.7 ± 1.1 points), as in #209 (+2.5 ± 1.1), and both still below the heuristic's 42.8%. The finer rule reads it only while the parent is supported.
+- **Nothing is committed or added to the population**: the parent isn't supported. By the design's 10.1, the step after this one is a better description of the row, and a follow-up carries #209's other candidates for it.
+
 ## Milestone 7: Rust tracer bullet (toolchain and first-slice engine)
 
 2026-10-21, #137 (tracked by #127), CPython 3.14, Apple M1 (8 GB) shared with three other agents' builds and tests. The first end-to-end path through Rust: maturin builds `minimax_games._native` from `rust/`, and its Star Realms engine plays the starter decks and the 30-card first slice (design, Compiled engine).

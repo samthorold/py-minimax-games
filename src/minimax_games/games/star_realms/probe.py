@@ -22,7 +22,11 @@ The denial probe (strategy.md, Denial) asks whether a card the next player
 would value, in the Trade Row for them to buy, makes the position worse for
 the player who just ended. Which card they would value is the judgement's
 own answer: the one whose copy in the next player's draw pool costs the
-player who just ended most, against the one that costs least. Swapping each
+player who just ended most, against the one that costs least, among the
+cards the next player could buy on their next turn (costing at most the
+trade it produced in the recorded game, `next_trade`): a card they can't
+afford is worth little to them in the row, and card costs track worth, so
+unrestricted the most valued is nearly always the dearest. Swapping each
 into the Trade Row in place of the same card (`denial`) keeps the row at
 its five cards and every card in one place. In games, a card a player buys
 or scraps from the Trade Row is denial when the judgement finds it worth
@@ -354,7 +358,8 @@ class Denial:
     """The judged chance with the card the next player values most in the
     Trade Row less that with the card they value least, in place of the same
     row card, averaged over the row's distinct cards; below 0 is denial
-    seen. NaN where fewer than two cards are out of sight."""
+    seen. NaN where fewer than two cards are out of sight (and, when the
+    probe is given the next buyer's trade, could be bought with it)."""
     logit_effect: np.ndarray
     """The same on the logit scale."""
     valued: np.ndarray
@@ -372,18 +377,70 @@ class Denial:
     """Each position's game, for standard errors counted by game."""
 
 
+_COST = np.array([CATALOGUE[name].cost for name in TRADE_DECK])
+"""Each `TRADE_DECK` card's cost."""
+
+
+def _produced(seed: int, actions: Sequence[native.NativeAction]) -> list[int]:
+    """The trade each turn of the game dealt from `seed` and played by
+    `actions` produced, in order, the last (perhaps unfinished) turn's
+    included: the trade left when it ended, plus the cost of every card it
+    bought (trade is spent on nothing else)."""
+    game = native.Game(seed)
+    produced, spent = [], 0
+    for action in actions:
+        if action[0] == "EndTurn":
+            produced.append(game.state()["trade"] + spent)
+            spent = 0
+        elif action[0] in _BUYS:
+            spent += CATALOGUE[action[1]].cost
+        game.advance(action)
+    produced.append(game.state()["trade"] + spent)
+    return produced
+
+
+def next_trade(played: SelfPlay, seeds: Sequence[int]) -> np.ndarray:
+    """Per row of `played` (played with `record`, game `i` dealt from
+    `seeds[i]`), the trade the next player produced on their next turn in
+    the recorded game: what they could have bought with, for the denial
+    probe's swap (`denial`). An "or" card's trade option not taken isn't
+    counted (combat chosen over trade undercounts a little).
+
+    Each game is replayed in the Rust engine (`native.Game`), the same
+    engine that played it, from its decisions: the turns' trade isn't in
+    the rows, and replaying costs a fraction of playing."""
+    if played.actions is None:
+        msg = "the games weren't recorded"
+        raise ValueError(msg)
+    trade = np.zeros(len(played.x), dtype=np.int64)
+    for g, actions in enumerate(played.actions):
+        rows = np.flatnonzero(played.game == g)
+        if len(rows):
+            # the position at turn k's end is followed by turn k + 1
+            trade[rows] = _produced(seeds[g], actions)[1 : len(rows) + 1]
+    return trade
+
+
 def denial(
-    judgement: Judgement, rows: np.ndarray, game: np.ndarray | None = None
+    judgement: Judgement,
+    rows: np.ndarray,
+    game: np.ndarray | None = None,
+    trade: np.ndarray | None = None,
 ) -> Denial:
     """For each position in `rows`, which Trade Deck card the next player
     would value most and least, by the judged cost to the player who just
     ended of the next player owning it (a copy out of sight added to their
     draw pool), and the judged chance with each of the two in the Trade Row
     in place of the same row card (the replaced card goes out of sight).
-    `game` is each position's game (`SelfPlay.game`; by default each its
-    own). Plays no games."""
+    `trade` is, per position, the trade the next player produced on their
+    next turn (`next_trade`): the two cards are chosen only among those
+    costing at most that, the cards they could have bought (by default,
+    every card out of sight). `game` is each position's game
+    (`SelfPlay.game`; by default each its own). Plays no games."""
     x = np.asarray(rows, dtype=np.float64)
     owned = _owned_by_next(judgement, x)
+    if trade is not None:
+        owned[_COST[None, :] > np.asarray(trade)[:, None]] = np.nan
     choices = (~np.isnan(owned)).sum(axis=1)
     ok = np.flatnonzero(choices >= 2)
     most = np.full(len(x), -1)
@@ -1193,6 +1250,28 @@ def denial_report(found: Denial, logit: bool = False) -> list[str]:
             f" {line.sd:>7.4f} {line.se:>7.4f} {line.valued:>8.4f}"
             f" {line.seen:>7.1%} {line.seen_se:>8.1%} {line.below:>8.1%}"
         )
+    return lines
+
+
+def most_report(found: Denial) -> list[str]:
+    """The denial probe's most valued cards over the positions it compared:
+    each card's share of them, most often first, with its cost, then each
+    cost's share."""
+    most = found.most[found.most >= 0]
+    n = len(most)
+    cards = np.bincount(most, minlength=len(TRADE_DECK))
+    lines = [f"The next player's most valued card, over {n} positions:"]
+    for j in np.argsort(-cards, kind="stable"):
+        if cards[j]:
+            lines.append(
+                f"  {TRADE_DECK[j]:<24} cost {_COST[j]}"
+                f" {cards[j]:>6} {cards[j] / n:>6.1%}"
+            )
+    costs = np.bincount(_COST[most])
+    lines.append(
+        "By cost: "
+        + ", ".join(f"cost {c}: {k / n:.1%}" for c, k in enumerate(costs) if k)
+    )
     return lines
 
 

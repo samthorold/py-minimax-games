@@ -407,6 +407,67 @@ def test_the_denial_probe_finds_how_much_of_the_opponent_s_gain_the_row_shows(
     assert np.allclose(probe.denial(_denying(0), rows).effect, 0)
 
 
+def test_the_denial_probe_swaps_only_cards_the_next_buyer_could_afford(
+    rows: np.ndarray,
+):
+    # _WORTH rises along the catalogue, so the unrestricted most valued card
+    # is the last one out of sight; with the next buyer's trade capped, it
+    # is the most valued of those costing at most that trade
+    cost = np.array([CATALOGUE[name].cost for name in _TRADE_DECK])
+    worths = np.array([_WORTH[name] for name in _TRADE_DECK])
+    trade = np.arange(len(rows)) % 7  # 0 to 6: often too little for two cards
+    out_of_sight = np.array(
+        [[probe.available(row, name) >= 1 for name in _TRADE_DECK] for row in rows]
+    )
+    affordable = out_of_sight & (cost[None, :] <= trade[:, None])
+    found = probe.denial(_denying(0.25), rows, trade=trade)
+    unrestricted = probe.denial(_denying(0.25), rows)
+    ok = affordable.sum(axis=1) >= 2
+    assert ok.any() and (~ok).any()
+    # a position with fewer than two affordable cards out of sight drops out
+    assert np.isnan(found.effect[~ok]).all()
+    assert (found.most[~ok] == -1).all()
+    most = np.where(affordable, worths, -np.inf).max(axis=1)[ok]
+    least = np.where(affordable, worths, np.inf).min(axis=1)[ok]
+    assert np.allclose(found.valued[ok], most - least)
+    assert np.allclose(found.effect[ok], -0.25 * (most - least))
+    picked = [_TRADE_DECK.index(probe.TRADE_DECK[m]) for m in found.most[ok]]
+    assert (cost[picked] <= trade[ok]).all()
+    # where the dearest card is out of reach, the choice differs from the
+    # unrestricted probe's
+    assert (found.most[ok] != unrestricted.most[ok]).any()
+
+
+def test_the_most_valued_cards_are_reported_by_card_and_by_cost():
+    blob, scout = probe.TRADE_DECK.index("Blob Fighter"), -1
+    command = probe.TRADE_DECK.index("Command Ship")
+    found = probe.Denial(
+        effect=np.array([-0.1, -0.1, -0.1, np.nan]),
+        logit_effect=np.zeros(4),
+        valued=np.ones(4),
+        logit_valued=np.ones(4),
+        most=np.array([blob, blob, command, scout]),
+        turn=np.ones(4),
+        game=np.arange(4),
+    )
+    lines = probe.most_report(found)
+    text = "\n".join(lines)
+    # the 3 positions compared, not the one dropped
+    assert "3 positions" in text
+    by_card = {
+        name: i
+        for i, line in enumerate(lines)
+        for name in probe.TRADE_DECK
+        if name in line
+    }
+    assert set(by_card) == {"Blob Fighter", "Command Ship"}
+    assert "66.7%" in lines[by_card["Blob Fighter"]]
+    assert "33.3%" in lines[by_card["Command Ship"]]
+    assert by_card["Blob Fighter"] < by_card["Command Ship"]  # most often first
+    assert "cost 1: 66.7%" in text
+    assert "cost 8: 33.3%" in text
+
+
 def test_every_position_the_denial_probe_judges_is_valid_and_differs_in_one_card(
     rows: np.ndarray,
 ):
@@ -489,6 +550,44 @@ def recorded() -> selfplay.SelfPlay:
 
 
 _TAKES = ("Acquire", "AcquireOnTop", "AcquireFreeShip")
+
+
+def test_each_position_has_the_trade_the_next_player_produced_on_their_next_turn(
+    recorded: selfplay.SelfPlay,
+):
+    seeds = range(probe.BASE_SEED, probe.BASE_SEED + 6)
+    trade = probe.next_trade(recorded, seeds)
+    assert recorded.actions is not None
+    assert trade.shape == (len(recorded.x),)
+    checked = 0
+    for g, (seed, actions) in enumerate(zip(seeds, recorded.actions, strict=True)):
+        rows = np.flatnonzero(recorded.game == g)
+        if not len(rows):
+            continue
+        # replayed, a turn's trade only grows, but for what it buys: at
+        # every decision, the trade in hand plus what was spent so far is at
+        # most what the turn produced, and at its end equals it
+        game = native.Game(seed)
+        spent, most = 0, 0
+        produced: list[int] = []
+        for action in actions:
+            most = max(most, game.state()["trade"] + spent)
+            if action[0] == "EndTurn":
+                produced.append(most)
+                spent, most = 0, 0
+            elif action[0] in ("Acquire", "AcquireOnTop"):
+                spent += CATALOGUE[action[1]].cost
+            game.advance(action)
+        # the game's last turn ends in a win, not an EndTurn
+        produced.append(max(most, game.state()["trade"] + spent))
+        # the position at turn k's end is followed by the next player's turn
+        # k + 1, the game's last turn included
+        assert len(produced) == len(rows) + 1
+        assert np.array_equal(trade[rows], produced[1:])
+        assert (trade[rows] >= 0).all()
+        checked += len(rows)
+    assert checked == len(recorded.x)
+    assert trade.max() >= 5
 
 
 def test_each_trade_row_buy_and_scrap_is_found_at_the_end_of_its_turn(

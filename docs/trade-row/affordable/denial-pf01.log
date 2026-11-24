@@ -1,0 +1,73 @@
+Denial probe of pf01: 4541 positions from its games against itself on seeds 23000000-23000199 (4 worlds, 20000 states per plan), and the heuristic's against itself on the same seeds. The swap is among the cards out of sight the next player could buy with the trade their next turn produced (mean 4.57)
+Judged effect (chance) on the player who just ended of the card the next player values most in the Trade Row, against the one they value least:
+phase   positions    effect      sd      se   valued    seen  seen se  below 0
+all          4497   -0.0441  0.0429  0.0006   0.2096   21.0%     0.4%    92.2%
+early        1400   -0.0733  0.0494  0.0013   0.2511   29.2%     0.6%    96.0%
+middle       1589   -0.0406  0.0352  0.0009   0.2281   17.8%     0.5%    93.0%
+late         1508   -0.0207  0.0240  0.0006   0.1516   13.7%     0.5%    87.7%
+
+Judged effect (logit) on the player who just ended of the card the next player values most in the Trade Row, against the one they value least:
+phase   positions    effect      sd      se   valued    seen  seen se  below 0
+all          4497   -0.2199  0.1805  0.0027   1.1636   18.9%     0.3%    92.2%
+early        1400   -0.3191  0.2084  0.0056   1.1518   27.7%     0.6%    96.0%
+middle       1589   -0.2094  0.1570  0.0039   1.2532   16.7%     0.4%    93.0%
+late         1508   -0.1389  0.1224  0.0032   1.0800   12.9%     0.4%    87.7%
+
+The next player's most valued card, over 4497 positions:
+  Cutter                   cost 2   1261  28.0%
+  Ram                      cost 3    446   9.9%
+  Blob Destroyer           cost 4    320   7.1%
+  Flagship                 cost 6    261   5.8%
+  Trade Escort             cost 5    258   5.7%
+  Battle Mech              cost 5    218   4.8%
+  Command Ship             cost 8    216   4.8%
+  Battle Blob              cost 6    193   4.3%
+  Stealth Needle           cost 4    165   3.7%
+  Imperial Frigate         cost 3    141   3.1%
+  The Hive                 cost 5    138   3.1%
+  Dreadnaught              cost 7    119   2.6%
+  Blob Fighter             cost 1    115   2.6%
+  Battle Pod               cost 2    111   2.5%
+  Mothership               cost 7     99   2.2%
+  Blob Carrier             cost 6     59   1.3%
+  Battlecruiser            cost 6     57   1.3%
+  Machine Base             cost 7     52   1.2%
+  Corvette                 cost 2     49   1.1%
+  Port of Call             cost 6     47   1.0%
+  War World                cost 5     45   1.0%
+  Central Office           cost 7     31   0.7%
+  Trade Bot                cost 1     22   0.5%
+  Brain World              cost 8     18   0.4%
+  Defense Center           cost 5     11   0.2%
+  Blob World               cost 8     10   0.2%
+  Fleet HQ                 cost 8      7   0.2%
+  Imperial Fighter         cost 1      6   0.1%
+  Space Station            cost 4      5   0.1%
+  Patrol Mech              cost 4      5   0.1%
+  Supply Bot               cost 3      3   0.1%
+  Missile Mech             cost 6      3   0.1%
+  Missile Bot              cost 2      2   0.0%
+  Battle Station           cost 3      2   0.0%
+  Trading Post             cost 3      1   0.0%
+  Survey Ship              cost 3      1   0.0%
+By cost: cost 1: 3.2%, cost 2: 31.6%, cost 3: 13.2%, cost 4: 11.0%, cost 5: 14.9%, cost 6: 13.8%, cost 7: 6.7%, cost 8: 5.6%
+
+Buys and Trade Row scraps worth less in the chooser's deck than kept from the opponent (denial), by pf01's judgement:
+player     phase   kind  choices  denial denial se      own     kept
+pf01       all     buy      4670   37.2%      0.8%  +0.0892  +0.0753
+pf01       all     scrap     300   73.7%      2.8%  +0.0487  +0.0902
+pf01       early   buy      1572   38.4%      1.3%  +0.1166  +0.1020
+pf01       early   scrap      29   86.2%      6.5%  +0.1234  +0.2051
+pf01       middle  buy      1651   33.6%      1.1%  +0.1007  +0.0777
+pf01       middle  scrap     110   80.0%      4.1%  +0.0674  +0.1289
+pf01       late    buy      1447   39.9%      1.2%  +0.0465  +0.0437
+pf01       late    scrap     161   67.1%      3.9%  +0.0226  +0.0431
+heuristic  all     buy      5168   42.8%      0.7%  +0.0688  +0.0619
+heuristic  all     scrap     290   53.4%      3.6%  +0.1380  +0.1569
+heuristic  early   buy      1403   38.8%      1.5%  +0.1088  +0.0954
+heuristic  early   scrap       3   66.7%     33.3%  +0.2465  +0.2096
+heuristic  middle  buy      1820   40.9%      1.2%  +0.0763  +0.0650
+heuristic  middle  scrap     101   49.5%      5.5%  +0.2008  +0.2174
+heuristic  late    buy      1945   47.3%      1.0%  +0.0329  +0.0347
+heuristic  late    scrap     186   55.4%      4.5%  +0.1021  +0.1231
+Games 197.1 s, probe 0.8 s

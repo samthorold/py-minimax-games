@@ -527,6 +527,10 @@ def test_probe_reports_the_champion_s_denial_by_phase_beside_the_heuristic_s(
         assert word in out
     assert "buy" in out
     assert "heuristic" in out
+    # the swap is among cards the next buyer could afford on their next turn
+    assert "could buy" in out
+    assert "most valued card" in out
+    assert "By cost" in out
 
 
 def test_probe_denial_judges_a_saved_candidate_s_choices_by_the_champion_too(
