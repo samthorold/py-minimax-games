@@ -88,6 +88,20 @@ one Rust batch on `--threads`. It prints the strength (win rates, the
 seeds won both, split and lost both, the sign z, ms and states per plan)
 and the changed choices by game phase, with the design's reading.
 
+`python -m minimax_games.games.star_realms regret` measures where the
+champion's own choices lose win chance (see `regret`): `--per-game` turns
+sampled from each of `--games` of `planner:<--model>` (pf01) against itself
+from `--base-seed`, and at each the chosen turn against the planner's next
+best (up to `--candidates`, judged within `--margin` of it), rolled out to
+the end with the champion on both sides, narrowed by sequential halving
+(`--per-round` rollouts an option a round) and the best re-estimated on
+`--fresh` rollouts. It prints each turn as it is read, then the win chance
+lost per game by phase, by judged chance and by the kind of sub-choice the
+chosen and the best differ in; `--out` writes each turn as CSV. With
+`--pair N` it measures instead, on the same turns: the top two options
+rolled out on N seeds with independent, shared and keyed randomness, and
+the time per rollout.
+
 `python -m minimax_games.games.star_realms settle-worlds` settles whether
 more sampled worlds make the champion stronger (see `more_worlds`): an
 SPRT (`--h0` 50% against `--h1` 55%, `--alpha` and `--beta` 0.05) of
@@ -200,6 +214,7 @@ from minimax_games.games.star_realms import (
     population,
     probe,
     profiling,
+    regret,
     reply,
     sampled_worlds,
     selfplay,
@@ -443,6 +458,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if argv[:1] == ["reply"]:
         replying(argv[1:])
+        return
+    if argv[:1] == ["regret"]:
+        regretting(argv[1:])
         return
     if argv[:1] == ["settle-worlds"]:
         settling_worlds(argv[1:])
@@ -943,6 +961,112 @@ def replying(argv: list[str]) -> None:
         max_turns=args.max_turns,
     )
     for line in reply.report(found):
+        print(line)
+    print(f"{time.perf_counter() - start:.0f} s wall on {args.threads} threads")
+
+
+def regretting(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(
+        prog="python -m minimax_games.games.star_realms regret"
+    )
+    budget = regret.Budget()
+
+    def option(flag: str, value: float, text: str, kind: type = int) -> None:
+        parser.add_argument(
+            flag, type=kind, default=value, help=f"{text} (default: %(default)s)"
+        )
+
+    parser.add_argument(
+        "--model", default="pf01", help="the committed model (default: %(default)s)"
+    )
+    option("--games", 50, "the champion's games against itself to sample turns from")
+    option("--base-seed", regret.SEEDS, "the first game's seed")
+    option("--per-game", 2, "turns sampled from each game")
+    option("--candidates", regret.CANDIDATES, "the most options rolled out a turn")
+    option("--margin", regret.MARGIN, "options judged within this of the chosen", float)
+    option("--per-round", budget.per_round, "rollouts per option per halving round")
+    option("--fresh", budget.fresh, "fresh rollouts of the best and the chosen")
+    option("--worlds", planner.WORLDS, "the planner's worlds, choosing and rolling out")
+    option("--budget", planner.BUDGET, "the planner's states per plan")
+    option(
+        "--rollout-worlds", regret.ROLLOUT_WORLDS, "the planner's worlds in rollouts"
+    )
+    option("--rollout-budget", regret.ROLLOUT_BUDGET, "its states per plan in rollouts")
+    option("--threads", 1, "threads to roll out on (same results)")
+    option("--max-turns", regret.MAX_TURNS, "stop a rollout unfinished past this turn")
+    option("--pair", 0, "measure instead: the top two options on N seeds a mode")
+    parser.add_argument(
+        "--engine-shuffles",
+        action="store_true",
+        help="roll out with the engine's shuffles, not keyed ones",
+    )
+    parser.add_argument("--out", type=Path, help="write each turn's reading as CSV")
+    args = parser.parse_args(argv)
+    model = value.load(args.model)
+    settings = regret.Settings(
+        worlds=args.worlds,
+        budget=args.budget,
+        rollout_worlds=args.rollout_worlds,
+        rollout_budget=args.rollout_budget,
+        keyed=not args.engine_shuffles,
+        threads=args.threads,
+        max_turns=args.max_turns,
+    )
+    seeds = range(args.base_seed, args.base_seed + args.games)
+    start = time.perf_counter()
+
+    def stamp() -> str:
+        return f"[{time.perf_counter() - start:.0f} s]"
+
+    found, game_turns = regret.decisions(
+        model, seeds, settings, per_game=args.per_game, seed=args.base_seed
+    )
+    print(
+        f"{stamp()} planner:{args.model} against itself on seeds"
+        f" {seeds.start}-{seeds.stop - 1}: {len(game_turns)} games finished,"
+        f" {len(found)} turns sampled",
+        flush=True,
+    )
+    if args.pair:
+        pairs = []
+        for d in found:
+            options = regret.shortlist(
+                model, d.state, settings, regret.decision_seed(d)
+            )
+            if len(options) < 2:
+                continue
+            paired = regret.pairing(model, d.state, options, settings, range(args.pair))
+            buys = "buy" in regret.differ(options[0].line, options[1].line)
+            pairs.append((buys, paired))
+            print(
+                f"{stamp()} turn {d.turn}: {len(options)} candidates, judged"
+                f" {options[0].judged:.3f} and {options[1].judged:.3f}; discordant "
+                + ", ".join(f"{m} {paired.discordant(m):.3f}" for m in regret.MODES),
+                flush=True,
+            )
+        for line in regret.pairing_report(pairs):
+            print(line)
+        print(f"{time.perf_counter() - start:.0f} s wall on {args.threads} threads")
+        return
+
+    def progress(i: int, turn: regret.Turn) -> None:
+        print(
+            f"{stamp()} {i + 1}/{len(found)}: game {turn.game} turn {turn.turn},"
+            f" {turn.options} options, judged {turn.judged:.3f}, regret"
+            f" {turn.regret:+.3f} ({turn.group or '-'}), {turn.rollouts} rollouts"
+            + (f"; {turn.detail}" if turn.detail else ""),
+            flush=True,
+        )
+
+    budget = regret.Budget(per_round=args.per_round, fresh=args.fresh)
+    turns = regret.read(
+        model, found, settings, budget, args.candidates, args.margin, progress
+    )
+    run = regret.Run(turns, game_turns)
+    if args.out is not None:
+        regret.write(run, args.out)
+    print()
+    for line in regret.report(run):
         print(line)
     print(f"{time.perf_counter() - start:.0f} s wall on {args.threads} threads")
 

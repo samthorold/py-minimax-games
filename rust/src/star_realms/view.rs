@@ -178,6 +178,7 @@ pub fn sample_world(view: &View, rng: &mut Random) -> GameState {
         free_ships: view.free_ships,
         scrap_to_draw: view.scrap_to_draw,
         copying: view.copying,
+        keyed: None,
     }
 }
 

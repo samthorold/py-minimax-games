@@ -70,6 +70,38 @@ def predict(model: dict[str, Any], x: np.ndarray) -> np.ndarray:
     features' under `extra["more"]` and the Trade Row features' under
     `extra["trade_row"]` if it reads them), the mean of its members'."""
 
+def rollouts(
+    model: dict[str, Any],
+    state: dict[str, Any],
+    lines: list[list[NativeAction]],
+    seeds: list[int],
+    worlds: int,
+    budget: int,
+    keyed: bool = False,
+    threads: int = 1,
+    max_turns: int = 300,
+) -> dict[str, np.ndarray]:
+    """The regret instrument's rollouts: every line of `lines` played from
+    `state` (the mover to move) in the world of every seed of `seeds`
+    (sampled from the mover's view), then played out by the planner with
+    `model` (`selfplay.native_model`) on both sides at `worlds` worlds and
+    `budget` states, with keyed shuffles if `keyed`, on `threads` threads,
+    each stopping unfinished past `max_turns`: `winner` (int64, a row per
+    line and a column per seed, -1 if unfinished) and `turns`. Raises
+    `ValueError` if a line isn't legal in a seed's world."""
+
+def shortlist(
+    model: dict[str, Any], state: dict[str, Any], worlds: int, budget: int, seed: int
+) -> list[tuple[list[NativeAction], float, float]]:
+    """The candidates the planner with `model` at `worlds` worlds and
+    `budget` states compares at `state` (the mover to move), its worlds
+    sampled with an rng seeded with `seed` as its bot seeds it, one per
+    distinct turn: `(line, score, chance)` best first, the score the mean
+    over worlds of the line's best end's from the mover's side (`SPAN * (2p
+    - 1)` for a probability `p`, a win as `WIN`), which the planner ranks
+    by, and the chance the mean of those ends' chances (a win 1). The first
+    is the line the planner plays."""
+
 def self_play(
     players: list[dict[str, Any]],
     games: list[tuple[int, int, int]],

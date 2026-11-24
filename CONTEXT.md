@@ -37,6 +37,10 @@ A question put to a trained **judgement** about one idea from Star Realms strate
 **Exploitation gap**:
 How much a player's **judgement** of the positions it chose exceeds how often it went on to win from them.
 
+**Regret**:
+The win chance a player's choice of turn loses against the best of the other turns it considered, each played out to the end with the player on both sides; reported per game, by the kind of sub-choice in which the two turns differ.
+_Avoid_: error rate, blunder rate
+
 **Hypothesis**:
 A claim about Star Realms or about choosing moves that a part of the **end state** rests on, with the cheapest test that could show it false; a hypothesis because the end state itself is uncertain.
 _Avoid_: belief, claim
