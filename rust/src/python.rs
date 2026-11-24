@@ -21,7 +21,7 @@ use crate::star_realms::features;
 use crate::star_realms::heuristic::{heuristic_move, play_heuristic};
 use crate::star_realms::planner::{Replies, enumerate};
 use crate::star_realms::regret::{
-    Policy, rollouts as regret_rollouts, shortlist as regret_shortlist,
+    Keying, Policy, rollouts as regret_rollouts, shortlist as regret_shortlist,
 };
 use crate::star_realms::rng::Random;
 use crate::star_realms::rules::{
@@ -961,12 +961,13 @@ fn line_from_py(line: &[Bound<'_, PyTuple>]) -> PyResult<Vec<Action>> {
 /// (each a list of action tuples) played from `state` (a dict of the
 /// `GameState` fields, the mover to move) in the world of every seed of
 /// `seeds`, then played out by the planner with `model` on both sides at
-/// `worlds` worlds and `budget` states, with keyed shuffles if `keyed`, on
-/// `threads` threads, each stopping unfinished past `max_turns`. Returns a
-/// dict: `winner` (int64, a row per line and a column per seed, -1 if
+/// `worlds` worlds and `budget` states, with keyed shuffles if `keyed` and
+/// the planners' worlds keyed by the seed if `keyed_worlds`, on `threads`
+/// threads, each stopping unfinished past `max_turns`. Returns a dict:
+/// `winner` (int64, a row per line and a column per seed, -1 if
 /// unfinished) and `turns` (the same shape).
 #[pyfunction]
-#[pyo3(signature = (model, state, lines, seeds, worlds, budget, keyed=false, threads=1, max_turns=300))]
+#[pyo3(signature = (model, state, lines, seeds, worlds, budget, keyed=false, threads=1, max_turns=300, keyed_worlds=false))]
 #[allow(clippy::too_many_arguments)]
 fn rollouts<'py>(
     py: Python<'py>,
@@ -979,7 +980,12 @@ fn rollouts<'py>(
     keyed: bool,
     threads: usize,
     max_turns: u32,
+    keyed_worlds: bool,
 ) -> PyResult<Bound<'py, PyDict>> {
+    let keying = Keying {
+        shuffles: keyed,
+        worlds: keyed_worlds,
+    };
     let value = policy_value(model, worlds, budget)?;
     let start = state_from_dict(state)?;
     let lines = lines
@@ -995,7 +1001,7 @@ fn rollouts<'py>(
         budget,
     };
     let found = py
-        .detach(|| regret_rollouts(policy, &start, &lines, &seeds, keyed, threads, max_turns))
+        .detach(|| regret_rollouts(policy, &start, &lines, &seeds, keying, threads, max_turns))
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
     let shape = (lines.len(), seeds.len());
     let winners = found

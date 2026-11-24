@@ -92,15 +92,18 @@ and the changed choices by game phase, with the design's reading.
 champion's own choices lose win chance (see `regret`): `--per-game` turns
 sampled from each of `--games` of `planner:<--model>` (pf01) against itself
 from `--base-seed`, and at each the chosen turn against the planner's next
-best (up to `--candidates`, judged within `--margin` of it), rolled out to
-the end with the champion on both sides, narrowed by sequential halving
-(`--per-round` rollouts an option a round) and the best re-estimated on
-`--fresh` rollouts. It prints each turn as it is read, then the win chance
-lost per game by phase, by judged chance and by the kind of sub-choice the
+best (`--candidates` with the chosen, judged within `--margin` of it) and
+`--per-band` drawn from each band of judged gap past the margin (edges
+`--bands`), rolled out to the end with the champion on both sides,
+narrowed by sequential halving (`--per-round` rollouts an option a round)
+and the best re-estimated on `--fresh` rollouts. It prints each turn as it
+is read, then the win chance lost per game by phase, by judged chance, by
+the judged gap of the best option and by the kind of sub-choice the
 chosen and the best differ in; `--out` writes each turn as CSV. With
 `--pair N` it measures instead, on the same turns: the top two options
-rolled out on N seeds with independent, shared and keyed randomness, and
-the time per rollout.
+rolled out on N seeds with independent, shared and keyed randomness
+(`--keyed-worlds` keys the planners' worlds in the run too), and the time
+per rollout.
 
 `python -m minimax_games.games.star_realms settle-worlds` settles whether
 more sampled worlds make the champion stronger (see `more_worlds`): an
@@ -979,11 +982,25 @@ def regretting(argv: list[str]) -> None:
     parser.add_argument(
         "--model", default="pf01", help="the committed model (default: %(default)s)"
     )
-    option("--games", 50, "the champion's games against itself to sample turns from")
+    option("--games", 40, "the champion's games against itself to sample turns from")
     option("--base-seed", regret.SEEDS, "the first game's seed")
     option("--per-game", 2, "turns sampled from each game")
-    option("--candidates", regret.CANDIDATES, "the most options rolled out a turn")
-    option("--margin", regret.MARGIN, "options judged within this of the chosen", float)
+    option("--candidates", regret.CANDIDATES, "the chosen and its nearest options")
+    option(
+        "--margin",
+        regret.MARGIN,
+        "near options: judged within this of the chosen",
+        float,
+    )
+    parser.add_argument(
+        "--bands",
+        default=",".join(str(b) for b in regret.BANDS_BEYOND),
+        help="the edges of judged gap past the margin, comma-separated, which"
+        " options are drawn from (default: %(default)s)",
+    )
+    option(
+        "--per-band", regret.PER_BAND, "options drawn from each band past the margin"
+    )
     option("--per-round", budget.per_round, "rollouts per option per halving round")
     option("--fresh", budget.fresh, "fresh rollouts of the best and the chosen")
     option("--worlds", planner.WORLDS, "the planner's worlds, choosing and rolling out")
@@ -1000,6 +1017,11 @@ def regretting(argv: list[str]) -> None:
         action="store_true",
         help="roll out with the engine's shuffles, not keyed ones",
     )
+    parser.add_argument(
+        "--keyed-worlds",
+        action="store_true",
+        help="key the rollout planners' sampled worlds by the rollout's seed",
+    )
     parser.add_argument("--out", type=Path, help="write each turn's reading as CSV")
     args = parser.parse_args(argv)
     model = value.load(args.model)
@@ -1009,6 +1031,7 @@ def regretting(argv: list[str]) -> None:
         rollout_worlds=args.rollout_worlds,
         rollout_budget=args.rollout_budget,
         keyed=not args.engine_shuffles,
+        keyed_worlds=args.keyed_worlds,
         threads=args.threads,
         max_turns=args.max_turns,
     )
@@ -1059,9 +1082,13 @@ def regretting(argv: list[str]) -> None:
         )
 
     budget = regret.Budget(per_round=args.per_round, fresh=args.fresh)
-    turns = regret.read(
-        model, found, settings, budget, args.candidates, args.margin, progress
+    bands = tuple(float(b) for b in args.bands.split(",") if b)
+    strata = regret.Strata(
+        near=args.candidates - 1,
+        edges=(args.margin, *bands),
+        per_band=args.per_band,
     )
+    turns = regret.read(model, found, settings, budget, strata, progress)
     run = regret.Run(turns, game_turns)
     if args.out is not None:
         regret.write(run, args.out)

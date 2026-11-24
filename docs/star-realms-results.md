@@ -2940,6 +2940,98 @@ uv run python -m minimax_games.games.star_realms regret --threads 2 --out runs/r
 - **The instrument's limits, as built**: a rollout player at a quarter of `pf01`'s states (43.5% against it), so the regret is against how a shallower `pf01` plays on; 8 rollouts a round, which tell turns apart only when they differ by about a quarter of a win, so a small regret on one turn goes unseen and only the mean over turns speaks; shared randomness that helps little once the options buy different cards, which is nearly every turn that matters here; and 100 turns from 50 games on a machine shared with other agents' work, where `pf01`'s own settings would have read about 30.
 - **What follows** is in the design (Milestones, 10): the order of Milestone 10's steps, revised from this reading.
 
+### Milestone 10: regret beyond the near ties
+
+- Date: 2026-11-24
+- Commit: this PR (#232; on `ca945ef`): the shortlist widened past the near ties by judged gap (`regret.Strata`, `regret.widened`), the loss reported by the judged gap of the best option, rollouts at `pf01`'s own settings by default, and keyed planner worlds as an option (`--keyed-worlds`, `PlannerBot::with_keyed_worlds`).
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0. 4 threads throughout, with other sessions still running: load average 3.6-4.7 before each measurement and 5.4-7.5 during them (the 4 threads here included), against 8-26 in #229. The times are the machine's on 4 threads with about 3-4 cores busy elsewhere, not an idle machine's.
+- Seeds: clear of every earlier range (#229's ended at 24,100,049). The cost measurement 24,000,000-24,000,005 (the same turns as #229's); the shared-randomness measurement 24,200,000-24,200,009; the run's games 24,300,000-24,300,039.
+
+**What it is for.** The same instrument as #229 (not a hypothesis's test: it orders Milestone 10's experiments), with its blind spot narrowed: #229 rolled out only the turns `pf01`'s judgement ranks within 0.1 of its choice, and an idea the judgement lacks entirely (denial, same-function synergy) would put a better turn further down. Here each sampled turn's options are the chosen, its nearest alternative within 0.1, and one turn end drawn at random from each band of judged gap further down (0.1-0.3, beyond 0.3), rolled out with `pf01` on both sides at its own settings.
+
+#### Measured first: the cost of a rollout, and how much shared randomness helps
+
+```sh
+uv run python docs/regret/cost.py 4 4:20000 4:5000     # and 4 4:10000 4:20000
+uv run python -m minimax_games.games.star_realms regret --games 10 --per-game 1 --pair 16 --threads 4 --base-seed 24200000
+```
+
+| Rollout player (`pf01`'s judgement) | ms per rollout, 4 threads | Load (1 min) | Against `pf01` as it plays |
+|---|---|---|---|
+| 4 worlds, 20,000 states (`pf01` itself) | 519, 575 | 4.7, 6.8 | 50% by construction |
+| 4 worlds, 10,000 states | 395 | 6.8 | not measured |
+| 4 worlds, 5,000 states | 213 | 4.7 | 43.5% (#229) |
+
+(From the same 6 decisions as #229's, about 14 turns of the game left; 48 rollouts a setting.) **At `pf01`'s own settings a rollout costs about half a second on 4 threads**, half #229's contended second on 2, and a run of 40 minutes reads about 80 turns. Halving the states saves only a third of the cost (the plans are a fixed share of a rollout's time, the engine and the rest of the game the rest), so no cheaper setting that might play `pf01` level would buy many more turns, and **the run rolls out at `pf01`'s own settings**: the regret is against how `pf01` itself plays the rest of the game, which undoes #229's departure. The pairing run below measured 480 ms a rollout over 1,120 rollouts at load 5.4-7.5, the same.
+
+**Keying the planners' worlds doesn't narrow the paired difference.** The top two turns by `pf01`'s judgement at 10 sampled decisions, rolled out on 16 seeds four ways (#229's three, and shared seeds with keyed shuffles and each rollout planner's worlds reseeded at every plan from the rollout's seed, its seat, the turn and the plan's number within the turn):
+
+| Decisions | Count | Independent | Engine shuffles | Keyed shuffles | Keyed worlds | Keyed shuffles / independent | Keyed worlds / independent |
+|---|---|---|---|---|---|---|---|
+| The two buy differently | 8 | 0.367 | 0.266 | 0.242 | 0.250 | 0.66 | 0.68 |
+| The two buy alike | 2 | 0.062 | 0.031 | 0.000 | 0.031 | 0.00 | 0.50 |
+| All | 10 | 0.306 | 0.219 | 0.194 | 0.206 | 0.63 | 0.67 |
+
+Where the two turns buy differently, keyed worlds leave the variance where keyed shuffles put it (0.25 against 0.24; #229 measured 0.24 against 0.32 independent at a quarter of the states). Reseeding the planners' rngs aligns which random numbers each plan draws, but not what they are drawn over: once the two games hold a different card, every pile the planners sample from differs, and the worlds differ anyway. So the run leaves the planners' worlds unkeyed, and the sizing can't count on sharing for the turns that buy. What would narrow it is sampling worlds by card identity, as keyed shuffles order reshuffles; that is a change to every planner's sampling, not just the rollouts', and isn't worth it for an instrument this result doesn't need it for.
+
+**The sizing, and why.** With a paired variance of about 0.25 a rollout, 8 rollouts a round tell apart turns about a quarter of a win apart and 16 fresh give a turn's regret an error of about 0.12, as in #229; the mean over turns is what is read. At most 4 options a turn (the chosen, 1 near, 1 from 0.1-0.3, 1 beyond 0.3) cost 48 rollouts to screen and 32 more to re-estimate when the chosen isn't kept, about 60 a turn: 80 turns, 2 from each of 40 games, in about 40 minutes. #229's second near option is dropped for the two further down: #229 read the near ties on 100 turns and found nothing there, and one near option keeps that band in the breakdown by judged gap.
+
+#### The run
+
+```sh
+uv run python -m minimax_games.games.star_realms regret --threads 4 --out runs/regret-232/turns.csv
+uv run python docs/regret/bands.py 40 24300000    # which bands the options came from
+```
+
+(`--model pf01`, `--games 40`, `--per-game 2`, `--base-seed 24300000`, `--candidates 2`, `--margin 0.1`, `--bands 0.3`, `--per-band 1`, `--per-round 8`, `--fresh 16`, `--worlds 4 --budget 20000` for the games, the choice and the rollouts, keyed shuffles, planner worlds unkeyed, are the defaults.) 40 games of `pf01` against itself, every one finished (11.5 turns per player a game); 2 turns drawn from each, 80 in all. **22 minutes** wall (1,333 s, of which the games took 29 s) on 4 threads, 3,216 rollouts, about 0.41 s each; load average (1 min) 4.0 at the start and 4.7 at the end, with the 5- and 15-minute averages at 7.7 and 8.1 by the end, so other sessions kept about 3-4 cores busy throughout.
+
+- **Left out, one sensible end: 5 turns** (the chosen wins in every world, or it is the only candidate). The other 75 were measured: 137 options besides the chosen, **73 within 0.1 of it, 48 from 0.1-0.3 and 16 from beyond 0.3** (the shortlist holds a median of 14 candidates, up to 485; beyond 0.3 is empty unless the chosen is judged above 0.3 and some turn is judged that far below it).
+- **The halving kept the chosen turn on 52 of 75** (69%, as #229's 71%). Of the 23 where another came out best, **21 were the near option** (within 0.1), **2 were from 0.1-0.3, and none from beyond 0.3**: of 64 options drawn from further down, the rollouts preferred one to the chosen twice in the screen, and on fresh rollouts one of those two was worth +0.19 and the other 0.00.
+- **On the 23 turns where the halving picked another turn**, the fresh rollouts put it at +0.005 a turn on average (8 above zero, 3 at zero, 12 below): the chosen turn and the halving's pick are worth the same.
+
+**Win chance lost per game by one player: +0.016** (standard error 0.074 counted by game; 95% −0.128 to +0.161); per turn +0.0014. A lower bound on what a better choice among the options could gain, consistent with zero and with #229's −0.140 ± 0.076 against the near ties at a quarter of the states (the two differ by 1.5 standard errors).
+
+| Game phase | Turns | Left out | Best not chosen | Mean regret then | Loss per game | se |
+|---|---|---|---|---|---|---|
+| turns 1-6 | 26 | 0 | 9 | −0.076 | −0.097 | 0.035 |
+| turns 7-12 | 23 | 0 | 11 | +0.040 | +0.063 | 0.061 |
+| turns 13-18 | 20 | 1 | 2 | +0.125 | +0.040 | 0.032 |
+| turns 19-24 | 10 | 3 | 1 | +0.062 | +0.010 | 0.010 |
+| turns 25+ | 1 | 1 | 0 | | 0.000 | 0.000 |
+
+| Judged chance of the chosen turn | Turns | Left out | Best not chosen | Mean regret then | Loss per game | se |
+|---|---|---|---|---|---|---|
+| 0.0-0.2 | 13 | 0 | 2 | +0.094 | +0.023 | 0.016 |
+| 0.2-0.4 | 16 | 1 | 6 | +0.042 | +0.048 | 0.048 |
+| 0.4-0.6 | 27 | 0 | 8 | −0.016 | −0.019 | 0.048 |
+| 0.6-0.8 | 16 | 1 | 6 | −0.042 | −0.036 | 0.038 |
+| 0.8-1.0 | 8 | 3 | 1 | 0.000 | 0.000 | 0.000 |
+
+| Judged gap of the best option | Turns | Options rolled out from there | Best there | Mean regret then | Loss per game | se |
+|---|---|---|---|---|---|---|
+| the chosen | 57 | | | | 0.000 | 0.000 |
+| within 0.1 | 21 | 73 | 21 | −0.006 | −0.008 | 0.069 |
+| 0.1-0.3 | 2 | 48 | 2 | +0.094 | +0.025 | 0.025 |
+| beyond 0.3 | 0 | 16 | 0 | | 0.000 | 0.000 |
+
+| Kind of sub-choice the chosen and the best differ in | Best not chosen | Mean regret then | Loss per game | se |
+|---|---|---|---|---|
+| buy | 15 | −0.021 | −0.036 | 0.060 |
+| mixed | 6 | +0.083 | +0.069 | 0.044 |
+| Trade Row scrap | 1 | −0.062 | −0.007 | 0.007 |
+| other | 1 | −0.062 | −0.010 | 0.010 |
+| attack, "or" choice, order only | 0 | | 0.000 | |
+
+(The phase's −0.097 ± 0.035 in turns 1-6 is the optimizer's curse showing through, as in #229: early alternatives that won the screen by chance were worse on fresh rollouts; it is a lower bound, not a gain from the chosen.) The two turns from 0.1-0.3 that won the screen: turn 7 of game 30, where the chosen plays Survey Ship (a draw, so the line stops there) and the best buys Embassy Yacht first (+0.19); and turn 11 of game 25, judged 0.89, where the chosen buys Imperial Frigate and the best attacks the player (0.00). The six mixed turns are small and split: three where one turn plays a card that draws or reveals (Survey Ship, Corvette, two Scouts and a base attack) and the other buys or scraps first (+0.19, +0.06, +0.19), and three that trade a buy for an attack or a different buy (−0.06, +0.00, +0.13).
+
+#### Reading it
+
+- **`pf01` loses no measurable win chance to the turns its judgement ranks further down either.** Of 64 turn ends drawn from 0.1-0.3 and beyond 0.3 below its choice, rolled out to the end with `pf01` itself on both sides, two beat the chosen turn in the screen and one held up on fresh rollouts; none from beyond 0.3 did. The loss per game, +0.016 ± 0.074, is consistent with zero, and no phase, band of judged chance, judged gap or kind of sub-choice is more than 1.6 standard errors above zero (the largest, mixed turns, +0.069 ± 0.044 on 6 turns).
+- **The judgement's ranking holds well below its choice.** Turns it ranks 0.1-0.3 below its choice lose the screen (to the chosen or the near option) on 46 of 48 draws, and beyond 0.3 on all 16, so a judgement missing an idea doesn't show up as good turns it ranks low: where it lacks denial or the worth of a second card that draws or scraps, the turns it ranks low are, played out by `pf01`, no better than the one it chose.
+- **Which kind loses the most: none measurably.** Buys are where the alternatives lie (15 of the 23 picks, 19 of 23 with a buy among what differs), and the chosen buy holds up (−0.036 ± 0.060). The six mixed turns are the only part above zero, and half of them are whether to play a card that draws before buying, a choice the planner makes at its first chance event (Search, whole-turn planner); on 6 turns that is a lead for a later reading, not a loss.
+- **The instrument's blind spots, as run**: one option drawn at random from each band further down, so a single misranked turn among a band of dozens is rarely the one drawn (the reading says the bands' typical turns are worse, not that every one is); 8 rollouts a round, which tell turns apart only about a quarter of a win apart, so a small regret on one turn goes unseen and only the mean over turns speaks, and its error (±0.074 a game) still allows a loss of up to about 0.16 a game; shared randomness that helps little once the options buy different cards (keyed planner worlds don't change that); and, the blind spot no self-play rollout can narrow, an error `pf01` makes in every continuation, which cancels out of every comparison here.
+- **What follows** is in the design (Milestones, 10): with no loss found against the near ties or further down, the judgement's choices aren't where `pf01` is limited, and the next question is what every continuation shares, which only games against opponents unlike itself expose.
+
 ## Milestone 7: Rust tracer bullet (toolchain and first-slice engine)
 
 2026-10-21, #137 (tracked by #127), CPython 3.14, Apple M1 (8 GB) shared with three other agents' builds and tests. The first end-to-end path through Rust: maturin builds `minimax_games._native` from `rust/`, and its Star Realms engine plays the starter decks and the 30-card first slice (design, Compiled engine).

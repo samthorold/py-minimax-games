@@ -6,7 +6,8 @@
 //!
 //! A rollout is fixed by its seed: the world (`sample_world` from the
 //! mover's view, with an rng seeded from it), each seat's planner's seed,
-//! and, if asked for, the base of keyed shuffles (`state::Keyed`). Every
+//! and, if asked for, the base of keyed shuffles (`state::Keyed`) and the
+//! key of each planner's sampled worlds (`Keying`). Every
 //! option rolled out with the same seed gets the same world and the same
 //! future randomness, as far as the options leave it the same: common random
 //! numbers.
@@ -62,19 +63,29 @@ pub fn world(start: &GameState, seed: u64, keyed: bool) -> GameState {
     state
 }
 
+/// Which of a rollout's randomness is keyed, beyond its seed: the
+/// reshuffles (`state::Keyed`) and the planners' sampled worlds
+/// (`PlannerBot::with_keyed_worlds`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Keying {
+    pub shuffles: bool,
+    pub worlds: bool,
+}
+
 /// `line` played from `start` in the world of `seed`, then the game played
-/// out by `policy` on both sides, each seat's planner seeded from `seed`,
-/// stopping unfinished past `max_turns`. An error if the line isn't legal
-/// in that world (a line that goes past a chance event).
+/// out by `policy` on both sides, each seat's planner seeded from `seed`
+/// (its worlds keyed by it if `keying.worlds`), stopping unfinished past
+/// `max_turns`. An error if the line isn't legal in that world (a line
+/// that goes past a chance event).
 pub fn rollout(
     policy: Policy<'_>,
     start: &GameState,
     line: &[Action],
     seed: u64,
-    keyed: bool,
+    keying: Keying,
     max_turns: u32,
 ) -> Result<Rollout, IllegalAction> {
-    let mut state = world(start, seed, keyed);
+    let mut state = world(start, seed, keying.shuffles);
     for &action in line {
         if winner(&state).is_some() {
             break;
@@ -82,7 +93,9 @@ pub fn rollout(
         state = advance(&state, action)?;
     }
     let mut bots = [1, 2].map(|seat: u64| {
-        PlannerBot::new(policy.value, policy.worlds, policy.budget, mix(seed ^ seat))
+        let key = mix(seed ^ seat);
+        PlannerBot::new(policy.value, policy.worlds, policy.budget, key)
+            .with_keyed_worlds(keying.worlds.then_some(key))
     });
     while winner(&state).is_none() && state.turn <= max_turns {
         let actions = legal_actions(&state);
@@ -104,7 +117,7 @@ pub fn rollouts(
     start: &GameState,
     lines: &[Vec<Action>],
     seeds: &[u64],
-    keyed: bool,
+    keying: Keying,
     threads: usize,
     max_turns: u32,
 ) -> Result<Vec<Rollout>, IllegalAction> {
@@ -122,7 +135,7 @@ pub fn rollouts(
                         let Some(&(line, seed)) = jobs.get(i) else {
                             return done;
                         };
-                        let found = rollout(policy, start, &lines[line], seed, keyed, max_turns);
+                        let found = rollout(policy, start, &lines[line], seed, keying, max_turns);
                         done.push((i, found));
                     }
                 })
