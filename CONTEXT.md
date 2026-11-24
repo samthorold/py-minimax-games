@@ -45,7 +45,7 @@ _Avoid_: belief, claim
 What result of a **hypothesis**'s test supports it, what refutes it, and what is too close to call (undecided) given the instrument's error, declared with the hypothesis before the test is read.
 
 **Register**:
-The status of every **hypothesis** (untested, supported or refuted) as of today's **champion**, with the reading behind it and when it is next due for review. A reading of today's player, not a verdict: a test stays whatever its status.
+The status of every **hypothesis** (untested, supported or refuted) as of today's **champion**, with the reading behind it and whether a change has made it due to be read again. A reading of today's player, not a verdict: a test stays whatever its status.
 
 **End state**:
 The player the work moves towards, described by what it knows and does and the **hypotheses** behind them, never by how it is built.
