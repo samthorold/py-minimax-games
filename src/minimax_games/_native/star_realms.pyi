@@ -80,12 +80,14 @@ def rollouts(
     keyed: bool = False,
     threads: int = 1,
     max_turns: int = 300,
+    keyed_worlds: bool = False,
 ) -> dict[str, np.ndarray]:
     """The regret instrument's rollouts: every line of `lines` played from
     `state` (the mover to move) in the world of every seed of `seeds`
     (sampled from the mover's view), then played out by the planner with
     `model` (`selfplay.native_model`) on both sides at `worlds` worlds and
-    `budget` states, with keyed shuffles if `keyed`, on `threads` threads,
+    `budget` states, with keyed shuffles if `keyed` and the planners'
+    worlds keyed by the seed if `keyed_worlds`, on `threads` threads,
     each stopping unfinished past `max_turns`: `winner` (int64, a row per
     line and a column per seed, -1 if unfinished) and `turns`. Raises
     `ValueError` if a line isn't legal in a seed's world."""

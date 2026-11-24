@@ -32,7 +32,7 @@ use rustc_hash::{FxHashMap, FxHasher};
 use super::bots::greedy_move;
 use super::card::Card;
 use super::features;
-use super::rng::Random;
+use super::rng::{Random, mix};
 use super::rules::{Action, advance_legal, apply_legal, auto_play, legal_actions, winner};
 use super::state::{GameState, PlayerState, capacity};
 use super::value::{SPAN, Value, WIN};
@@ -1120,6 +1120,8 @@ pub struct PlannerBot<'a> {
     budget: usize,
     replies: Option<Replies>,
     rng: Random,
+    keyed: Option<u64>,
+    plans_this_turn: u64,
     turn: Option<u32>,
     line: VecDeque<(View, Action)>,
     pub plans: u64,
@@ -1140,6 +1142,8 @@ impl<'a> PlannerBot<'a> {
             budget,
             replies: None,
             rng: Random::new(seed),
+            keyed: None,
+            plans_this_turn: 0,
             turn: None,
             line: VecDeque::new(),
             plans: 0,
@@ -1165,12 +1169,25 @@ impl<'a> PlannerBot<'a> {
         self
     }
 
+    /// The bot with keyed worlds, or not if `None`: each plan's worlds
+    /// (and replies' sub-worlds) drawn from an rng seeded by `key`, the
+    /// turn and how many plans the bot has made this turn, not from one
+    /// stream that every earlier plan advanced. Two games the bot plays
+    /// with the same key then sample from the same rng at the same plan of
+    /// the same turn, however their histories differ (docs/star-realms.md,
+    /// Learned values: regret by kind of decision; rollouts only).
+    pub fn with_keyed_worlds(mut self, key: Option<u64>) -> Self {
+        self.keyed = key;
+        self
+    }
+
     /// The bot's move from `view`, among the legal `actions`
     /// (`PlannerBot.choose`).
     pub fn choose(&mut self, view: &View, actions: &[Action]) -> Action {
         if self.turn != Some(view.turn) {
             self.turn = Some(view.turn);
             self.turns += 1;
+            self.plans_this_turn = 0;
             self.line.clear();
         }
         if let Some((expected, _)) = self.line.front()
@@ -1180,6 +1197,11 @@ impl<'a> PlannerBot<'a> {
             self.line.clear();
         }
         if self.line.is_empty() {
+            if let Some(key) = self.keyed {
+                let at = (u64::from(view.turn) << 16) | self.plans_this_turn;
+                self.rng = Random::new(mix(key ^ mix(at)));
+            }
+            self.plans_this_turn += 1;
             let worlds: Vec<GameState> = (0..self.worlds)
                 .map(|_| sample_world(view, &mut self.rng))
                 .collect();
@@ -1252,6 +1274,53 @@ mod tests {
             Form::Logistic { w, b: 0.0 },
         )
         .unwrap()
+    }
+
+    /// The turn `bot` plays from `start`, to its end, and what its plans
+    /// noted (the opponent's replies it looked through, in the worlds it
+    /// sampled).
+    fn turn_played(bot: &mut PlannerBot<'_>, start: &GameState) -> (Vec<Action>, Vec<Note>) {
+        let mut state = start.clone();
+        let mover = state.current;
+        let mut line = Vec::new();
+        let before = bot.noted.len();
+        while winner(&state).is_none() && state.current == mover {
+            let action = bot.choose(&observe(&state, mover), &legal_actions(&state));
+            apply_legal(&mut state, action);
+            auto_play(&mut state);
+            line.push(action);
+        }
+        let notes = bot.noted[before..].iter().map(|&(_, _, n)| n).collect();
+        (line, notes)
+    }
+
+    #[test]
+    fn a_bot_with_keyed_worlds_plans_a_turn_the_same_whatever_it_planned_before() {
+        let value = small_value();
+        let replies = Some(Replies {
+            candidates: 3,
+            worlds: 2,
+            budget: 200,
+        });
+        let bot = |key| {
+            PlannerBot::new(&value, 2, 600, 7)
+                .with_replies(replies)
+                .with_keyed_worlds(key)
+        };
+        let starts: Vec<GameState> = sampled(1).into_iter().map(|w| w[0].clone()).collect();
+        let earlier = &starts[0];
+        let (mut keyed_differ, mut unkeyed_differ) = (0, 0);
+        for start in starts[1..].iter().filter(|s| s.turn != earlier.turn) {
+            for (key, differ) in [(Some(11), &mut keyed_differ), (None, &mut unkeyed_differ)] {
+                let fresh = turn_played(&mut bot(key), start);
+                let mut used = bot(key);
+                turn_played(&mut used, earlier);
+                *differ += usize::from(turn_played(&mut used, start) != fresh);
+            }
+        }
+        assert_eq!(keyed_differ, 0);
+        // without keys the worlds follow the bot's history, and so its plans
+        assert!(unkeyed_differ > 0);
     }
 
     /// Positions from the planner's side, a few turns into seeded games,

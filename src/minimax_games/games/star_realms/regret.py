@@ -7,18 +7,21 @@ A decision is the start of one of the champion's turns, a true state with
 the champion to move, sampled from its games against itself (`decisions`).
 Its options are the planner's candidates (a line of decisions to the turn's
 end or its first chance event, after which the champion plays on), one per
-distinct turn end (`shortlist`): the one the champion chooses and the next
-best by its judgement, within a margin of it (`sensible`). Each option is
+distinct turn end (`shortlist`): the one the champion chooses, the next
+best by its judgement within a margin of it, and a few drawn from further
+down its ranking by judged gap (`Strata`, `widened`, #232). Each option is
 rolled out from worlds sampled from the mover's view (`roll`; the Rust
 engine plays them), every option on the same seeds, so on the same worlds
 and, as far as the options leave it the same, the same future randomness
-(keyed shuffles, `Settings.keyed`). Sequential halving narrows the options
-to the best, which is re-estimated against the chosen on fresh rollouts
+(keyed shuffles, `Settings.keyed`, and optionally keyed planner worlds,
+`Settings.keyed_worlds`). Sequential halving narrows the options to the
+best, which is re-estimated against the chosen on fresh rollouts
 (`measure`); the regret is the difference. `Run.loss` turns the sampled
 turns into win chance lost per game, and `report` breaks it down by phase,
-by how decided the position was and by the kind of sub-choice that differs
-(`differ`, `group`). `pairing` measures the cost of a rollout and how much
-shared randomness narrows a paired difference, before a run is sized.
+by how decided the position was, by the judged gap of the best option and
+by the kind of sub-choice that differs (`differ`, `group`). `pairing`
+measures the cost of a rollout and how much shared randomness narrows a
+paired difference, before a run is sized.
 """
 
 import csv
@@ -47,26 +50,36 @@ type Line = Sequence[tuple[Any, ...]]
 MAX_TURNS = 300
 """A rollout past it stops unfinished, and counts as half a win."""
 
-SEEDS = 24_100_000
-"""The run's first game seed: clear of every earlier range (the highest
-before, #225's denial probes, ends at 23,000,199; the measurements before
-the run use 24,000,000 up)."""
+SEEDS = 24_300_000
+"""The run's first game seed: clear of every earlier range (#229's run used
+24,100,000-24,100,049 and its measurements 24,000,000-24,050,099; #232's
+measurements before its run use 24,200,000 up)."""
 
 ROLLOUT_WORLDS = WORLDS
 """The planner's worlds in the run's rollouts: the champion's own 4."""
 
-ROLLOUT_BUDGET = 5_000
-"""The planner's states per plan in the run's rollouts: a quarter of the
-champion's, which costs about a quarter as much per rollout and plays it
-43.5% (results, Milestone 10: regret by kind of decision), where its own
-settings would leave a run of minutes a few dozen turns."""
+ROLLOUT_BUDGET = BUDGET
+"""The planner's states per plan in the run's rollouts: the champion's own
+20,000 (#232). #229 rolled out at 5,000, which plays the champion 43.5%;
+on a quiet machine on 4 threads the champion's own settings cost about
+0.55 s a rollout, and 10,000 states would save only a third of that
+(results, Milestone 10: regret beyond the near ties)."""
 
-CANDIDATES = 3
-"""The most options rolled out at a turn: the chosen and the next 2."""
+CANDIDATES = 2
+"""The chosen and its nearest options: the chosen and the next 1 within
+`MARGIN` (#229 rolled out the next 2, and found no loss among them on 100
+turns; #232 spends the third option's rollouts further down)."""
 
 MARGIN = 0.1
-"""Options judged more than this below the chosen aren't rolled out; a turn
-left with only the chosen has one sensible end."""
+"""The near options: judged within this of the chosen, the nearest
+`CANDIDATES - 1` rolled out."""
+
+BANDS_BEYOND = (0.3,)
+"""The edges of judged gap past `MARGIN`: options are drawn from 0.1-0.3
+and beyond 0.3 (`Strata`)."""
+
+PER_BAND = 1
+"""Options drawn at random from each band past `MARGIN`."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,14 +88,16 @@ class Settings:
     planner at `worlds` worlds and `budget` states per plan), and how
     rollouts are played: the same planner on both sides at `rollout_worlds`
     and `rollout_budget` (the champion's own settings if None), keyed
-    shuffles or the engine's, on `threads` threads, stopping unfinished
-    past `max_turns`."""
+    shuffles or the engine's, the planners' sampled worlds keyed by the
+    rollout's seed or drawn from one stream each (`keyed_worlds`), on
+    `threads` threads, stopping unfinished past `max_turns`."""
 
     worlds: int = WORLDS
     budget: int = BUDGET
     rollout_worlds: int | None = None
     rollout_budget: int | None = None
     keyed: bool = True
+    keyed_worlds: bool = False
     threads: int = 1
     max_turns: int = MAX_TURNS
 
@@ -315,15 +330,34 @@ def decisions(
     return found, game_turns
 
 
-def sensible(options: Sequence[Option], candidates: int, margin: float) -> list[Option]:
-    """The options worth rolling out at a decision: the first `candidates`
-    by the judgement (the chosen first) judged within `margin` of the
-    chosen. Only the chosen if it wins (judged 1): a turn with one sensible
-    end."""
-    chosen = options[0]
+@dataclass(frozen=True, slots=True)
+class Strata:
+    """Which options are rolled out at a decision, by their judged gap (the
+    chosen option's judged chance less theirs): the `near` nearest within
+    `edges[0]` of the chosen, then `per_band` drawn at random from each band
+    between consecutive edges and beyond the last."""
+
+    near: int = CANDIDATES - 1
+    edges: tuple[float, ...] = (MARGIN, *BANDS_BEYOND)
+    per_band: int = PER_BAND
+
+
+def widened(
+    options: Sequence[Option], strata: Strata, rng: random.Random
+) -> list[Option]:
+    """The options worth rolling out at a decision (`Strata`), in the
+    judgement's order, the chosen first: so a turn the judgement ranks well
+    below its choice can still reach the rollouts. Only the chosen if it
+    wins (judged 1)."""
+    chosen, *rest = options
     if chosen.judged >= 1.0:
         return [chosen]
-    return [o for o in options[:candidates] if o.judged >= chosen.judged - margin]
+    gaps = [chosen.judged - o.judged for o in rest]
+    picked = [i for i, g in enumerate(gaps) if g <= strata.edges[0]][: strata.near]
+    for low, high in itertools.pairwise((*strata.edges, math.inf)):
+        band = [i for i, g in enumerate(gaps) if low < g <= high]
+        picked += rng.sample(band, min(strata.per_band, len(band)))
+    return [chosen, *(rest[i] for i in sorted(picked))]
 
 
 @dataclass(frozen=True, slots=True)
@@ -333,7 +367,8 @@ class Turn:
     how many `options` were rolled out (1 if the turn was left out, having
     one sensible end), its `regret` (0 if left out) and, if the best
     wasn't the chosen, the `group` of sub-choices they differ in and the
-    `detail` of the decisions that differ; and the `rollouts` it took."""
+    `detail` of the decisions that differ and its judged `gap` (the
+    chosen's judged chance less the best's); and the `rollouts` it took."""
 
     game: int
     turn: int
@@ -344,6 +379,7 @@ class Turn:
     group: str | None
     rollouts: int = 0
     detail: str = ""
+    gap: float | None = None
 
 
 def _name(action: tuple[Any, ...]) -> str:
@@ -388,10 +424,11 @@ class Run:
         return float(values.mean()), se
 
 
-MODES = ("independent", "engine shuffles", "keyed shuffles")
+MODES = ("independent", "engine shuffles", "keyed shuffles", "keyed worlds")
 """How two options' rollouts share randomness in `pairing`: not at all
-(each its own seeds), the same seeds with the engine's shuffles, or the
-same seeds with keyed shuffles (`Settings.keyed`)."""
+(each its own seeds), the same seeds with the engine's shuffles, the same
+seeds with keyed shuffles (`Settings.keyed`), or the same seeds with keyed
+shuffles and the planners' worlds keyed too (`Settings.keyed_worlds`)."""
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -421,12 +458,14 @@ def pairing(
     """The first two of `options` rolled out on `seeds` in each of `MODES`
     (the independent mode's second option on seeds past them)."""
     lines = [options[0].line, options[1].line]
-    engine = replace(settings, keyed=False)
-    keyed = replace(settings, keyed=True)
+    engine = replace(settings, keyed=False, keyed_worlds=False)
+    keyed = replace(settings, keyed=True, keyed_worlds=False)
+    worlds = replace(settings, keyed=True, keyed_worlds=True)
     start = time.perf_counter()
     won = {
         "engine shuffles": roll(model, state, lines, seeds, engine).won,
         "keyed shuffles": roll(model, state, lines, seeds, keyed).won,
+        "keyed worlds": roll(model, state, lines, seeds, worlds).won,
     }
     offset = max(seeds) + 1 - min(seeds)
     won["independent"] = np.stack(
@@ -435,16 +474,17 @@ def pairing(
             roll(model, state, lines[1:], [s + offset for s in seeds], engine).won[0],
         ]
     )
-    return Pairing(won, time.perf_counter() - start, 5 * len(seeds))
+    return Pairing(won, time.perf_counter() - start, 7 * len(seeds))
 
 
 def pairing_report(pairs: Sequence[tuple[bool, Pairing]]) -> list[str]:
     """The measurements before a run, as plain-text lines: for decisions
     whose two options buy differently (`True`) or alike, and all, each
     mode's mean share of discordant seeds (the variance of a paired
-    difference) and its ratio to the independent mode's; and the time per
-    rollout."""
-    rows = [("Decisions", "Count", *MODES, "keyed / independent")]
+    difference) and the keyed modes' ratios to the independent mode's; and
+    the time per rollout."""
+    keyed = ("keyed shuffles", "keyed worlds")
+    rows = [("Decisions", "Count", *MODES, *(f"{m} / independent" for m in keyed))]
     for name, keep in (
         ("buy differently", lambda b: b),
         ("buy alike", lambda b: not b),
@@ -452,16 +492,20 @@ def pairing_report(pairs: Sequence[tuple[bool, Pairing]]) -> list[str]:
     ):
         here = [p for b, p in pairs if keep(b)]
         if not here:
-            rows.append((name, "0", *["-"] * (len(MODES) + 1)))
+            rows.append((name, "0", *["-"] * (len(MODES) + len(keyed))))
             continue
         means = {m: float(np.mean([p.discordant(m) for p in here])) for m in MODES}
-        ratio = (
-            means["keyed shuffles"] / means["independent"]
-            if means["independent"]
-            else math.nan
-        )
+        ratios = [
+            means[m] / means["independent"] if means["independent"] else math.nan
+            for m in keyed
+        ]
         rows.append(
-            (name, str(len(here)), *[f"{means[m]:.3f}" for m in MODES], f"{ratio:.2f}")
+            (
+                name,
+                str(len(here)),
+                *[f"{means[m]:.3f}" for m in MODES],
+                *[f"{r:.2f}" for r in ratios],
+            )
         )
     seconds = sum(p.seconds for _, p in pairs)
     rollouts = sum(p.rollouts for _, p in pairs)
@@ -487,19 +531,18 @@ def read(
     found: Sequence[Decision],
     settings: Settings,
     budget: Budget,
-    candidates: int,
-    margin: float,
+    strata: Strata,
     progress: Callable[[int, Turn], None] | None = None,
 ) -> list[Turn]:
     """Each decision's regret: the planner's candidates there (`shortlist`,
-    from the decision's seed), the sensible ones (`sensible`) measured
-    (`measure`), a turn with one left out at no regret. `progress` is told
-    each turn as it is read."""
+    from the decision's seed), those `strata` picks (`widened`, drawn from
+    the decision's seed) measured (`measure`), a turn with one left out at
+    no regret. `progress` is told each turn as it is read."""
     turns = []
     for i, d in enumerate(found):
         seed = decision_seed(d)
-        options = sensible(
-            shortlist(model, d.state, settings, seed), candidates, margin
+        options = widened(
+            shortlist(model, d.state, settings, seed), strata, random.Random(seed)
         )
         judged = options[0].judged
         if len(options) == 1:
@@ -525,6 +568,7 @@ def read(
                 detail=""
                 if best == 0
                 else _detail(options[0].line, options[best].line),
+                gap=None if best == 0 else judged - options[best].judged,
             )
         turns.append(turn)
         if progress is not None:
@@ -548,6 +592,7 @@ def write(run: Run, path: Path) -> None:
                 "regret",
                 "group",
                 "rollouts",
+                "gap",
                 "detail",
             ]
         )
@@ -563,10 +608,14 @@ def write(run: Run, path: Path) -> None:
                     f"{t.regret:.6f}",
                     t.group or "",
                     t.rollouts,
+                    "" if t.gap is None else f"{t.gap:.6f}",
                     t.detail,
                 ]
             )
 
+
+GAPS = (MARGIN, *BANDS_BEYOND)
+"""Bands of the best option's judged gap below the chosen, in the report."""
 
 BANDS = (0.0, 0.2, 0.4, 0.6, 0.8, math.inf)
 """How decided a position is: bands of the chosen option's judged chance."""
@@ -659,6 +708,18 @@ def report(run: Run) -> list[str]:
     ]
     lines += ["By judged chance (the chosen option's, for the player to move):"]
     lines += [*_breakdown(run, "Judged", bands), ""]
+    edges = (0.0, *GAPS, math.inf)
+    gaps = [("chosen best", lambda t: t.gap is None)] + [
+        (
+            f"{low:.1f}-{high:.1f}" if high < math.inf else f"{low:.1f}+",
+            lambda t, low=low, high=high: (
+                t.gap is not None and (low == 0 or low < t.gap) and t.gap <= high
+            ),
+        )
+        for low, high in itertools.pairwise(edges)
+    ]
+    lines += ["By judged gap of the best option (the chosen's less the best's):"]
+    lines += [*_breakdown(run, "Gap", gaps), ""]
     kinds = [(g, lambda t, g=g: t.group == g) for g in GROUPS]
     lines += ["By kind of sub-choice the chosen and the best differ in:"]
     lines += _breakdown(run, "Kind", kinds)
@@ -684,6 +745,7 @@ def roll(
         settings.keyed,
         settings.threads,
         settings.max_turns,
+        keyed_worlds=settings.keyed_worlds,
     )
     winner = found["winner"]
     mover = state["current"]

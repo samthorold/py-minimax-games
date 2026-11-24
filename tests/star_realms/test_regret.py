@@ -1,4 +1,6 @@
 import csv
+import random
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -177,27 +179,67 @@ def test_the_shortlist_keeps_the_options_judged_near_the_chosen() -> None:
         regret.Option(WIN, 0.40),
         regret.Option(PASS, 0.59),
     ]
-    near = regret.sensible(options, candidates=3, margin=0.1)
+    rng = random.Random(0)
+    near = regret.widened(options, regret.Strata(2, (0.1,), 0), rng)
     assert [o.judged for o in near] == [0.60, 0.55, 0.52]
-    assert regret.sensible(options, candidates=4, margin=0.06) == options[:2]
-    # a win, or nothing near it: one sensible end
-    assert regret.sensible([regret.Option(WIN, 1.0), *options], 4, 0.5) == [
-        regret.Option(WIN, 1.0)
+    assert regret.widened(options, regret.Strata(3, (0.06,), 0), rng) == [
+        options[0],
+        options[1],
+        options[4],
     ]
+    # a win, or nothing near it and nothing drawn further down: one sensible end
+    assert regret.widened(
+        [regret.Option(WIN, 1.0), *options], regret.Strata(3, (0.5,), 0), rng
+    ) == [regret.Option(WIN, 1.0)]
+    assert regret.widened(
+        [options[0], options[3]], regret.Strata(2, (0.1,), 0), rng
+    ) == [options[0]]
+
+
+def test_the_wider_shortlist_draws_options_from_further_down_by_judged_gap() -> None:
+    judged = [0.70, 0.66, 0.64, 0.62, 0.55, 0.50, 0.45, 0.30, 0.20, 0.10]
+    options = [regret.Option(((f"o{i}",),), j) for i, j in enumerate(judged)]
+    strata = regret.Strata(near=2, edges=(0.1, 0.3), per_band=2)
+    picked = regret.widened(options, strata, random.Random(0))
+    gaps = [round(0.70 - o.judged, 2) for o in picked]
+    # the chosen first, the nearest 2 within 0.1, then 2 from 0.1-0.3 and 2
+    # from beyond 0.3, in the judgement's order
+    assert gaps[:3] == [0.0, 0.04, 0.06]
+    assert len(gaps) == 7
+    assert all(0.1 < g <= 0.3 for g in gaps[3:5])
+    assert all(g > 0.3 for g in gaps[5:])
+    assert gaps == sorted(gaps)
+    # drawn at random, but the same for the same rng
+    again = regret.widened(options, strata, random.Random(0))
+    assert again == picked
+    draws = {tuple(regret.widened(options, strata, random.Random(s))) for s in range(9)}
+    assert len(draws) > 1
+    # a band with fewer than its draws gives what it has; a win stands alone
+    sparse = [options[0], options[1], options[9]]
+    assert regret.widened(sparse, strata, random.Random(0)) == sparse
+    assert regret.widened(
+        [regret.Option(WIN, 1.0), *options], strata, random.Random(0)
+    ) == [regret.Option(WIN, 1.0)]
 
 
 def test_reading_a_run_measures_every_sampled_turn(pf01: Any) -> None:
     found, game_turns = regret.decisions(pf01, range(40, 42), SMALL, per_game=3, seed=0)
     budget = regret.Budget(per_round=2, fresh=2)
-    turns = regret.read(pf01, found, SMALL, budget, candidates=3, margin=0.2)
+    strata = regret.Strata(near=2, edges=(0.1, 0.3), per_band=1)
+    turns = regret.read(pf01, found, SMALL, budget, strata)
     assert [(t.game, t.turn) for t in turns] == [(d.game, d.turn) for d in found]
     for t in turns:
-        assert 1 <= t.options <= 3
+        assert 1 <= t.options <= 5
         if t.options == 1:
             assert (t.regret, t.group) == (0.0, None)
+        # the judged gap of the best option, if it wasn't the chosen
+        assert (t.gap is None) == (t.group is None)
+        if t.gap is not None:
+            assert 0 <= t.gap <= t.judged
         assert -1 <= t.regret <= 1
         assert 0 <= t.judged <= 1
-    assert any(t.options > 1 for t in turns)
+    # options from beyond the near ties reach the rollouts
+    assert any(t.options > 3 for t in turns)
     assert all(np.isfinite(regret.Run(turns, game_turns).loss()))
 
 
@@ -205,10 +247,16 @@ def test_pairing_compares_shared_and_independent_randomness(pf01: Any) -> None:
     state = native.Game(5).state()
     same = (regret.Option(PASS, 0.5), regret.Option(PASS, 0.5))
     found = regret.pairing(pf01, state, same, SMALL, range(12))
-    assert set(found.won) == {"independent", "engine shuffles", "keyed shuffles"}
+    assert set(found.won) == {
+        "independent",
+        "engine shuffles",
+        "keyed shuffles",
+        "keyed worlds",
+    }
     # the same option twice: shared randomness makes the two the same game
     assert found.discordant("engine shuffles") == 0.0
     assert found.discordant("keyed shuffles") == 0.0
+    assert found.discordant("keyed worlds") == 0.0
     assert found.discordant("independent") > 0.0
     assert found.seconds > 0
 
@@ -264,6 +312,22 @@ def test_the_report_gives_the_loss_by_phase_decidedness_and_kind() -> None:
     assert "Left out (one sensible end): 1" in text
 
 
+def test_the_report_gives_the_loss_by_the_judged_gap_of_the_best_option() -> None:
+    near = regret.Turn(0, 3, 0, 0.5, 5, 0.1, "buy", gap=0.05)
+    far = regret.Turn(1, 4, 1, 0.5, 5, 0.3, "attack", gap=0.45)
+    run = regret.Run(turns=[near, _turn(0, 8, 0.0), far], game_turns={0: 20, 1: 10})
+    lines = regret.report(run)
+    start = lines.index(
+        "By judged gap of the best option (the chosen's less the best's):"
+    )
+    rows = {line.split()[0]: line for line in lines[start + 2 : start + 6]}
+    assert set(rows) == {"chosen", "0.0-0.1", "0.1-0.3", "0.3+"}
+    # the far turn's loss: 10 turns x 0.3 lost, halved: 1.5 a game, over 2 games
+    assert "+0.7500" in rows["0.3+"]
+    assert "+0.2500" in rows["0.0-0.1"]
+    assert "+0.0000" in rows["0.1-0.3"]
+
+
 def test_the_pairing_report_splits_decisions_by_whether_their_options_buy_alike() -> (
     None
 ):
@@ -271,6 +335,7 @@ def test_the_pairing_report_splits_decisions_by_whether_their_options_buy_alike(
         "independent": np.array([[1, 0, 1, 0], [0, 1, 1, 0]], dtype=float),
         "engine shuffles": np.array([[1, 0, 1, 0], [1, 1, 1, 0]], dtype=float),
         "keyed shuffles": np.array([[1, 0, 1, 0], [1, 0, 1, 0]], dtype=float),
+        "keyed worlds": np.array([[1, 0, 1, 0], [0, 0, 1, 0]], dtype=float),
     }
     pairs = [
         (True, regret.Pairing(won, 1.2, 12)),
@@ -279,9 +344,12 @@ def test_the_pairing_report_splits_decisions_by_whether_their_options_buy_alike(
     text = "\n".join(regret.pairing_report(pairs))
     assert "Options buy differently: 1" in text
     assert "keyed shuffles" in text
-    # discordance 0.5 independent, 0.25 engine, 0 keyed; ms per rollout 83
+    assert "keyed worlds" in text
+    # discordance 0.5 independent, 0.25 engine and keyed worlds, 0 keyed;
+    # ms per rollout 83
     assert "0.500" in text
     assert "0.250" in text
+    assert "0.50" in text  # keyed worlds / independent
     assert "83 ms" in text
 
 
@@ -316,6 +384,24 @@ def test_the_command_reads_a_run_and_writes_each_turn(
     }
 
 
+def test_the_command_rolls_out_options_from_beyond_the_near_ties(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out = tmp_path / "turns.csv"
+    main([
+        "regret", *TINY, "--per-round", "2", "--fresh", "2",
+        "--candidates", "2", "--bands", "0.3", "--per-band", "1", "--keyed-worlds",
+        "--out", str(out),
+    ])  # fmt: skip
+    printed = capsys.readouterr().out
+    assert "By judged gap of the best option" in printed
+    rows = list(csv.DictReader(out.open()))
+    # the chosen, 1 near and 1 from each of 0.1-0.3 and beyond
+    assert max(int(r["options"]) for r in rows) > 2
+    assert all(int(r["options"]) <= 4 for r in rows)
+    assert all((r["gap"] == "") == (r["group"] == "") for r in rows)
+
+
 def test_the_command_measures_pairing_before_a_run(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -325,12 +411,16 @@ def test_the_command_measures_pairing_before_a_run(
     assert "keyed shuffles" in printed
 
 
-@pytest.mark.parametrize("keyed", [True, False])
+@pytest.mark.parametrize(
+    ("keyed", "keyed_worlds"), [(True, False), (False, False), (True, True)]
+)
 def test_options_rolled_out_on_the_same_seeds_share_their_worlds_and_luck(
-    pf01: Any, keyed: bool
+    pf01: Any, keyed: bool, keyed_worlds: bool
 ) -> None:
     state = native.Game(5).state()
-    settings = regret.Settings(worlds=1, budget=200, keyed=keyed, threads=1)
+    settings = regret.Settings(
+        worlds=1, budget=200, keyed=keyed, keyed_worlds=keyed_worlds, threads=1
+    )
     found = regret.roll(pf01, state, [PASS, PASS], range(10), settings)
     # the same option twice: the same world and randomness, the same games
     assert found.won[0].tolist() == found.won[1].tolist()
@@ -342,6 +432,18 @@ def test_options_rolled_out_on_the_same_seeds_share_their_worlds_and_luck(
         state,
         [PASS, PASS],
         range(10),
-        regret.Settings(worlds=1, budget=200, keyed=keyed, threads=2),
+        replace(settings, threads=2),
     )
     assert on_two.won.tolist() == found.won.tolist()
+
+
+def test_keyed_worlds_change_how_the_rollout_planners_sample(pf01: Any) -> None:
+    state = native.Game(5).state()
+    plain = regret.Settings(worlds=2, budget=400, threads=2)
+    found = regret.roll(pf01, state, [PASS], range(16), plain)
+    keyed = regret.roll(
+        pf01, state, [PASS], range(16), replace(plain, keyed_worlds=True)
+    )
+    # the same worlds to start from, but the planners sample their own
+    # differently: some games go otherwise
+    assert found.turns.tolist() != keyed.turns.tolist()
