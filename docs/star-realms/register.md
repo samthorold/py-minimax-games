@@ -35,7 +35,7 @@ This file is kept by hand until it can be generated from the instruments and the
 | What it sees | Never the order of anything hidden | supported | `test_shuffling_a_deck_or_discard_pile_does_not_change_the_row` passes | 2026-10-23 | no | |
 | What it learns from | The positions it played | untested | | | no | No test yet. |
 | What it learns from | Positions it compared and rejected | earlier rule | Refuted: gap −0.001 ± 0.005 overall; +0.014 ± 0.014 from turn 25 | 2026-10-23 | no | Milestone 9's late-game gap (+0.033) didn't hold on fresh seeds. |
-| What it learns from | Opponents unlike itself | untested | | | no | No test yet. |
+| What it learns from | Opponents unlike itself | untested | | | no | Test declared 2026-11-25 (#234): the exploiter, an opponent refitted only on games against the frozen champion. Read when it is built. Its rule can read supported or undecided, never refuted. |
 | How it explores | Self-taught players learn only the strategies they try | untested | | | no | #212. |
 | How it explores | Exploration is directed, not random | untested | | | no | #212. |
 | How it explores | In matches, being unsure is a reason for caution | untested | | | no | #212. |

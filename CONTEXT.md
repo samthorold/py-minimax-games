@@ -41,6 +41,10 @@ How much a player's **judgement** of the positions it chose exceeds how often it
 The win chance a player's choice of turn loses against the best of the other turns it considered, each played out to the end with the player on both sides; reported per game, by the kind of sub-choice in which the two turns differ.
 _Avoid_: error rate, blunder rate
 
+**Exploiter**:
+A player built only to beat a frozen **champion**, to find the gaps in its play: an instrument, never a **candidate**. How much it wins is a lower bound on how far the champion is from a player nothing can exploit.
+_Avoid_: adversary, best response (the exact one, which no exploiter is)
+
 **Judged gap**:
 How far below the chosen turn a player's **judgement** puts another turn it considered: the chosen turn's judged win chance less the other's.
 
