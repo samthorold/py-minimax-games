@@ -192,6 +192,15 @@ by the champion's. `--model` may be the path of a saved model (`.npz`).
 the same cost giving only combat add per unit, by phase, and the share of
 economy and combat buys by turn in those games and in the heuristic's
 against itself on the same seeds.
+
+`python -m minimax_games.games.star_realms record --mix self-play` plays the
+champion's games once (see `recording`) and writes them to `--out`
+(`runs/recordings/` by default): `--games` from `--base-seed` (the probes'
+200 from `probe.BASE_SEED` by default) against itself, or with `--mix
+policy-iteration` mixed with `--pool` as `gap` plays them (its 1,000 from
+`gap.SEEDS`), with every decision, judgement and what `diagnose` needs.
+Each probe, `gap` and `diagnose` given `--recording FILE` reads its games
+from it instead of playing them, and refuses one of other games.
 """
 
 import argparse
@@ -217,6 +226,7 @@ from minimax_games.games.star_realms import (
     population,
     probe,
     profiling,
+    recording,
     regret,
     reply,
     sampled_worlds,
@@ -441,14 +451,19 @@ def main(argv: list[str] | None = None) -> None:
     if argv[:1] == ["probe"]:
         probing(argv[1:])
         return
+    if argv[:1] == ["record"]:
+        recording_games(argv[1:])
+        return
     if argv[:1] == ["native-bench"]:
         native_bench(argv[1:])
         return
     if argv[:1] == ["gap"]:
-        print(gap.report(_measure(argv[1:], "gap", every=1)))
+        measured, source = _measure(argv[1:], "gap", every=1)
+        print("\n".join([gap.report(measured), *source]))
         return
     if argv[:1] == ["diagnose"]:
-        print(diagnostics.report(_measure(argv[1:], "diagnose", every=3)))
+        measured, source = _measure(argv[1:], "diagnose", every=3)
+        print("\n".join([diagnostics.report(measured), *source]))
         return
     if argv[:1] == ["population"]:
         populating(argv[1:])
@@ -491,9 +506,12 @@ def main(argv: list[str] | None = None) -> None:
         print(f"Player {result.winner + 1} wins on turn {result.turns}")
 
 
-def _measure(argv: list[str], command: str, every: int) -> gap.Measurement:
+def _measure(
+    argv: list[str], command: str, every: int
+) -> tuple[gap.Measurement, list[str]]:
     """A champion's games, as the `gap` and `diagnose` commands play them
-    (`gap.measure`)."""
+    (`gap.measure`) or read them from a recording (`gap.read`), and the
+    lines to print after the report: where the games came from, if read."""
     parser = argparse.ArgumentParser(
         prog=f"python -m minimax_games.games.star_realms {command}"
     )
@@ -537,16 +555,41 @@ def _measure(argv: list[str], command: str, every: int) -> gap.Measurement:
         default=every,
         help="play only every Kth game of the mix (default: %(default)s)",
     )
+    parser.add_argument(
+        "--recording",
+        type=Path,
+        default=None,
+        help="read the games from this recording (`record --mix"
+        " policy-iteration`, of the same champion, pool, seeds and settings)"
+        " instead of playing them",
+    )
     args = parser.parse_args(argv)
-    return gap.measure(
-        args.champion,
-        args.pool,
-        range(args.base_seed, args.base_seed + args.games),
-        threads=args.threads,
+    seeds = range(args.base_seed, args.base_seed + args.games)
+    if args.recording is None:
+        measured = gap.measure(
+            args.champion,
+            args.pool,
+            seeds,
+            threads=args.threads,
+            worlds=args.worlds,
+            budget=args.budget,
+            every=args.every,
+        )
+        return measured, []
+    asked = recording.Settings(
+        champion=args.champion,
+        seeds=seeds,
+        mix="policy-iteration",
+        pool=tuple(args.pool),
         worlds=args.worlds,
         budget=args.budget,
-        every=args.every,
     )
+    try:
+        recorded = recording.read(args.recording, asked)
+    except recording.Mismatch as error:
+        parser.error(str(error))
+    source = f"The champion's games read from {args.recording}"
+    return gap.read(recorded, every=args.every), [source]
 
 
 def native_bench(argv: list[str]) -> None:
@@ -1645,16 +1688,30 @@ def probing(argv: list[str]) -> None:
         default=2,
         help="threads to play the games on (default: %(default)s)",
     )
+    parser.add_argument(
+        "--recording",
+        type=Path,
+        default=None,
+        help="read the champion's games from this recording (`record --mix"
+        " self-play`, of the same model, seeds and settings) instead of playing"
+        " them",
+    )
     args = parser.parse_args(argv)
 
-    model = (
-        value.Model.load(Path(args.model))
-        if args.model.endswith(".npz")
-        else value.load(args.model)
-    )
+    seeds = range(args.base_seed, args.base_seed + args.games)
+    if args.recording is not None:
+        asked = recording.Settings(
+            champion=args.model, seeds=seeds, worlds=args.worlds, budget=args.budget
+        )
+        try:
+            args.recorded = recording.read(args.recording, asked).played
+        except recording.Mismatch as error:
+            parser.error(str(error))
+    else:
+        args.recorded = None
+    model = recording.model(args.model)
     args.model = population.name(args.model)
     champion = selfplay.Planner(model, worlds=args.worlds, budget=args.budget)
-    seeds = range(args.base_seed, args.base_seed + args.games)
     if args.probe == "denial":
         _denial(args, model, champion, seeds)
         return
@@ -1662,7 +1719,11 @@ def probing(argv: list[str]) -> None:
         _investment(args, model, champion, seeds)
         return
     start = time.perf_counter()
-    rows = probe.positions(champion, seeds, threads=args.threads)
+    rows = (
+        probe.positions(champion, seeds, threads=args.threads)
+        if args.recorded is None
+        else args.recorded.x
+    )
     played = time.perf_counter() - start
     name = "Synergy" if args.probe == "synergy" else "Faction-pair"
     print(
@@ -1688,7 +1749,25 @@ def probing(argv: list[str]) -> None:
     probed = time.perf_counter() - start - played
     for line in lines:
         print(line)
-    print(f"Games {played:.1f} s, probe {probed:.1f} s")
+    _timings(args, played, probed)
+
+
+def _timings(args: argparse.Namespace, playing: float, probed: float) -> None:
+    """A probe's closing lines: where the champion's games came from, if
+    from a recording, and the time spent on games and on the probe."""
+    if args.recorded is not None:
+        print(f"The champion's games read from {args.recording}")
+    print(f"Games {playing:.1f} s, probe {probed:.1f} s")
+
+
+def _champion_games(
+    args: argparse.Namespace, champion: selfplay.Planner, seeds: range
+) -> selfplay.SelfPlay:
+    """The champion's games against itself on `seeds`, with every decision:
+    read from the recording if one was given, else played."""
+    if args.recorded is not None:
+        return args.recorded
+    return probe.games(champion, seeds, threads=args.threads, record=True)
 
 
 def _denial(
@@ -1698,7 +1777,7 @@ def _denial(
     seeds: range,
 ) -> None:
     start = time.perf_counter()
-    played = probe.games(champion, seeds, threads=args.threads, record=True)
+    played = _champion_games(args, champion, seeds)
     heuristic = probe.games("heuristic", seeds, threads=args.threads, record=True)
     playing = time.perf_counter() - start
     trade = probe.next_trade(played, seeds)
@@ -1735,7 +1814,7 @@ def _denial(
         print()
         for line in probe.share_report(judged, judge=f"{judge}'s judgement"):
             print(line)
-    print(f"Games {playing:.1f} s, probe {probed:.1f} s")
+    _timings(args, playing, probed)
 
 
 def _investment(
@@ -1745,7 +1824,7 @@ def _investment(
     seeds: range,
 ) -> None:
     start = time.perf_counter()
-    played = probe.games(champion, seeds, threads=args.threads, record=True)
+    played = _champion_games(args, champion, seeds)
     heuristic = probe.games("heuristic", seeds, threads=args.threads, record=True)
     playing = time.perf_counter() - start
     assert played.actions is not None
@@ -1773,7 +1852,99 @@ def _investment(
     }
     for line in probe.buys_report(players):
         print(line)
-    print(f"Games {playing:.1f} s, probe {probed:.1f} s")
+    _timings(args, playing, probed)
+
+
+def recording_games(argv: list[str]) -> None:
+    """Play the champion's games once and save everything the instruments
+    read from them (`recording.record`)."""
+    parser = argparse.ArgumentParser(
+        prog="python -m minimax_games.games.star_realms record"
+    )
+    parser.add_argument(
+        "--mix",
+        choices=recording.MIXES,
+        required=True,
+        help="self-play (the champion against itself, as the probes play) or"
+        " policy-iteration (as a round mixes them, as gap and diagnose play)",
+    )
+    parser.add_argument(
+        "--champion",
+        default="pf01",
+        help="a committed model or the path of a saved one (.npz)"
+        " (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--pool",
+        nargs="+",
+        default=["mlp", "pi03", "pf01"],
+        help="policy-iteration only: the champions a quarter of the games are"
+        " against (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--games",
+        type=int,
+        default=None,
+        help="how many games (default: 200 for self-play, 1000 for"
+        " policy-iteration, the instruments' own)",
+    )
+    parser.add_argument(
+        "--base-seed",
+        type=int,
+        default=None,
+        help=f"the first game's seed (default: {probe.BASE_SEED} for self-play,"
+        f" {gap.SEEDS} for policy-iteration, the instruments' own)",
+    )
+    parser.add_argument(
+        "--worlds",
+        type=int,
+        default=planner.WORLDS,
+        help="the planners' worlds (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--budget",
+        type=int,
+        default=planner.BUDGET,
+        help="the planners' states per plan (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--threads", type=int, default=2, help="threads (default: %(default)s)"
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="the file to write (default:"
+        " runs/recordings/<champion>-<mix>-<first seed>-<games>.npz)",
+    )
+    args = parser.parse_args(argv)
+    self_play = args.mix == "self-play"
+    games = args.games if args.games is not None else 200 if self_play else 1000
+    start = args.base_seed
+    if start is None:
+        start = probe.BASE_SEED if self_play else gap.SEEDS
+    settings = recording.Settings(
+        champion=args.champion,
+        seeds=range(start, start + games),
+        mix=args.mix,
+        pool=() if self_play else tuple(args.pool),
+        worlds=args.worlds,
+        budget=args.budget,
+    )
+    out = args.out or Path(
+        f"runs/recordings/{population.name(args.champion)}-{args.mix}"
+        f"-{start}-{games}.npz"
+    )
+    began = time.perf_counter()
+    found = recording.record(settings, threads=args.threads)
+    recording.save(found, out)
+    print(
+        f"Recorded {games} games of {args.champion} ({args.mix}"
+        + ("" if self_play else f", pool {', '.join(settings.pool)}")
+        + f") on seeds {start}-{start + games - 1}, {args.worlds} worlds,"
+        f" {args.budget} states per plan, to {out}"
+        f" in {time.perf_counter() - began:.1f} s"
+    )
 
 
 def iterating(argv: list[str]) -> None:

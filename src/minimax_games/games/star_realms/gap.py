@@ -18,6 +18,7 @@ from minimax_games.games.star_realms import features
 from minimax_games.games.star_realms.catalogue import CATALOGUE
 from minimax_games.games.star_realms.iterate import HEURISTIC, mix
 from minimax_games.games.star_realms.planner import BUDGET, WORLDS
+from minimax_games.games.star_realms.recording import Recording, thinned
 from minimax_games.games.star_realms.selfplay import (
     Examined,
     Pairing,
@@ -293,10 +294,44 @@ def measure(
     played = play(games, threads=threads, judge=True, diagnose=True)
     me = players[champion]
     assert isinstance(me, Planner)
+    settings = (champion, tuple(pool), seeds, worlds, budget)
+    return _measured(*settings, every, played, games, me)
+
+
+def read(recorded: Recording, every: int = 1) -> Measurement:
+    """What `measure` measures, read from `recorded` (the policy-iteration
+    mix, `recording.record`) instead of played: every `every`th of its
+    games, the very games `measure` would play."""
+    s = recorded.settings
+    if s.mix != "policy-iteration":
+        msg = f"the gap reads the policy-iteration mix, not {s.mix}"
+        raise ValueError(msg)
+    players = recorded.players()
+    games = recorded.pairings(players)[::every]
+    me = players[s.champion]
+    assert isinstance(me, Planner)
+    played = thinned(recorded.played, every)
+    settings = (s.champion, s.pool, s.seeds, s.worlds, s.budget)
+    return _measured(*settings, every, played, games, me)
+
+
+def _measured(
+    champion: str,
+    pool: tuple[str, ...],
+    seeds: range,
+    worlds: int,
+    budget: int,
+    every: int,
+    played: SelfPlay,
+    games: Sequence[Pairing],
+    me: Planner,
+) -> Measurement:
+    """The measurement of `played`, the games `games` in which `me` is the
+    champion."""
     assert played.examined is not None
     return Measurement(
         champion,
-        tuple(pool),
+        pool,
         seeds,
         worlds,
         budget,

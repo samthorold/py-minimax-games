@@ -3032,6 +3032,43 @@ uv run python docs/regret/bands.py 40 24300000    # which bands the options came
 - **The instrument's blind spots, as run**: one option drawn at random from each band further down, so a single misranked turn among a band of dozens is rarely the one drawn (the reading says the bands' typical turns are worse, not that every one is); 8 rollouts a round, which tell turns apart only about a quarter of a win apart, so a small regret on one turn goes unseen and only the mean over turns speaks, and its error (±0.074 a game) still allows a loss of up to about 0.16 a game; shared randomness that helps little once the options buy different cards (keyed planner worlds don't change that); and, the blind spot no self-play rollout can narrow, an error `pf01` makes in every continuation, which cancels out of every comparison here.
 - **What follows** is in the design (Milestones, 10): with no loss found against the near ties or further down, the judgement's choices aren't where `pf01` is limited, and the next question is what every continuation shares, which only games against opponents unlike itself expose.
 
+### Milestone 10: one recording of the champion's games
+
+- Date: 2026-11-26
+- Commit: `c3a8072` with #220's change (the `record` command and `--recording`).
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0. 2 threads, run one after another. **Load**: other Claude sessions were open throughout (no other agent's build or test run was going at the start), and the 1-minute load average was 3.6-6.2 across the run, so every timing is likely inflated: the probes' games took 165-174 s here against about 105 s in the re-read after #216. Both ways ran under the same load, one straight after the other.
+- Seeds: the probes 25,000,000-25,000,199, the gap and diagnostics 25,100,000-25,100,999, clear of every earlier range (the highest before, #232's run, ends at 24,300,039).
+
+The instruments the recording replaces, timed playing their own games and then reading one recording (#220, Learned values: one recording of the champion's games), at the re-read's sizes (`--model pf01 --games 200 --threads 2` for the probes, `--champion pf01 --pool mlp pi03 pf01 --games 1000 --threads 2` for the gap and diagnostics, `--every 3` for `diagnose`):
+
+```sh
+uv run python -m minimax_games.games.star_realms record --mix self-play --champion pf01 --games 200 --base-seed 25000000 --threads 2 --out runs/recordings/220-self-play.npz
+uv run python -m minimax_games.games.star_realms probe synergy --model pf01 --games 200 --base-seed 25000000 --threads 2 --recording runs/recordings/220-self-play.npz
+uv run python -m minimax_games.games.star_realms record --mix policy-iteration --champion pf01 --pool mlp pi03 pf01 --games 1000 --base-seed 25100000 --threads 2 --out runs/recordings/220-policy-iteration.npz
+uv run python -m minimax_games.games.star_realms diagnose --champion pf01 --pool mlp pi03 pf01 --games 1000 --every 3 --base-seed 25100000 --threads 2 --recording runs/recordings/220-policy-iteration.npz
+```
+
+| Step | Own games | From the recording |
+|---|---|---|
+| Record the self-play games | | 206 s |
+| Synergy | 174 s | 2 s |
+| Faction pairs | 174 s | under 1 s |
+| Denial (with the heuristic's games, still played) | 173 s | 2 s |
+| Investment (likewise) | 165 s | under 1 s |
+| Record the policy-iteration mix | | 806 s |
+| Gap | 786 s | 1 s |
+| Diagnostics (every third game) | 299 s | under 1 s |
+| **All** | **1,771 s (29.5 min)** | **1,017 s (17.0 min)** |
+
+Wall times of each whole command, process start included, to the second. Each reading gave exactly the same report as playing its own games (compared line by line; only the probes' timing line differs).
+
+#### Reading it
+
+- **A full re-read of these instruments takes 12.6 minutes less** (754 s), above the 8 minutes #220 asked for: three of the four probes' games and all of `diagnose`'s are no longer played, and reading costs a second or two. Under lighter load the saving should shrink in proportion with the games' time (about 8 minutes at the re-read's 105 s per probe and 2.7 minutes for `diagnose`).
+- **Recording costs a little more than playing**: 206 s against 165-174 s for the self-play games, 806 s against 786 s for the mix, within this run's load noise but consistent with also keeping every decision, judgement and diagnostic.
+- **The heuristic's games cost nothing worth recording**: the denial and investment probes still play them, and read in under 2 s with them.
+- This is a measurement of the instruments' cost, not a reading of "Learns at the speed the feedback loop needs", which wants a machine not running other work; it makes that row due (register).
+
 ## Milestone 7: Rust tracer bullet (toolchain and first-slice engine)
 
 2026-10-21, #137 (tracked by #127), CPython 3.14, Apple M1 (8 GB) shared with three other agents' builds and tests. The first end-to-end path through Rust: maturin builds `minimax_games._native` from `rust/`, and its Star Realms engine plays the starter decks and the 30-card first slice (design, Compiled engine).
