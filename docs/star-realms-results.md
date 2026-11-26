@@ -3116,6 +3116,43 @@ uv run python -m minimax_games.games.star_realms examine --games 0 --match-seeds
 - **Stronger than every player before it**: 600 games against `pi03`, seeds 22,500,000-22,500,599. *Supported* if the interval lies wholly above 50% (the population reading, reused, already has no member beating `pf01`); *undecided* if it reaches 50%. If #219 lands first, its SPRT gate (H0 50%, H1 55%, α = β = 0.05) replaces the fixed 600, declared before it runs.
 - **Lookahead adds little**, and **judging the position a move leads to**: four times the examination against the champion, 300 seeds in both seats (600 games), seeds 22,510,000-22,510,299. For the afterstate row, *supported* if its interval ends below 55%, *refuted* if wholly above 50%, *undecided* otherwise. The lookahead row reads it beside this reading's reply match (44.0%, 38.5-49.7%), whose half of the rule (wholly below 55%, not above 50%) is met and isn't replayed.
 
+### Milestone 10: one recording of the champion's games
+
+- Date: 2026-11-26
+- Commit: `c3a8072` with #220's change (the `record` command and `--recording`).
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0. 2 threads, run one after another. **Load**: other Claude sessions were open throughout (no other agent's build or test run was going at the start), and the 1-minute load average was 3.6-6.2 across the run, so every timing is likely inflated: the probes' games took 165-174 s here against about 105 s in the re-read after #216. Both ways ran under the same load, one straight after the other.
+- Seeds: the probes 25,000,000-25,000,199, the gap and diagnostics 25,100,000-25,100,999, clear of every earlier range (the highest before, #232's run, ends at 24,300,039).
+
+The instruments the recording replaces, timed playing their own games and then reading one recording (#220, Learned values: one recording of the champion's games), at the re-read's sizes (`--model pf01 --games 200 --threads 2` for the probes, `--champion pf01 --pool mlp pi03 pf01 --games 1000 --threads 2` for the gap and diagnostics, `--every 3` for `diagnose`):
+
+```sh
+uv run python -m minimax_games.games.star_realms record --mix self-play --champion pf01 --games 200 --base-seed 25000000 --threads 2 --out runs/recordings/220-self-play.npz
+uv run python -m minimax_games.games.star_realms probe synergy --model pf01 --games 200 --base-seed 25000000 --threads 2 --recording runs/recordings/220-self-play.npz
+uv run python -m minimax_games.games.star_realms record --mix policy-iteration --champion pf01 --pool mlp pi03 pf01 --games 1000 --base-seed 25100000 --threads 2 --out runs/recordings/220-policy-iteration.npz
+uv run python -m minimax_games.games.star_realms diagnose --champion pf01 --pool mlp pi03 pf01 --games 1000 --every 3 --base-seed 25100000 --threads 2 --recording runs/recordings/220-policy-iteration.npz
+```
+
+| Step | Own games | From the recording |
+|---|---|---|
+| Record the self-play games | | 206 s |
+| Synergy | 174 s | 2 s |
+| Faction pairs | 174 s | under 1 s |
+| Denial (with the heuristic's games, still played) | 173 s | 2 s |
+| Investment (likewise) | 165 s | under 1 s |
+| Record the policy-iteration mix | | 806 s |
+| Gap | 786 s | 1 s |
+| Diagnostics (every third game) | 299 s | under 1 s |
+| **All** | **1,771 s (29.5 min)** | **1,017 s (17.0 min)** |
+
+Wall times of each whole command, process start included, to the second. Each reading gave exactly the same report as playing its own games (compared line by line; only the probes' timing line differs).
+
+#### Reading it
+
+- **A full re-read of these instruments takes 12.6 minutes less** (754 s), above the 8 minutes #220 asked for: three of the four probes' games and all of `diagnose`'s are no longer played, and reading costs a second or two. Under lighter load the saving should shrink in proportion with the games' time (about 8 minutes at the re-read's 105 s per probe and 2.7 minutes for `diagnose`).
+- **Recording costs a little more than playing**: 206 s against 165-174 s for the self-play games, 806 s against 786 s for the mix, within this run's load noise but consistent with also keeping every decision, judgement and diagnostic.
+- **The heuristic's games cost nothing worth recording**: the denial and investment probes still play them, and read in under 2 s with them.
+- This is a measurement of the instruments' cost, not a reading of "Learns at the speed the feedback loop needs", which wants a machine not running other work; it makes that row due (register).
+
 ## Milestone 7: Rust tracer bullet (toolchain and first-slice engine)
 
 2026-10-21, #137 (tracked by #127), CPython 3.14, Apple M1 (8 GB) shared with three other agents' builds and tests. The first end-to-end path through Rust: maturin builds `minimax_games._native` from `rust/`, and its Star Realms engine plays the starter decks and the 30-card first slice (design, Compiled engine).

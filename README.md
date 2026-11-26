@@ -56,6 +56,7 @@ task tune                   # Star Realms: tune evaluate's weights by tournament
 task fit                    # Star Realms: fit learned values, gated against evaluate
 task population -- pf01     # Star Realms: a player against the reference population
 task probe -- synergy       # Star Realms: probe the champion's judgement (or: denial)
+task record -- --mix self-play  # Star Realms: the champion's games once, for the instruments to read
 ```
 
 ### Stopping a Star Realms tournament early (SPRT)
@@ -170,6 +171,16 @@ phase; then it plays the heuristic against itself on the same seeds and
 prints the share of each player's buys that are economy, combat, mixed or
 neither, by turn. About 2 minutes. Results: "Milestone 9: probe, investment
 against the race".
+
+Every probe plays the same games, so play them once: `task record -- --mix
+self-play --games 200 --base-seed 25000000` writes them to
+`runs/recordings/`, and each probe given `--recording FILE` (with the same
+`--model`, `--games`, `--base-seed`, `--worlds` and `--budget`) reads them
+in a second instead of playing them, with exactly the same numbers. `--mix
+policy-iteration` records the games `gap` and `diagnose` play (the champion
+against itself, the heuristic and the `--pool`), which both read with
+`--recording`, `diagnose` every third of them. An instrument refuses a
+recording of other games, or one whose models have changed since.
 
 ### Profiling the Star Realms search
 
