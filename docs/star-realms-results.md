@@ -3153,6 +3153,59 @@ Wall times of each whole command, process start included, to the second. Each re
 - **The heuristic's games cost nothing worth recording**: the denial and investment probes still play them, and read in under 2 s with them.
 - This is a measurement of the instruments' cost, not a reading of "Learns at the speed the feedback loop needs", which wants a machine not running other work; it makes that row due (register).
 
+### Milestone 10: the exploiter against pf01
+
+- Date: 2026-11-26
+- Commit: this PR (#234; on `72cafa7`): `exploit` and the `exploit` command; `iterate.gate`, the batched SPRT match, taken out of `iterate`'s round to be shared.
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0. 8 threads. **No other agent ran** during the measurement or the run, but the machine was not free: the owner's own applications (a browser, an emulator) were busy and memory was tight (2.5 GB compressed, 143 MB free), and the 1-minute load average was 5.5-60 across the measurements and 12-21 across the run. Every timing below is this contended machine's: `pf01` against itself took 0.51-0.60 s a game on 8 threads, where run 3's `pi03` took 0.11 (Milestone 8: policy-iteration run 3), about 2.5 times more than `pf01`'s dearer plans explain.
+- Seeds: training games 26,000,000 + 10,000 × (r − 1) up (26,000,000-26,000,499, 26,010,000-26,010,499, 26,020,000-26,020,499), held out 26,100,000 + ... (26,100,000-26,100,099, ...), the gate 26,220,000-26,220,166 (round 3's, the only match), the heuristic on the population's seeds 0-499 (by design, so they pair with `pf01`'s population games); the cost measurement 26,900,000-26,900,255. All clear of every earlier range (the highest before, #220's, ends at 25,100,999).
+
+**The hypothesis** (What it learns from, *positions from games against opponents unlike itself*): a judgement learned from its own games alone has gaps that an opponent aimed at it finds. **Rule**: supported if a candidate is accepted at H1 by the SPRT against the frozen `pf01` (H0 50%, H1 55%, α = β = 0.05, at most 1,000 games) within the run (3 rounds or 30 minutes); undecided otherwise; never refuted. **Predicted**: nothing beyond the rule; the design names it the cheapest measurement that decides the order of the rest (10).
+
+```sh
+uv run python -m minimax_games.games.star_realms exploit --champion pf01 --champion-data runs/run-2/data \
+    --out runs/exploit-234 --train-games 500 --held-out-games 100 --threads 8 --rounds 1
+# then resumed to policy iteration's stopping rules:
+uv run python -m minimax_games.games.star_realms exploit --champion pf01 --champion-data runs/run-2/data \
+    --out runs/exploit-234 --train-games 500 --held-out-games 100 --threads 8 --rounds 3
+```
+
+Every other setting is the command's default: `pf01`'s recipe for every fit (4-member ensembles, width 32, `features.EXTRA`, `value.fit`'s defaults), the window of 4, the planner's 4 worlds and 20,000 states, the gate's limit of 1,000 games in batches of 128, 500 games against the heuristic. Records: [exploit/pf01/](exploit/pf01/), holding `state.json`, `run.log`, the per-seed results of every round's games (`games-rNN.csv`), the one gating match (`gate-r03.csv`) and each candidate's games against the heuristic (`heuristic-rNN.csv`). Every one of the 1,800 training and held-out games and the 167 gating games had `pf01` in one seat. No game reached the 300-turn cap.
+
+#### Measured first: the cost of a round, and the sizing
+
+| Measurement | Games | Time, 8 threads | Per game | Load (1 min) before, after |
+|---|---|---|---|---|
+| `pf01` against itself | 256 | 130.3 s | 0.51 s | 6.0, 60.4 |
+| The same, again | 256 | 154.6 s | 0.60 s | 33.7, 28.6 |
+| The same, 4 threads | 128 | 105.6 s | 0.83 s | 28.6, 17.0 |
+| **Round 1 at the planned size** (600 games, fit, heuristic; the gate failed offline) | 600 + 500 | **465 s (7.8 min)** | 0.47 s (play) | 11.9, 16.5 |
+
+At 0.5-0.6 s a game, the design's 5,000-game round (Milestone 8) would take about 45 minutes of play alone, so a run of the design's 30 minutes would hold less than one. **Sizing**: 500 training and 100 held-out games a round. A round's fixed costs are the fit (about half a minute), the 500 games against the heuristic (about 2.5 minutes) and, when the offline gate passes, the SPRT match (at a true 50% an SPRT at these bounds takes about 600 games on average, about 5 minutes here, at most 1,000, about 8); 600 games of play at about 5 minutes leaves a round at 8-16 minutes, so two or three fit the 30 minutes. Round 1, run alone as the measurement, took 7.8 minutes; the run was resumed from it unchanged. The design warned that smaller rounds make noisier fits; here they also make the exploiter's games a small share of the window (below).
+
+#### The run
+
+| Round | Fit on (rounds, states) | Held-out log-loss: logistic / mlp / `pf01` | Offline gate | SPRT against `pf01` | Win% against `pf01` | Against the heuristic (seeds 0-499; `pf01` 370, 74.0%) | Play / fit / gate / heuristic / total (s) |
+|---|---|---|---|---|---|---|---|
+| First fit `ex00` | `pf01`'s 1-4, 369,419 | | | | **identical to `pf01`**, every parameter (largest difference 0.0) | | 31 s to fit |
+| 1 (`ex01`) | `pf01`'s 2-4 + own 1, 288,596 | 0.5472 / 0.5198 / 0.5186 | **fail** | - | - | 363, 72.6% (paired 51 / 58, z −0.67) | 283 / 33 / - / 149 / 465 |
+| 2 (`ex02`) | `pf01`'s 3-4 + own 1-2, 207,163 | 0.5453 / 0.5194 / 0.5193 | **fail** | - | - | 363, 72.6% (54 / 61, z −0.65) | 276 / 22 / - / 153 / 451 |
+| 3 (`ex03`) | `pf01`'s 4 + own 1-3, 126,136 | 0.5407 / **0.5286** / 0.5333 | pass | **H0 after 167**, 73-94 (LLR −2.95) | 43.7% (36.4-51.3%) | 354, 70.8% (60 / 76, z −1.37) | 290 / 13 / 137 / 157 / 597 |
+
+(The paired counts are the seeds won only by the candidate and only by `pf01` in its population games, [population/pf01/](population/pf01/). The current exploiter was `ex00` throughout, since nothing was accepted, so every round's games were `pf01` against a copy of itself: the exploiter won 48.8%, 51.5% and 50.7% of them, as a copy should.) **Stopped after round 3: 3 rounds played**, in 1,513 s (25.2 minutes) of rounds, plus the first fit's 31 s.
+
+#### Reading it
+
+| Hypothesis | Reading | By its rule |
+|---|---|---|
+| Opponents unlike itself | No candidate accepted at H1: two failed the offline gate, the third lost its match (H0 after 167 games, 43.7%) | **Undecided**: not found by this exploiter. The rule can't read refuted |
+
+- **The first fit is `pf01` bit for bit**, so the exploiter started level, as the design asks, and the acceptance's check is the run's own (`state.json`, `first_fit`).
+- **The exploiter learned nothing that beats `pf01`, and the run says little about whether there is anything to learn.** At this machine's speed a round held 500 training games, about 11,300 states, against the 92,000 of each of `pf01`'s own rounds, so the window was 4% the exploiter's games in round 1 and 27% in round 3. Rounds 1 and 2 were fits of `pf01`'s recipe to less of `pf01`'s own data, and failed the offline gate as such fits do. Round 3's candidate, fitted to a third of `pf01`'s data, predicted the held-out games against `pf01` better than `pf01` did (0.5286 against 0.5333), the one sign that the exploiter's games taught it something about them, and then played worse (43.7%): a judgement fitted to 126,000 states is weaker than one fitted to 369,000, whatever the states are about. So the run tested a learner short of data more than a learner aimed at `pf01`.
+- **Since the current exploiter never changed, every round's games were `pf01` against itself**: the exploiter's own games only start to differ from the champion's once a candidate is accepted. A loop gated on beating the champion outright has no step between a copy and a winner, so with candidates that lose, the exploiter never plays anything but self-play. That is the design's choice (the question is whether the champion can be beaten), and on this reading it is the binding one.
+- **Against the heuristic each candidate is a little below `pf01`** (70.8-72.6% against 74.0%, paired z −0.65 to −1.37, none significant), consistent with fits to less data, not with a specific flaw found.
+- **What a stronger reading needs**, for the owner (none is a reading-rule change): rounds the size of the champion's (the design's 5,000 games), which at this machine's measured speed is about 45 minutes a round, or a machine as free as run 3's (about 0.2 s a game expected for `pf01`); and a window that doesn't shrink the exploiter's data below the champion's while the champion's rounds age out (for example, the champion's rounds kept until the exploiter's own replace them state for state).
+
 ## Milestone 7: Rust tracer bullet (toolchain and first-slice engine)
 
 2026-10-21, #137 (tracked by #127), CPython 3.14, Apple M1 (8 GB) shared with three other agents' builds and tests. The first end-to-end path through Rust: maturin builds `minimax_games._native` from `rust/`, and its Star Realms engine plays the starter decks and the 30-card first slice (design, Compiled engine).

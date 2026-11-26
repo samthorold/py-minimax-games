@@ -151,6 +151,14 @@ Run it again with the same `--out` to resume after the last finished round.
 and `--hours` are the stopping rules; the round's sizes and the planner's
 settings default to the agreed design's.
 
+`python -m minimax_games.games.star_realms exploit` runs the exploiter (see
+`exploit`) against `--champion` (`pf01` by default), frozen: a first fit by
+the champion's own recipe on its rounds in `--champion-data`, then rounds of
+games against the champion only, a refit on a window sliding off the
+champion's rounds, and the offline gate and SPRT match against the champion,
+each candidate also played against the heuristic, into `--out`
+(`runs/exploit/<champion>/` by default). Run it again to resume.
+
 `python -m minimax_games.games.star_realms gap` measures the exploitation
 gap (see `gap`): `--champion`'s games on `--games` seeds from `--base-seed`,
 mixed as a policy-iteration round mixes them with `--pool`'s champions,
@@ -218,6 +226,7 @@ from minimax_games.games.star_realms import (
     cheat,
     diagnostics,
     examination,
+    exploit,
     fit,
     gap,
     iterate,
@@ -447,6 +456,9 @@ def main(argv: list[str] | None = None) -> None:
         return
     if argv[:1] == ["iterate"]:
         iterating(argv[1:])
+        return
+    if argv[:1] == ["exploit"]:
+        exploiting(argv[1:])
         return
     if argv[:1] == ["probe"]:
         probing(argv[1:])
@@ -2021,6 +2033,77 @@ def iterating(argv: list[str]) -> None:
     out = args.pop("out")
     settings = iterate.Settings(**args)
     iterate.run(settings, out)
+
+
+def exploiting(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(
+        prog="python -m minimax_games.games.star_realms exploit"
+    )
+    defaults = exploit.Settings()
+    parser.add_argument(
+        "--champion",
+        type=lambda name: bot_name(LEARNED + name).removeprefix(LEARNED),
+        default=defaults.champion,
+        help="the frozen champion, a committed model (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--champion-data",
+        default=defaults.champion_data,
+        help="the folder of the champion's own training rounds, round-NN.npz"
+        " (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="the run's directory, resumed if it has rounds"
+        " (default: runs/exploit/<champion>)",
+    )
+    for flag, field, text in (
+        ("--champion-first", "champion_first", "the champion's first round"),
+        ("--champion-last", "champion_last", "the champion's last round"),
+        ("--threads", "threads", "threads playing the games"),
+        ("--rounds", "max_rounds", "stop after this many rounds"),
+        ("--patience", "patience", "stop after this many rounds without promotion"),
+        ("--train-games", "train_games", "training games per round"),
+        ("--held-out-games", "held_out_games", "held-out games per round"),
+        ("--window", "window", "rounds of training games each fit sees"),
+        ("--gate-games", "gate_games", "the match's most games"),
+        ("--heuristic-games", "heuristic_games", "each candidate's vs heuristic"),
+        ("--worlds", "worlds", "the planner's worlds"),
+        ("--budget", "budget", "the planner's states per plan"),
+        ("--epochs", "epochs", "the fits' passes over the data"),
+        ("--hidden", "hidden", "the network's hidden units"),
+        ("--members", "members", "fits per candidate, from consecutive seeds"),
+    ):
+        parser.add_argument(
+            flag,
+            type=int,
+            dest=field,
+            default=getattr(defaults, field),
+            help=f"{text} (default: %(default)s)",
+        )
+    parser.add_argument(
+        "--hours",
+        type=float,
+        default=defaults.hours,
+        help="start no round once the rounds have taken this long"
+        " (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--extra",
+        action=argparse.BooleanOptionalAction,
+        default=defaults.extra,
+        help="fit values that read the hand-made features (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--prefix",
+        default=defaults.prefix,
+        help="round r's candidate is named <prefix><r> (default: %(default)s)",
+    )
+    args = vars(parser.parse_args(argv))
+    out = args.pop("out") or Path("runs/exploit") / args["champion"]
+    exploit.run(exploit.Settings(**args), out)
 
 
 def populating(argv: list[str]) -> None:
