@@ -144,6 +144,66 @@ def test_the_report_gives_each_breakdown_with_its_counts():
     assert _row(examined, "all") == ["3", "2", "0.667"]
 
 
+def _positions(judged: list[float], won: list[float], game: list[int]) -> gap.Positions:
+    return gap.Positions(
+        judged=np.array(judged),
+        won=np.array(won),
+        game=np.array(game),
+        turn=np.ones(len(game), dtype=int),
+    )
+
+
+def test_a_difference_in_squared_miss_from_separate_games_adds_their_errors():
+    # first: games 0 and 1, squared misses 0.49 and 0.09 and 0.01; second:
+    # games 2 and 3, 0.16, 0.36 and 0.36. No game holds both, so the difference's
+    # error is the two errors combined as independent
+    group = _positions(
+        [0.7, 0.7, 0.9, 0.4, 0.6, 0.6],
+        [0.0, 1.0, 1.0, 0.0, 0.0, 0.0],
+        [0, 0, 1, 2, 3, 3],
+    )
+    first = np.array([True, True, True, False, False, False])
+    found = diagnostics.difference(group, first, ~first)
+    one = gap.gap(group.judged[first], group.won[first], group.game[first])
+    other = gap.gap(group.judged[~first], group.won[~first], group.game[~first])
+    assert found.difference == pytest.approx(0.59 / 3 - 0.88 / 3)
+    assert found.error == pytest.approx(
+        math.hypot(one.squared_error, other.squared_error)
+    )
+
+
+def test_a_difference_counts_a_game_s_positions_together():
+    # each game holds one position of each side, missing alike: the sides
+    # differ by nothing in every game, so the difference's error is 0, where
+    # one counted by position would not be
+    group = _positions([0.7, 0.7, 0.7, 0.7], [0.0, 0.0, 1.0, 1.0], [0, 0, 1, 1])
+    first = np.array([True, False, True, False])
+    found = diagnostics.difference(group, first, ~first)
+    assert found.difference == pytest.approx(0.0)
+    assert found.error == pytest.approx(0.0)
+
+
+def test_duplicating_a_game_s_positions_leaves_the_difference_s_error_unchanged():
+    group = _positions(
+        [0.7, 0.2, 0.9, 0.4, 0.6, 0.3],
+        [0.0, 1.0, 1.0, 0.0, 1.0, 0.0],
+        [0, 0, 1, 1, 2, 2],
+    )
+    first = np.array([True, False, True, True, False, False])
+    twice = _positions(
+        [*group.judged, *group.judged],
+        [*group.won, *group.won],
+        [*group.game, *group.game],
+    )
+    once = diagnostics.difference(group, first, ~first)
+    doubled = diagnostics.difference(
+        twice, np.concatenate([first, first]), np.concatenate([~first, ~first])
+    )
+    assert doubled.difference == pytest.approx(once.difference)
+    assert doubled.error == pytest.approx(once.error)
+    assert once.error > 0
+
+
 def test_the_report_compares_near_with_far_and_rare_with_not_within_each_phase():
     # the game's phase confounds both comparisons (decks grow and rare
     # cards are bought as a game goes on, and late positions are easier to
@@ -158,3 +218,17 @@ def test_the_report_compares_near_with_far_and_rare_with_not_within_each_phase()
         *("1", "0.090", "3", "0.357"),
     ]
     assert _row(within, "turns 7-12") == ["0", "-"] * 4
+
+
+def test_the_report_gives_each_phase_s_differences_with_their_errors():
+    text = diagnostics.report(_measured())
+    differences = text.split("\n\n(")[3].split("near - far")[1]
+    # turns 1-6: near and far each hold one 0.09 (game 0) and one 0.49
+    # (game 1), so they differ by nothing in either game: 0 ± 0. With a
+    # rare card, row 1's 0.09 against the rest's 0.357, -0.267, its error
+    # by game the root of twice (0.09 - 0.357) / 3, squared
+    assert _row(differences, "turns 1-6") == [
+        *("+0.000", "±", "0.000"),
+        *("-0.267", "±", f"{math.sqrt(2) * (0.09 - 1.07 / 3) / -3:.3f}"),
+    ]
+    assert _row(differences, "turns 7-12") == ["-", "-"]

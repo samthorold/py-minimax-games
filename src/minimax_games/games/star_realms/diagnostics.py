@@ -123,11 +123,46 @@ def _by_left(column: int) -> dict[str, Select]:
     return rows
 
 
+@dataclass(frozen=True, slots=True)
+class Difference:
+    """One side's mean squared miss less another's, over the same games."""
+
+    difference: float
+    error: float
+    """Its standard error, counting each game's positions together, on
+    both sides at once: a game's positions share one result, and a game can
+    hold positions on both sides."""
+
+
+def difference(group: Positions, first: np.ndarray, second: np.ndarray) -> Difference:
+    """The mean squared miss of `group`'s positions in `first` less that of
+    those in `second` (disjoint masks).
+
+    The error is cluster-robust by game: each position contributes its
+    squared miss less its side's mean, over its side's count (negated for
+    `second`), and the error is the square root of the sum over games of
+    each game's contributions, summed, squared."""
+    rows_first, rows_second = int(np.sum(first)), int(np.sum(second))
+    if rows_first == 0 or rows_second == 0:
+        return Difference(math.nan, math.nan)
+    squares = (group.judged - group.won) ** 2
+    mean_first = float(np.mean(squares[first]))
+    mean_second = float(np.mean(squares[second]))
+    each = np.zeros(len(squares))
+    each[first] = (squares[first] - mean_first) / rows_first
+    each[second] = -(squares[second] - mean_second) / rows_second
+    _, at = np.unique(group.game, return_inverse=True)
+    per_game = np.bincount(at, weights=each)
+    return Difference(mean_first - mean_second, float(np.sqrt(np.sum(per_game**2))))
+
+
 def _within_phase(group: Positions) -> list[str]:
     """Near against far (the player who just ended) and a rare card against
-    none, phase by phase: the squared miss of each, with its count. The
-    phase confounds both: decks grow and rare cards are bought as a game
-    goes on, while early positions are the hardest to call."""
+    none, phase by phase: the squared miss of each, with its count, then
+    near less far and with less without, each with its error by game
+    (`difference`), which the End state's reading rules compare. The phase
+    confounds both: decks grow and rare cards are bought as a game goes on,
+    while early positions are the hardest to call."""
     near = _left(group, 0) < NEAR
     held = _rare(group)
     subsets = {"near": near, "far": ~near, "with": held, "without": ~held}
@@ -143,6 +178,22 @@ def _within_phase(group: Positions) -> list[str]:
             squared = "-" if found.rows == 0 else f"{found.squared:.3f}"
             cells.append(f"{found.rows:>6} {squared:>6}")
         lines.append(f"{phase(low, high):<12} " + " ".join(cells))
+    lines += [
+        "Within each game phase, the differences in squared miss, ± error"
+        " counted by game",
+        f"{'':12} {'near - far':>16} {'with - without':>16}",
+    ]
+    for low, high in itertools.pairwise(PHASES):
+        in_phase = (group.turn >= low) & (group.turn < high)
+        cells = []
+        for first, second in ((near, ~near), (held, ~held)):
+            found = difference(group, in_phase & first, in_phase & second)
+            cells.append(
+                "-"
+                if math.isnan(found.difference)
+                else f"{found.difference:+.3f} ± {found.error:.3f}"
+            )
+        lines.append(f"{phase(low, high):<12} " + " ".join(f"{c:>16}" for c in cells))
     return lines
 
 
