@@ -415,6 +415,42 @@ def test_exploit_runs_against_a_named_champion_and_resumes(capsys, tmp_path):
     assert "Round" not in capsys.readouterr().out
 
 
+def test_exploit_records_champion_data_relative_to_the_repo_root(
+    capsys, tmp_path, monkeypatch
+):
+    # the run's records are committed: no absolute local path in them
+    data = tmp_path / "runs" / "champion"
+    data.mkdir(parents=True)
+    rows = dataset(range(4))
+    for r in range(1, 5):
+        np.savez(data / f"round-{r:02d}.npz", x_train=rows.x, y_train=rows.y)
+    monkeypatch.chdir(tmp_path)
+    tail = [
+        *("--rounds", "1", "--threads", "2", "--train-games", "6"),
+        *("--held-out-games", "4", "--gate-games", "4", "--heuristic-games", "2"),
+        *("--worlds", "1", "--budget", "40", "--epochs", "1", "--hidden", "3"),
+        *("--members", "1", "--no-extra", "--champion", "mlp", "--out", "run"),
+    ]
+    main(["exploit", "--champion-data", str(data), *tail])
+    state = json.loads((tmp_path / "run" / "state.json").read_text())
+    assert state["settings"]["champion_data"] == "runs/champion"
+    capsys.readouterr()
+    # resumed with the path given relative, or absolute: the same run
+    main(["exploit", "--champion-data", "runs/champion", *tail])
+    main(["exploit", "--champion-data", str(data), *tail])
+    assert "Round" not in capsys.readouterr().out
+    # another folder is another run
+    with pytest.raises(ValueError, match="champion_data"):
+        main(["exploit", "--champion-data", "runs/other", *tail])
+
+
+def test_a_path_outside_the_root_is_kept_as_given(tmp_path):
+    assert exploit.portable("/elsewhere/data", tmp_path) == "/elsewhere/data"
+    assert exploit.portable("runs/run-2/data", tmp_path) == "runs/run-2/data"
+    inside = str(tmp_path / "runs" / "run-2" / "data")
+    assert exploit.portable(inside, tmp_path) == "runs/run-2/data"
+
+
 def test_exploit_defaults_to_pf01_s_recipe():
     settings = exploit.Settings()
     assert (settings.champion, settings.members, settings.hidden) == ("pf01", 4, 32)

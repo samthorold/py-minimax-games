@@ -2103,6 +2103,7 @@ def exploiting(argv: list[str]) -> None:
     )
     args = vars(parser.parse_args(argv))
     out = args.pop("out") or Path("runs/exploit") / args["champion"]
+    args["champion_data"] = exploit.portable(args["champion_data"], Path.cwd())
     exploit.run(exploit.Settings(**args), out)
 
 
