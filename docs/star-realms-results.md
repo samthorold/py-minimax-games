@@ -3032,6 +3032,90 @@ uv run python docs/regret/bands.py 40 24300000    # which bands the options came
 - **The instrument's blind spots, as run**: one option drawn at random from each band further down, so a single misranked turn among a band of dozens is rarely the one drawn (the reading says the bands' typical turns are worse, not that every one is); 8 rollouts a round, which tell turns apart only about a quarter of a win apart, so a small regret on one turn goes unseen and only the mean over turns speaks, and its error (±0.074 a game) still allows a loss of up to about 0.16 a game; shared randomness that helps little once the options buy different cards (keyed planner worlds don't change that); and, the blind spot no self-play rollout can narrow, an error `pf01` makes in every continuation, which cancels out of every comparison here.
 - **What follows** is in the design (Milestones, 10): with no loss found against the near ties or further down, the judgement's choices aren't where `pf01` is limited, and the next question is what every continuation shares, which only games against opponents unlike itself expose.
 
+### Milestone 10: pf01 read again under the error-allowance rules
+
+- Date: 2026-11-26 (read; the runs were played earlier, on the same machine).
+- Commit: the runs on `2d482eb`'s code (#218), before #209 and #225; the calibration replay (below) on `4d953a4`. No code changed for this.
+- Machine: Apple M1 MacBook, 8 GB, macOS (Darwin 25.2), CPython 3.14.0. 2 threads, run one after another, about 40 minutes in all; the logs don't record whether other agents' work shared the machine.
+- Seeds: 22,000,000 up: the head-to-head 22,000,000-22,000,299; examination 22,100,000-22,100,199, its match 22,110,000-22,110,299; the reply 22,200,000-22,200,149; the gap 22,300,000-22,300,999; the investment probe 22,400,000-22,400,199, synergy and faction pairs 22,410,000-22,410,199, denial 22,420,000-22,420,199. The head-to-head's seeds are also those of #209's denial probes (22,000,000-22,000,199, `t32` and `pf01` each against itself) and of a throwaway check for #225; neither played `pf01` against `pi03`, no player was fitted to them, and #218's rules predate both, so the reading is still on seeds its rule wasn't written against. The population is played on its fixed seeds 0-499 by design.
+
+#218 gave every reading rule an error allowance and an undecided band. Its rules were written after the first re-read (Milestone 10: pf01 read again under the reading rules) had read `pf01`, so this reads `pf01` again, under each rule as written, on fresh seeds. Each row's status in the [register](star-realms/register.md) comes from this reading alone; the first re-read's numbers are context, never pooled.
+
+```sh
+uv run python -m minimax_games.games.star_realms tournament --bots planner:pf01 planner:pi03 --games 300 --base-seed 22000000 --jobs 2
+uv run python -m minimax_games.games.star_realms examine --games 200 --base-seed 22100000 --jobs 2
+uv run python -m minimax_games.games.star_realms examine --games 0 --match-seeds 300 --match-base-seed 22110000 --jobs 2
+uv run python -m minimax_games.games.star_realms reply --seeds 150 --base-seed 22200000 --threads 2
+uv run python -m minimax_games.games.star_realms gap --champion pf01 --pool mlp pi03 pf01 --games 1000 --base-seed 22300000 --threads 2
+uv run python -m minimax_games.games.star_realms probe investment --model pf01 --games 200 --base-seed 22400000 --threads 2
+uv run python -m minimax_games.games.star_realms probe synergy --model pf01 --games 200 --base-seed 22410000 --threads 2
+uv run python -m minimax_games.games.star_realms probe faction-pair --model pf01 --games 200 --base-seed 22410000 --threads 2
+uv run python -m minimax_games.games.star_realms probe denial --model pf01 --games 200 --base-seed 22420000 --threads 2
+```
+
+Logs in `runs/reread2/` (local, not committed).
+
+**Not read here**: the population (its seeds are fixed and its run deterministic, so it reads 74.0% / 61.6% / 56.6% again, and is reused); cards as proportions (waits for #219's paired command on fresh seeds); the deck's cycle and the rare-card arm (they read `diagnose`'s errors by phase, which #217 added after these runs, and no `diagnose` was run here); the speed of the feedback loop (the training half isn't read, and the instruments' half needs every instrument timed on a free machine, which these logs don't give); the Trade Row rows (below); 16 worlds against 4 (settled by its SPRT, which nothing here reads).
+
+| Hypothesis (End state part) | Reading | By its rule | Wall time, 2 threads |
+|---|---|---|---|
+| Stronger than every player before it (The whole player) | Loses to none of the population (reused). Against `pi03`: 162/300, **54.0%** (48.3-59.6%); as first 62.0%, as second 46.0% | **Undecided**: the head-to-head interval reaches 50% | 74 s |
+| A person could play it (The whole player) | In the head-to-head: 2.52 plans a turn at 8.17 ms a plan, 23.8 turns a game (about 12 its own): **about 0.25 s** of thinking a game | **Supported**: under 45 s | |
+| Lookahead adds little (How it chooses) | Four times the examination: 315/600, **52.5%** (48.5-56.5%); seeds won both / split / lost both 24 / 267 / 9, sign z 2.61. The reply, against the champion at 16 worlds: 132/300, **44.0%** (38.5-49.7%); 20 / 92 / 38, sign z −2.36 | **Undecided**: neither interval wholly above 50%, but the examination's doesn't end below 55% | 344 + 851 s |
+| Within the turn, tactics are calculated (How it chooses) | 1,306 of 12,163 plans (10.7%) ran out; 22.1% of those changed their choice at four times the states: **2.4% of all plans**. Beside it: plans that ran out 0% in turns 1-5, 0.8% in 6-10, 14.3% in 16-20, 23.1% in 21-25, 32-80% from turn 26 | **Supported**: under 4% | |
+| Judging the position a move leads to (What it judges) | The examination match above, 52.5% (48.5-56.5%) | **Undecided**: neither below 55% nor wholly above 50% | |
+| The decisions that win are investments (What it judges) | Early (turns 1-8), a unit of trade **+0.0041** (Shuttle, sd 0.0128 over 1,394 positions) and **+0.0191** (Freighter, sd 0.0088 over 1,344). Economy **54.6%** of 1,077 buys in turns 1-4; from turn 13 by band 33.1% (815), 36.0% (706), 40.4% (490), 45.3% (316) | **Supported**: early trade above nothing by 12 and 80 times its error, for both pairs; the early economy share above every band from turn 13, the nearest by 9.3 ± 3.2 points (2.9 times its error) | 108 s |
+| A judgement of positions can be checked and explained (What it judges) | Chosen positions by tenth of judged chance: every tenth within 0.019 but one, **0.1-0.2 at +0.0301 ± 0.0133** (1,204 positions; replayed to four decimals, below); all four probes give a reading | **Refuted**: that tenth is off by more than 0.03 and by more than twice its error (2.25 times) | |
+| Positions compared and rejected (What it learns from) | Gap on 18,055 chosen positions in 1,000 games **+0.001 ± 0.005**; from turn 25, +0.017 ± 0.012 | **Refuted**: below 0.02 by 0.019, nearly four times its error | |
+
+The probes' errors for the investment reading aren't in the probe's report, which gives each judged gain's spread across positions and each share's count: the errors above are by position and by buy (binomial). The End state counts an error by game where a game's positions share one result; judged gains and shares of buys don't, so these are within its convention, but positions and buys from one game are still alike, and an error counted by game would be larger. The early trade arm clears its line by any count (counted as if each game gave one position, 4.5 and 31 times); the economy arm's 2.9 is the reading's thinnest margin.
+
+**The other probes**, on `pf01`, read no row here but are reported, as each gives a reading (the checked-and-explained rule asks that):
+
+- **Synergy**: the second card's gain less the first's, draw −0.0321 ± 0.0011, scrap −0.0213 ± 0.0008, discard −0.0007 ± 0.0008, against the control's (cards of no function) −0.0108 ± 0.0007. A second card that draws or scraps adds less than a second card of nothing, as in Milestone 9. The rule's synergy arm needs a judgement shown what cards do (#211).
+- **Faction pairs**: every faction's own pair is singled out (interaction Blob +0.046 ± 0.003, Trade Federation +0.026 ± 0.002, Star Empire +0.019 ± 0.002, Machine Cult +0.021 ± 0.002), and of the other pairs only Trade Federation with Machine Cult leans above zero (+0.005 ± 0.002 and +0.003 ± 0.002).
+- **Denial**, on the swap among every Trade Deck card (the code predates #225): seen **2.3%** of a valued 0.326; `pf01`'s buys deny 39.5%, the heuristic's 44.0%. It is the instrument the End state replaced, and on `pf01` alone, so it reads neither Trade Row row; it agrees with #209's 2.4% on the same probe.
+
+#### The calibration tenth on its line
+
+`gap` prints each tenth's gap to three decimals, and the 0.1-0.2 tenth printed **+0.030 ± 0.013**: on the rule's line, where the report can't say which side it is. Its counts narrow it to +0.0295-0.0302 (146 of 1,204 won, and a judged mean printed 0.151), which holds both a tenth within 0.03 (supported, every other tenth being within 0.019) and one beyond it (refuted, since 0.030 is more than twice 0.013). So the gap was replayed on the same seeds, with `gap.measure` as the command calls it, printing more decimals (a scratch script, not committed; 1,000 games on 2 threads, a few minutes, on `4d953a4`). The replay reproduced every number in the log, both groups, every tenth and every phase, so it is the same games, read more finely, not a new reading:
+
+| Chosen, by judged chance | Positions | Judged | Won | Gap ± error | Gap / error |
+|---|---|---|---|---|---|
+| 0.0-0.1 | 1,360 | 0.0450 | 0.0419 | +0.0031 ± 0.0082 | 0.38 |
+| **0.1-0.2** | 1,204 | 0.1513 | 0.1213 | **+0.0301 ± 0.0133** (+0.030077 ± 0.013345) | **2.25** |
+| 0.2-0.3 | 1,368 | 0.2519 | 0.2529 | −0.0010 ± 0.0177 | 0.06 |
+| 0.3-0.4 | 1,718 | 0.3523 | 0.3487 | +0.0036 ± 0.0164 | 0.22 |
+| 0.4-0.5 | 2,290 | 0.4523 | 0.4472 | +0.0051 ± 0.0124 | 0.42 |
+| 0.5-0.6 | 2,443 | 0.5490 | 0.5518 | −0.0028 ± 0.0115 | 0.25 |
+| 0.6-0.7 | 2,361 | 0.6483 | 0.6434 | +0.0049 ± 0.0146 | 0.34 |
+| 0.7-0.8 | 1,869 | 0.7492 | 0.7678 | −0.0186 ± 0.0156 | 1.19 |
+| 0.8-0.9 | 1,587 | 0.8482 | 0.8544 | −0.0062 ± 0.0142 | 0.44 |
+| 0.9-1.0 | 1,855 | 0.9527 | 0.9569 | −0.0041 ± 0.0081 | 0.51 |
+
+The 0.1-0.2 tenth is off by 0.03008, past the line by 0.00008, and by 2.25 times its error: both conditions of *refuted* hold, by the rule as written. The held-out positions (the opponents' ends, judged by `pf01`) aren't ruled on; their 0.5-0.6 tenth is off by +0.089 ± 0.037, as positions chosen by another player can be.
+
+#### Reading it
+
+- **Eight rows read, under #218's rules alone**: three supported (a person could play it, within-turn tactics, investments), two refuted (checked and explained, positions compared and rejected) and three undecided (stronger than every player before, lookahead adds little, judging the position a move leads to). The register is updated in this PR, each row dated 2026-11-26 and linked here.
+- **The undecided rows are all the same match's width, not a lean.** The head-to-head (54.0%) and the examination match (52.5%) sit where the first re-read's did (58.0% and 51.3%), but with 300 and 600 games their intervals reach the line. The examination match's sign z of 2.61 (24 seeds won both against 9 lost both) is beside the rule, not ruled on: the rule reads the interval. Each is read next on its own (below).
+- **Checked and explained is refuted again, now under the rule that allows for the error.** The same tenth as on 2026-10-23 (0.1-0.2, then +0.031 ± 0.014) is off by +0.0301 ± 0.0133, on fresh seeds: the rule #218 wrote so that a tenth just past 0.03 within its error reads undecided finds this one past 0.03 by 0.00008 and outside twice its error. Two fresh readings both put the judgement about 3 points high where it judges 10-20%, so this is no longer noise on one reading. The End state says a refuted hypothesis changes it in the same PR; this PR's scope is the reading and changes no hypothesis or rule, so revising the End state (what the refutation means for "checked and explained", or the tenth's line) is left to the owner, as it was after the first re-read.
+- **The exploitation gap is refuted on fresh seeds a second time**: +0.001 ± 0.005 overall, as on 2026-10-23 (−0.001 ± 0.005). The late game's +0.017 ± 0.012 from turn 25 is again within its error.
+- **Investments hold, with the thinnest margin of the reading on the economy arm** (2.9 times an error the probe doesn't report, computed here by buy). A follow-up for the probe to report its errors counted by game, and for `gap` to print a tenth precisely enough to read against its line, is proposed rather than built: neither changes a status here.
+- **Nothing here changes the End state's rules.** Where an instrument didn't report what its rule reads (the investment probe's errors, the gap's fourth decimal), the reading says how it was supplied.
+
+#### The next readings, declared before they run
+
+The two undecided rows are read again each on its own, on fresh seeds, under its rule as written, with this reading's games given only as context. Adding games to this reading until it crosses a line would be optional stopping, and pooling the two readings is that. #219 (an SPRT for these matches) is still open, so the fallback is played: 600 games each, on 8 threads with the machine free of other agents' work (it wasn't free when this was read, so they aren't played in this PR).
+
+```sh
+uv run python -m minimax_games.games.star_realms tournament --bots planner:pf01 planner:pi03 --games 600 --base-seed 22500000 --jobs 8
+uv run python -m minimax_games.games.star_realms examine --games 0 --match-seeds 300 --match-base-seed 22510000 --jobs 8
+```
+
+- **Stronger than every player before it**: 600 games against `pi03`, seeds 22,500,000-22,500,599. *Supported* if the interval lies wholly above 50% (the population reading, reused, already has no member beating `pf01`); *undecided* if it reaches 50%. If #219 lands first, its SPRT gate (H0 50%, H1 55%, α = β = 0.05) replaces the fixed 600, declared before it runs.
+- **Lookahead adds little**, and **judging the position a move leads to**: four times the examination against the champion, 300 seeds in both seats (600 games), seeds 22,510,000-22,510,299. For the afterstate row, *supported* if its interval ends below 55%, *refuted* if wholly above 50%, *undecided* otherwise. The lookahead row reads it beside this reading's reply match (44.0%, 38.5-49.7%), whose half of the rule (wholly below 55%, not above 50%) is met and isn't replayed.
+
 ### Milestone 10: one recording of the champion's games
 
 - Date: 2026-11-26
