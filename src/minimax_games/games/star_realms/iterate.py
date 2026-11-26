@@ -435,6 +435,75 @@ def _outcomes(
     return found
 
 
+@dataclass(frozen=True, slots=True)
+class Gated:
+    """A gating match, cut at the game that decided it."""
+
+    verdict: Hypothesis | None
+    """The SPRT's decision; None if undecided at the limit."""
+    games: list[Named]
+    winners: list[int | None]
+    turns: list[int]
+    wins: int
+    """The candidate's wins and losses in `games`."""
+    losses: int
+
+    def write(self, path: Path) -> None:
+        """The games, per seed, as CSV (`_write_games`)."""
+        _write_games(path, self.games, self.winners, self.turns)
+
+    def record(self, test: Sprt) -> dict[str, Any]:
+        """What `state.json` keeps: the decision, games, wins, losses and
+        log-likelihood ratio."""
+        return {
+            "decision": "undecided" if self.verdict is None else self.verdict.value,
+            "games": len(self.games),
+            "wins": self.wins,
+            "losses": self.losses,
+            "llr": test.llr(self.wins, self.losses),
+        }
+
+
+def gate(
+    named: Sequence[Named],
+    players: dict[str, selfplay.Player],
+    candidate: str,
+    test: Sprt,
+    limit: int,
+    batch: int,
+    threads: int,
+    max_turns: int,
+) -> Gated:
+    """The match: `named`'s games in seed order, by `players`' names,
+    played in batches of `batch` ahead of the decision, which is the one
+    game by game would take (`decide`), at most `limit` games."""
+    winners: list[int | None] = []
+    turns: list[int] = []
+    outcomes: list[int | None] = []
+    while True:
+        done = len(outcomes)
+        chunk = named[done : done + batch]
+        played = selfplay.play(
+            [(seed, players[a], players[b]) for seed, a, b in chunk],
+            threads,
+            max_turns,
+        )
+        winners += played.winners
+        turns += played.turns
+        outcomes += _outcomes(chunk, played, candidate)
+        verdict, count = decide(outcomes, test, limit)
+        if verdict is not None or count >= limit or len(outcomes) >= len(named):
+            break
+    return Gated(
+        verdict,
+        list(named[:count]),
+        winners[:count],
+        turns[:count],
+        sum(o == 1 for o in outcomes[:count]),
+        sum(o == 0 for o in outcomes[:count]),
+    )
+
+
 def run(
     settings: Settings,
     out: Path,
@@ -582,41 +651,23 @@ def _round(
     verdict = None
     if passed:
         planners[name] = selfplay.Planner(candidate, settings.worlds, settings.budget)
-        named = _alternating(name, champion, settings.gate_seeds(number))
-        # batches played ahead; the decision is the one game by game would take
-        winners: list[int | None] = []
-        turns: list[int] = []
-        outcomes: list[int | None] = []
-        while True:
-            done = len(outcomes)
-            batch = named[done : done + settings.gate_batch]
-            played = selfplay.play(
-                pairings(batch), settings.threads, settings.max_turns
-            )
-            winners += played.winners
-            turns += played.turns
-            outcomes += _outcomes(batch, played, name)
-            verdict, count = decide(outcomes, test, settings.gate_games)
-            if verdict is not None or count >= settings.gate_games:
-                break
-        _write_games(
-            out / f"gate-r{number:02d}.csv",
-            named[:count],
-            winners[:count],
-            turns[:count],
+        gated = gate(
+            _alternating(name, champion, settings.gate_seeds(number)),
+            planners,
+            name,
+            test,
+            settings.gate_games,
+            settings.gate_batch,
+            settings.threads,
+            settings.max_turns,
         )
-        wins = sum(o == 1 for o in outcomes[:count])
-        losses_ = sum(o == 0 for o in outcomes[:count])
-        sprt = {
-            "decision": "undecided" if verdict is None else verdict.value,
-            "games": count,
-            "wins": wins,
-            "losses": losses_,
-            "llr": test.llr(wins, losses_),
-        }
+        verdict = gated.verdict
+        gated.write(out / f"gate-r{number:02d}.csv")
+        sprt = gated.record(test)
         log(
             f"Round {number}: {name} vs {champion}: {sprt['decision']} after"
-            f" {count} games, {wins}-{losses_} (LLR {sprt['llr']:.2f})"
+            f" {sprt['games']} games, {sprt['wins']}-{sprt['losses']}"
+            f" (LLR {sprt['llr']:.2f})"
         )
     seconds["gate"] = clock() - began
 
