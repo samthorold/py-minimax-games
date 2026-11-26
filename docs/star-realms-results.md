@@ -3055,7 +3055,7 @@ uv run python -m minimax_games.games.star_realms probe denial --model pf01 --gam
 
 Logs in `runs/reread2/` (local, not committed).
 
-**Not read here**: the population (its seeds are fixed and its run deterministic, so it reads 74.0% / 61.6% / 56.6% again, and is reused); cards as proportions (waits for #219's paired command on fresh seeds); the deck's cycle and the rare-card arm (wait for #217's errors by phase); the speed of the feedback loop (the training half isn't read, and the instruments' half needs every instrument timed on a free machine, which these logs don't give); the Trade Row rows (below); 16 worlds against 4 (settled by its SPRT, which nothing here reads).
+**Not read here**: the population (its seeds are fixed and its run deterministic, so it reads 74.0% / 61.6% / 56.6% again, and is reused); cards as proportions (waits for #219's paired command on fresh seeds); the deck's cycle and the rare-card arm (they read `diagnose`'s errors by phase, which #217 added after these runs, and no `diagnose` was run here); the speed of the feedback loop (the training half isn't read, and the instruments' half needs every instrument timed on a free machine, which these logs don't give); the Trade Row rows (below); 16 worlds against 4 (settled by its SPRT, which nothing here reads).
 
 | Hypothesis (End state part) | Reading | By its rule | Wall time, 2 threads |
 |---|---|---|---|
